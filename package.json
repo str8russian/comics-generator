@@ -1,0 +1,17 @@
+{
+  "name": "comics-pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Server-side storyboard pipeline: schema, role prompts, validator, eval harness.",
+  "scripts": {
+    "golden": "node tools/build-golden.mjs",
+    "validate": "node tools/validate.mjs",
+    "metrics": "node tools/metrics.mjs",
+    "check": "node tools/build-golden.mjs && node tools/validate.mjs golden/zayavka-full/storyboard.json && node tools/metrics.mjs golden/zayavka-full/storyboard.json"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}

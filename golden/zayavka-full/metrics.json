@@ -1,0 +1,77 @@
+{
+  "projectId": "zayavka-v1",
+  "durationSeconds": 158.27,
+  "sceneCount": 24,
+  "dialogueSceneCount": 19,
+  "templateSceneCount": 5,
+  "textCardSceneCount": 0,
+  "lineCount": 24,
+  "spokenLineCount": 23,
+  "silentBeatCount": 1,
+  "meanLineChars": 50,
+  "medianLineChars": 37,
+  "maxLineChars": 125,
+  "linesOver120Chars": 1,
+  "linesPerMinute": 9.1,
+  "layoutCounts": {
+    "single": 5,
+    "split2": 14
+  },
+  "shotCounts": {
+    "medium": 30,
+    "close": 3
+  },
+  "closeUpSceneRatio": 0.158,
+  "splitSceneRatio": 0.737,
+  "soloSceneRatio": 0.263,
+  "layoutChangeRatio": 0.333,
+  "beatCounts": {
+    "ordinary": 9,
+    "explanation": 5,
+    "emphasis": 2,
+    "longExplanation": 1,
+    "acknowledgement": 2,
+    "listItem": 2,
+    "quickBeat": 1,
+    "punchline": 1,
+    "silentReaction": 1
+  },
+  "meanSceneSeconds": 7.22,
+  "medianSceneSeconds": 7.17,
+  "maxSceneSeconds": 12.63,
+  "expressionChanges": 9,
+  "speakerShifts": 7,
+  "listenerChanges": 0,
+  "longestStaticRun": 2,
+  "distinctExpressionsUsed": 13,
+  "expressionSheetSize": 16,
+  "expressionReuseFactor": 2.538,
+  "placeholderAssetCount": 0,
+  "transitionCounts": {
+    "cut": 24
+  },
+  "deviceCounts": {
+    "DEV-CONTEXT-OPENER": 2,
+    "DEV-CAST-TITLES": 3,
+    "DEV-SOLO-EMPHASIS": 3,
+    "DEV-DELAYED-REVEAL": 2,
+    "DEV-SPLIT-DIALOGUE": 12,
+    "DEV-SPEAKER-SHIFT": 6,
+    "DEV-CLOSEUP-BEAT": 3,
+    "DEV-GAZE-CORRECTION": 1,
+    "DEV-SUSTAINED-HOLD": 3,
+    "DEV-BEAT-PAUSE": 1,
+    "DEV-LIST-OF-THREE": 1,
+    "DEV-SILENT-REACTION": 1
+  },
+  "distinctDevicesUsed": 12,
+  "deviceCoverage": 0.706,
+  "unusedActiveDevices": [
+    "DEV-EXTREME-CLOSEUP",
+    "DEV-ENSEMBLE-REACTION",
+    "DEV-DETAIL-INSERT",
+    "DEV-TEXT-INTERSTITIAL",
+    "DEV-TEXT-OUTRO"
+  ],
+  "proposedDeviceCount": 0
+}

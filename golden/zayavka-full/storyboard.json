@@ -1,0 +1,1319 @@
+{
+  "schemaVersion": "1.0.0",
+  "minimumRendererVersion": 1,
+  "requiredFeatures": [
+    "layout.single",
+    "layout.split2",
+    "panel.flip",
+    "shot.close",
+    "scene.template",
+    "text.typewriter"
+  ],
+  "project": {
+    "id": "zayavka-v1",
+    "title": "Как могло бы проходить рассмотрение заявки",
+    "language": "ru-RU",
+    "targetDurationSeconds": 160,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "totalDurationFrames": 4748,
+    "timing": {
+      "charactersPerSecond": 12,
+      "preRollFrames": 12,
+      "beatHoldFrames": {
+        "listItem": 18,
+        "acknowledgement": 24,
+        "quickBeat": 30,
+        "ordinary": 36,
+        "punchline": 36,
+        "silentReaction": 42,
+        "emphasis": 48,
+        "explanation": 54,
+        "longExplanation": 66
+      }
+    }
+  },
+  "style": {
+    "presetId": "cel-heavy-outline-01",
+    "kenBurnsScale": 1
+  },
+  "theme": {
+    "backgroundColor": "#02090b",
+    "panelGutterPx": 8,
+    "dialogueBarHeightPx": 300,
+    "dialogueBarColor": "#030607",
+    "dialogueBarBorderColor": "#536064",
+    "textColor": "#f6f4ed",
+    "fontFamily": "Arial, Helvetica, sans-serif"
+  },
+  "characters": [
+    {
+      "id": "anton",
+      "displayName": "Антон",
+      "role": "Руководитель контент-проектов",
+      "traits": "Скептичный, прямой, быстро увлекается, когда понимает идею"
+    },
+    {
+      "id": "veronika",
+      "displayName": "Вероника",
+      "role": "Исполнительный директор",
+      "traits": "Спокойно объясняет, держит инициативу, говорит по делу"
+    },
+    {
+      "id": "roman",
+      "displayName": "Роман",
+      "role": "Исполнительный директор",
+      "traits": "Немногословный, вступает один раз и попадает в точку"
+    }
+  ],
+  "expressionSheets": [
+    {
+      "characterId": "anton",
+      "basePortraitId": "anton.weary-contempt",
+      "entries": [
+        {
+          "id": "anton.weary-contempt",
+          "label": "weary contempt",
+          "descriptor": {
+            "valence": "negative",
+            "intensity": 2,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/real-anton-01-weary-contempt.png"
+          }
+        },
+        {
+          "id": "anton.guarded-curiosity",
+          "label": "guarded curiosity",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/real-anton-02-guarded-curiosity.png"
+          }
+        },
+        {
+          "id": "anton.disbelieving-astonishment",
+          "label": "disbelieving astonishment",
+          "descriptor": {
+            "valence": "negative",
+            "intensity": 3,
+            "mouth": "slightly-open",
+            "gaze": "to-camera",
+            "headOrientation": "frontal",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening",
+            "reaction"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/real-anton-03-disbelieving-astonishment.png"
+          }
+        },
+        {
+          "id": "anton.comic-confusion",
+          "label": "comic confusion",
+          "descriptor": {
+            "valence": "comedic",
+            "intensity": 2,
+            "mouth": "slightly-open",
+            "gaze": "screen-left",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/real-anton-04-comic-confusion.png"
+          }
+        },
+        {
+          "id": "anton.focused-engagement",
+          "label": "focused engagement",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 2,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/real-anton-05-focused-engagement.png"
+          }
+        },
+        {
+          "id": "anton.evaluative-understanding",
+          "label": "evaluative understanding",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 2,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/real-anton-06-evaluative-understanding.png"
+          }
+        },
+        {
+          "id": "anton.excited-ideation",
+          "label": "excited ideation",
+          "descriptor": {
+            "valence": "positive",
+            "intensity": 3,
+            "mouth": "open-speaking",
+            "gaze": "to-camera",
+            "headOrientation": "frontal",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening",
+            "reaction"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/real-anton-07-excited-ideation.png"
+          }
+        },
+        {
+          "id": "anton.reluctantly-amused",
+          "label": "reluctantly amused",
+          "descriptor": {
+            "valence": "comedic",
+            "intensity": 2,
+            "mouth": "slightly-open",
+            "gaze": "to-camera",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "listening",
+            "reaction"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/real-anton-08-reluctantly-amused.png"
+          }
+        },
+        {
+          "id": "anton.title",
+          "label": "title-card portrait",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "titleCard"
+          ],
+          "flipSafe": false,
+          "asset": {
+            "kind": "file",
+            "path": "assets/real-anton-title.png"
+          }
+        }
+      ]
+    },
+    {
+      "characterId": "veronika",
+      "basePortraitId": "veronika.knowing-qualification",
+      "entries": [
+        {
+          "id": "veronika.knowing-qualification",
+          "label": "knowing qualification",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "screen-left",
+            "headOrientation": "three-quarter-right",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/veronika-01-knowing-qualification.png"
+          }
+        },
+        {
+          "id": "veronika.quiet-confidence",
+          "label": "quiet confidence, raised finger",
+          "descriptor": {
+            "valence": "positive",
+            "intensity": 2,
+            "mouth": "slightly-open",
+            "gaze": "screen-left",
+            "headOrientation": "three-quarter-right",
+            "gesture": "raised-finger"
+          },
+          "suitableFor": [
+            "speaking"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/veronika-02-quiet-confidence.png"
+          }
+        },
+        {
+          "id": "veronika.active-explanation",
+          "label": "active explanation, open hand",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 2,
+            "mouth": "open-speaking",
+            "gaze": "screen-left",
+            "headOrientation": "three-quarter-right",
+            "gesture": "open-hand"
+          },
+          "suitableFor": [
+            "speaking"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/veronika-03-active-explanation.png"
+          }
+        },
+        {
+          "id": "veronika.title",
+          "label": "title-card portrait",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "three-quarter-right",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "titleCard"
+          ],
+          "flipSafe": false,
+          "asset": {
+            "kind": "file",
+            "path": "assets/veronika-title.png"
+          }
+        }
+      ]
+    },
+    {
+      "characterId": "roman",
+      "basePortraitId": "roman.dry-interjection",
+      "entries": [
+        {
+          "id": "roman.dry-interjection",
+          "label": "dry interjection",
+          "descriptor": {
+            "valence": "comedic",
+            "intensity": 1,
+            "mouth": "slightly-open",
+            "gaze": "to-camera",
+            "headOrientation": "frontal",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/roman-01-dry-interjection.png"
+          }
+        },
+        {
+          "id": "roman.deadpan-punchline",
+          "label": "deadpan punchline",
+          "descriptor": {
+            "valence": "comedic",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "screen-left",
+            "headOrientation": "three-quarter-right",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "speaking",
+            "listening",
+            "reaction"
+          ],
+          "flipSafe": true,
+          "asset": {
+            "kind": "file",
+            "path": "assets/roman-02-deadpan-punchline.png"
+          }
+        },
+        {
+          "id": "roman.title",
+          "label": "title-card portrait, neutral background",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "frontal",
+            "gesture": "none"
+          },
+          "suitableFor": [
+            "titleCard"
+          ],
+          "flipSafe": false,
+          "asset": {
+            "kind": "file",
+            "path": "assets/roman-title-neutral.png"
+          }
+        }
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "id": "t01",
+      "kind": "template",
+      "templateId": "opening-card",
+      "durationFrames": 75,
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "devices": [
+        "DEV-CONTEXT-OPENER"
+      ],
+      "slots": {
+        "supertitle": "КОНКУРС ИИ-ПРОДУКТОВ",
+        "title": "КАК МОГЛО БЫ ПРОХОДИТЬ",
+        "subtitle": "РАССМОТРЕНИЕ ЗАЯВКИ"
+      }
+    },
+    {
+      "id": "t02",
+      "kind": "template",
+      "templateId": "cast-title-card",
+      "durationFrames": 105,
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "devices": [
+        "DEV-CAST-TITLES"
+      ],
+      "slots": {
+        "number": "01",
+        "kicker": "ЧЛЕН ЖЮРИ",
+        "name": "АНТОН",
+        "role": "РУКОВОДИТЕЛЬ КОНТЕНТ-ПРОЕКТОВ",
+        "accent": "#df7131",
+        "portrait": "anton.title"
+      }
+    },
+    {
+      "id": "t03",
+      "kind": "template",
+      "templateId": "cast-title-card",
+      "durationFrames": 105,
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "devices": [
+        "DEV-CAST-TITLES"
+      ],
+      "slots": {
+        "number": "02",
+        "kicker": "ЧЛЕН ЖЮРИ",
+        "name": "ВЕРОНИКА",
+        "role": "ИСПОЛНИТЕЛЬНЫЙ ДИРЕКТОР",
+        "accent": "#56c7c5",
+        "portrait": "veronika.title"
+      }
+    },
+    {
+      "id": "t04",
+      "kind": "template",
+      "templateId": "cast-title-card",
+      "durationFrames": 105,
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "devices": [
+        "DEV-CAST-TITLES"
+      ],
+      "slots": {
+        "number": "03",
+        "kicker": "ЧЛЕН ЖЮРИ",
+        "name": "РОМАН",
+        "role": "ИСПОЛНИТЕЛЬНЫЙ ДИРЕКТОР",
+        "accent": "#d5a23d",
+        "portrait": "roman.title"
+      }
+    },
+    {
+      "id": "t05",
+      "kind": "template",
+      "templateId": "context-document",
+      "durationFrames": 240,
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "devices": [
+        "DEV-CONTEXT-OPENER"
+      ],
+      "slots": {
+        "background": {
+          "kind": "file",
+          "path": "assets/application-pov-v2.png"
+        },
+        "supertitle": "ЗАЯВКА НА КОНКУРС ИИ-ПРОДУКТОВ",
+        "title": "ИИ-ГЕНЕРАТОР ВИДЕОКОМИКСОВ",
+        "subtitle": "Генератор персональных видеокомиксов",
+        "body": [
+          "Фотографии людей + короткое описание",
+          "↓",
+          "Рисованный ролик с ними в главных ролях"
+        ]
+      }
+    },
+    {
+      "id": "d01",
+      "kind": "dialogue",
+      "layout": "single",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.weary-contempt",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d01.l1",
+          "speakerId": "anton",
+          "text": "Ещё один ИИ-генератор видео?",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 70,
+          "holdFrames": 36
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 118,
+      "devices": [
+        "DEV-SOLO-EMPHASIS",
+        "DEV-DELAYED-REVEAL"
+      ]
+    },
+    {
+      "id": "d02",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.weary-contempt",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.active-explanation",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d02.l1",
+          "speakerId": "veronika",
+          "text": "Формально — да. Но работает он иначе.",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 93,
+          "holdFrames": 36
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 141,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE",
+        "DEV-DELAYED-REVEAL"
+      ]
+    },
+    {
+      "id": "d03",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.guarded-curiosity",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.knowing-qualification",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d03.l1",
+          "speakerId": "anton",
+          "text": "Как именно?",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 28,
+          "holdFrames": 36
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 76,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE",
+        "DEV-SPEAKER-SHIFT"
+      ]
+    },
+    {
+      "id": "d04",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.guarded-curiosity",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.active-explanation",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d04.l1",
+          "speakerId": "veronika",
+          "text": "Сам ролик, как здесь написано, «рендерится» прямо на устройстве пользователя.",
+          "beat": "explanation",
+          "preRollFrames": 12,
+          "revealFrames": 193,
+          "holdFrames": 54
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 259,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE",
+        "DEV-SPEAKER-SHIFT"
+      ]
+    },
+    {
+      "id": "d05",
+      "kind": "dialogue",
+      "layout": "single",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.disbelieving-astonishment",
+          "shot": "close",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d05.l1",
+          "speakerId": "anton",
+          "text": "Стоп. Разве это вообще возможно?",
+          "beat": "emphasis",
+          "preRollFrames": 12,
+          "revealFrames": 80,
+          "holdFrames": 48
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 140,
+      "devices": [
+        "DEV-CLOSEUP-BEAT",
+        "DEV-SOLO-EMPHASIS"
+      ]
+    },
+    {
+      "id": "d06",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.disbelieving-astonishment",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.active-explanation",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d06.l1",
+          "speakerId": "veronika",
+          "text": "ИИ готовит материалы на сервере. А приложение собирает из них видео уже на устройстве.",
+          "beat": "explanation",
+          "preRollFrames": 12,
+          "revealFrames": 215,
+          "holdFrames": 54
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 281,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE"
+      ]
+    },
+    {
+      "id": "d07",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.comic-confusion",
+          "shot": "medium",
+          "flipHorizontal": true
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.knowing-qualification",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d07.l1",
+          "speakerId": "anton",
+          "text": "Погоди, я запутался. Давай с самого начала.",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 108,
+          "holdFrames": 36
+        },
+        {
+          "id": "d07.l2",
+          "speakerId": "anton",
+          "text": "Допустим, я пользователь. Открыл приложение. Что от меня требуется?",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 168,
+          "holdFrames": 36
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 372,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE",
+        "DEV-GAZE-CORRECTION",
+        "DEV-SUSTAINED-HOLD"
+      ]
+    },
+    {
+      "id": "d08",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.comic-confusion",
+          "shot": "medium",
+          "flipHorizontal": true
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.active-explanation",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d08.l1",
+          "speakerId": "veronika",
+          "text": "Выбрать фотографии главных героев и в двух словах описать их характеры.",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 178,
+          "holdFrames": 36
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 226,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE",
+        "DEV-SPEAKER-SHIFT"
+      ]
+    },
+    {
+      "id": "d09",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.comic-confusion",
+          "shot": "medium",
+          "flipHorizontal": true
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.active-explanation",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d09.l1",
+          "speakerId": "veronika",
+          "text": "Если хочется, можно добавить идею сюжета или описать ситуацию.",
+          "beat": "emphasis",
+          "preRollFrames": 12,
+          "revealFrames": 155,
+          "holdFrames": 48
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 215,
+      "devices": [
+        "DEV-SUSTAINED-HOLD"
+      ]
+    },
+    {
+      "id": "d10",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.focused-engagement",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.knowing-qualification",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d10.l1",
+          "speakerId": "anton",
+          "text": "Хорошо. А дальше?",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 43,
+          "holdFrames": 36
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 91,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE",
+        "DEV-SPEAKER-SHIFT"
+      ]
+    },
+    {
+      "id": "d11",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.focused-engagement",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.active-explanation",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d11.l1",
+          "speakerId": "veronika",
+          "text": "Дальше ИИ работает как сценарист, режиссёр и художник: придумывает историю, раскладывает её по кадрам и рисует их как комикс.",
+          "beat": "explanation",
+          "preRollFrames": 12,
+          "revealFrames": 313,
+          "holdFrames": 54
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 379,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE",
+        "DEV-SPEAKER-SHIFT"
+      ]
+    },
+    {
+      "id": "d12",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.focused-engagement",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.active-explanation",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d12.l1",
+          "speakerId": "veronika",
+          "text": "Затем приложение получает кадры, реплики и эффекты — и собирает готовое видео прямо на устройстве.",
+          "beat": "longExplanation",
+          "preRollFrames": 12,
+          "revealFrames": 245,
+          "holdFrames": 66
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 323,
+      "devices": [
+        "DEV-SUSTAINED-HOLD"
+      ]
+    },
+    {
+      "id": "d13",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.evaluative-understanding",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.knowing-qualification",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d13.l1",
+          "speakerId": "anton",
+          "text": "Необычный подход.",
+          "beat": "acknowledgement",
+          "preRollFrames": 12,
+          "revealFrames": 43,
+          "holdFrames": 24
+        },
+        {
+          "id": "d13.l2",
+          "speakerId": "anton",
+          "text": "А зачем люди будут им пользоваться?",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 88,
+          "holdFrames": 36
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 215,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE",
+        "DEV-BEAT-PAUSE"
+      ]
+    },
+    {
+      "id": "d14",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.evaluative-understanding",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.active-explanation",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d14.l1",
+          "speakerId": "veronika",
+          "text": "Чтобы быстро превращать любую идею в ролик — с собой, друзьями или известными людьми в главных ролях.",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 253,
+          "holdFrames": 36
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 301,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE",
+        "DEV-SPEAKER-SHIFT"
+      ]
+    },
+    {
+      "id": "d15",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.evaluative-understanding",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "veronika",
+          "expressionId": "veronika.quiet-confidence",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d15.l1",
+          "speakerId": "veronika",
+          "text": "Например, взять событие из спорта, шоу-бизнеса или политики и разыграть его по-своему.",
+          "beat": "explanation",
+          "preRollFrames": 12,
+          "revealFrames": 215,
+          "holdFrames": 54
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 281,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE"
+      ]
+    },
+    {
+      "id": "d16",
+      "kind": "dialogue",
+      "layout": "single",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "roman",
+          "expressionId": "roman.dry-interjection",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d16.l1",
+          "speakerId": "roman",
+          "text": "Или спор в чате подъезда.",
+          "beat": "explanation",
+          "preRollFrames": 12,
+          "revealFrames": 63,
+          "holdFrames": 54
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 129,
+      "devices": [
+        "DEV-SOLO-EMPHASIS"
+      ]
+    },
+    {
+      "id": "d17",
+      "kind": "dialogue",
+      "layout": "single",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.excited-ideation",
+          "shot": "close",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d17.l1",
+          "speakerId": "anton",
+          "text": "Точно!",
+          "beat": "listItem",
+          "preRollFrames": 12,
+          "revealFrames": 15,
+          "holdFrames": 18
+        },
+        {
+          "id": "d17.l2",
+          "speakerId": "anton",
+          "text": "Месси против Роналду.",
+          "beat": "listItem",
+          "preRollFrames": 12,
+          "revealFrames": 53,
+          "holdFrames": 18
+        },
+        {
+          "id": "d17.l3",
+          "speakerId": "anton",
+          "text": "Демократы против республиканцев.",
+          "beat": "acknowledgement",
+          "preRollFrames": 12,
+          "revealFrames": 80,
+          "holdFrames": 24
+        },
+        {
+          "id": "d17.l4",
+          "speakerId": "anton",
+          "text": "… Шаман против Канье Уэста.",
+          "beat": "quickBeat",
+          "preRollFrames": 12,
+          "revealFrames": 68,
+          "holdFrames": 30
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 354,
+      "devices": [
+        "DEV-CLOSEUP-BEAT",
+        "DEV-LIST-OF-THREE"
+      ]
+    },
+    {
+      "id": "d18",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.excited-ideation",
+          "shot": "medium",
+          "flipHorizontal": false
+        },
+        {
+          "kind": "character",
+          "characterId": "roman",
+          "expressionId": "roman.deadpan-punchline",
+          "shot": "medium",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d18.l1",
+          "speakerId": "roman",
+          "text": "И Зинаида Петровна против установки шлагбаума.",
+          "beat": "punchline",
+          "preRollFrames": 12,
+          "revealFrames": 115,
+          "holdFrames": 36
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 163,
+      "devices": [
+        "DEV-SPLIT-DIALOGUE"
+      ]
+    },
+    {
+      "id": "d19",
+      "kind": "dialogue",
+      "layout": "single",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "anton",
+          "expressionId": "anton.reluctantly-amused",
+          "shot": "close",
+          "flipHorizontal": false
+        }
+      ],
+      "lines": [
+        {
+          "id": "d19.l1",
+          "speakerId": "anton",
+          "text": "",
+          "beat": "silentReaction",
+          "preRollFrames": 12,
+          "revealFrames": 0,
+          "holdFrames": 42
+        }
+      ],
+      "transitionIn": {
+        "kind": "cut"
+      },
+      "extraHoldFrames": 0,
+      "durationFrames": 54,
+      "devices": [
+        "DEV-SILENT-REACTION",
+        "DEV-CLOSEUP-BEAT"
+      ]
+    }
+  ],
+  "notes": {
+    "provenance": "Transcribed from zayavka-remotion/src/Zayavka.tsx and IntroSequences.tsx.",
+    "timingCheck": "totalDurationFrames must equal 4748 (158.27s at 30fps) to match out/zayavka-real-jury-silent-v2.mp4. Actual: 4748.",
+    "beatLabelCaveat": "Beat labels were reverse-engineered from hand-tuned hold values. In scene d17 the labels listItem/acknowledgement/quickBeat are mechanically correct but semantically approximate; the beat taxonomy is expected to be refined from further runs.",
+    "transitionCaveat": "The shipped video uses hard cuts exclusively. So does the GTA:CTW reference cutscene, verified frame by frame at every transition."
+  }
+}

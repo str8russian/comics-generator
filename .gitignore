@@ -1,0 +1,5 @@
+node_modules/
+.DS_Store
+
+# Run artefacts are the record of what happened. Keep them.
+# Nothing under evals/runs/ is ignored on purpose.

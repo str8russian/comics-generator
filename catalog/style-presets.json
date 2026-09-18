@@ -1,0 +1,61 @@
+{
+  "catalogVersion": "1.0.0",
+  "note": "Presets are described by visual attributes, never by the name of a game, studio, or franchise. Two reasons: hosted image APIs degrade or refuse on named-IP prompts, and a preset named after someone else's property is a trademark liability in a shipping product. Keep the franchise name in 'internalReference' for your own orientation and never send it to a model or show it to a user.",
+  "presets": [
+    {
+      "id": "cel-heavy-outline-01",
+      "displayName": "Heavy-line cel comic",
+      "internalReference": "Visual target: early-2000s open-world game key art and loading screens. Not for use in prompts.",
+      "attributes": {
+        "lineWeight": "heavy, uniform-weight black contour on every form; interior detail lines much thinner",
+        "lineRoughness": "clean vector-like edges, no sketch texture",
+        "shading": "flat cel shading, two to three tones per surface, one hard-edged highlight",
+        "palette": "desaturated warm neutrals with one saturated accent per character; muted ochre, olive, dusty teal, off-white",
+        "contrast": "high between subject and background, low within the background",
+        "facialDetail": "medium; defined brow, nasolabial and jaw lines, simplified skin with no pores or blemish detail",
+        "realismVsStylisation": "stylised proportions with accurate individual likeness; graphic simplification without physical caricature",
+        "backgroundTreatment": "flat blocked shapes, reduced saturation, no fine detail, no text; identifiable as a place but never competing with the face",
+        "preferredFraming": "chest-up three-quarter portrait, head occupying the upper 55% of the frame, generous headroom for cropping"
+      },
+      "promptFragments": {
+        "positive": [
+          "flat cel-shaded comic illustration",
+          "heavy uniform black outline",
+          "two-tone hard-edged shading",
+          "desaturated warm neutral palette with a single accent colour",
+          "simplified flat blocked background, low saturation",
+          "chest-up three-quarter portrait, generous headroom"
+        ],
+        "negative": [
+          "photorealistic", "airbrushed skin", "beautified", "younger than reference", "older than reference",
+          "caricature", "exaggerated features", "anime", "manga", "watercolour", "oil painting", "3d render",
+          "text", "watermark", "signature", "extra limbs", "malformed hands", "detailed background",
+          "changed clothing", "changed hairstyle", "smiling if not requested"
+        ]
+      },
+      "renderTargets": {
+        "minAssetResolutionPx": 2048,
+        "rationale": "Close shots crop to roughly 1500px and extreme shots to 1920px of a 1080p frame. The existing zayavka-v1 assets are ~1250px and therefore already upscale 1.15x–1.47x on close-ups, which is visible as softness. Any future push-in multiplies the problem."
+      },
+      "model": {
+        "provider": "unbound",
+        "note": "Deliberately unset. The pipeline is built against the expression-descriptor contract, not against a model. Fill this in when the compute resource is known."
+      },
+      "theme": {
+        "backgroundColor": "#02090b",
+        "panelGutterPx": 8,
+        "dialogueBarHeightPx": 300,
+        "dialogueBarColor": "#030607",
+        "dialogueBarBorderColor": "#536064",
+        "textColor": "#f6f4ed",
+        "fontFamily": "Arial, Helvetica, sans-serif",
+        "fontFile": null
+      }
+    }
+  ],
+  "plannedPresets": [
+    {
+      "note": "Additional presets are data, not code: a new entry here plus optional model/adapter config, with no change to the storyboard schema or any renderer. Describe each by attributes only, for the reasons in the header note."
+    }
+  ]
+}
