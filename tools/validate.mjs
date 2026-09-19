@@ -35,6 +35,59 @@ const sb = readJson(storyboardPath);
 const brief = briefPath ? readJson(resolve(briefPath)) : null;
 const devices = readJson(resolve(ROOT, 'catalog/devices.json'));
 const schema = readJson(resolve(ROOT, 'schema/storyboard.schema.json'));
+const invariants = readJson(resolve(ROOT, 'catalog/invariants.json'));
+const stylePresets = readJson(resolve(ROOT, 'catalog/style-presets.json'));
+
+// --- provenance and thresholds -------------------------------------------
+// Thresholds are catalog data, not literals in this file. A number sitting in code cannot
+// carry the record of who chose it, and every one of these was chosen rather than measured.
+const ruleOf = new Map(invariants.rules.map((r) => [r.id, r]));
+
+// House-style findings are printed and written to the JSON output, but excluded from the
+// defect count: a run is not broken because it disagrees with a preference derived from one
+// video. See provenanceMeaning in catalog/invariants.json.
+const DIAGNOSTIC_PROVENANCE = new Set([
+  'style-preset preference',
+  'single-sample prior',
+  'arbitrary initial threshold',
+]);
+
+for (const r of invariants.rules) {
+  if (r.checkedBy !== 'validator') continue;
+  if (r.severity === 'error' && DIAGNOSTIC_PROVENANCE.has(r.provenance)) {
+    console.error(`catalog inconsistency: ${r.id} is severity "error" but provenance "${r.provenance}". An unvalidated preference may not invalidate a storyboard.`);
+    process.exit(2);
+  }
+}
+
+const threshold = (id, key) => {
+  const v = ruleOf.get(id)?.threshold?.[key];
+  if (v === undefined) {
+    console.error(`missing threshold ${id}.${key} in catalog/invariants.json`);
+    process.exit(2);
+  }
+  return v;
+};
+
+// Preset-keyed thresholds. Never substitute another preset's values: an unknown preset must
+// surface as absent coverage, not as silent conformance to limits chosen for a different
+// visual language.
+const skippedRules = [];
+const presetId = sb.style?.presetId ?? null;
+const preset = stylePresets.presets.find((p) => p.id === presetId) ?? null;
+const presetThreshold = (key, ruleId) => {
+  const t = preset?.thresholds?.[key];
+  if (t === undefined) {
+    skippedRules.push({
+      id: ruleId,
+      reason: preset
+        ? `style preset "${presetId}" defines no thresholds.${key}`
+        : `style preset "${presetId}" is not in catalog/style-presets.json`,
+    });
+    return null;
+  }
+  return t.value;
+};
 
 // --- findings -------------------------------------------------------------
 const findings = [];
@@ -50,9 +103,28 @@ const MIRROR_HEAD = {
   'profile-left': 'profile-right',
   'profile-right': 'profile-left',
 };
+// INV-026 duplicate expression ids.
+//
+// Both this validator and the renderer resolve a panel's expressionId through one flat index.
+// A repeated id used to win silently: the later entry replaced the earlier one, so every panel
+// referencing it drew the other character's asset, and the INV-002 ownership check then fired
+// on the innocent panel instead. The first definition is kept so the cascade is at least
+// deterministic, and the duplicate is reported at the sheet that redefines it.
 const entryIndex = new Map();
+const entryOwner = new Map();
 for (const sheet of sb.expressionSheets ?? []) {
-  for (const e of sheet.entries ?? []) entryIndex.set(e.id, { ...e, characterId: sheet.characterId });
+  for (const e of sheet.entries ?? []) {
+    if (entryIndex.has(e.id)) {
+      const owner = entryOwner.get(e.id);
+      err('INV-026', `expressionSheets ${sheet.characterId}`,
+        `expression id "${e.id}" is already defined ${owner === sheet.characterId ? 'earlier in this sheet' : `by "${owner}"`}. ` +
+        'Ids resolve through one flat index, so the duplicate would render the first definition\'s asset. ' +
+        'Expect follow-on INV-002 findings on panels that meant the second one.');
+      continue;
+    }
+    entryOwner.set(e.id, sheet.characterId);
+    entryIndex.set(e.id, { ...e, characterId: sheet.characterId });
+  }
 }
 const entryOf = (panel) => (panel.kind === 'character' ? entryIndex.get(panel.expressionId) : null);
 const effGaze = (panel) => {
@@ -117,8 +189,10 @@ for (const [si, scene] of sb.scenes.entries()) {
       const changed = scene.panels.filter((p, j) => p.expressionId !== prev.panels[j]?.expressionId);
       if (same && changed.length === 0) warn('INV-012', at, 'crossfade between identical panels has no visible effect.');
     }
-    if (dur < 4 || dur > 8) {
-      err('INV-012', at, `crossfade durationFrames=${dur}; must be 4-8. Longer produces a visible double-exposure ghost around the jaw and eyes.`);
+    const cfMin = threshold('INV-012', 'crossfadeDurationFramesMin');
+    const cfMax = threshold('INV-012', 'crossfadeDurationFramesMax');
+    if (dur < cfMin || dur > cfMax) {
+      err('INV-012', at, `crossfade durationFrames=${dur}; must be ${cfMin}-${cfMax}. Longer produces a visible double-exposure ghost around the jaw and eyes.`);
     }
   }
 
@@ -196,7 +270,7 @@ for (const [si, scene] of sb.scenes.entries()) {
 
     // INV-009 reveal derivation
     const expectedReveal = line.text === '' ? 0 : Math.ceil((graphemes(line.text) / sb.project.timing.charactersPerSecond) * sb.project.fps);
-    if (Math.abs((line.revealFrames ?? 0) - expectedReveal) > 1) {
+    if (Math.abs((line.revealFrames ?? 0) - expectedReveal) > threshold('INV-009', 'revealToleranceFrames')) {
       warn('INV-009', lAt, `revealFrames=${line.revealFrames}, derivation gives ${expectedReveal} for ${graphemes(line.text)} characters.`);
     }
     // INV-010 hold comes from the beat table
@@ -253,11 +327,12 @@ for (let i = 1; i < sb.scenes.length; i++) {
 }
 
 // --- INV-011 close-up budget ---------------------------------------------
-if (dialogueScenes.length > 0) {
+const closeUpRatioMax = presetThreshold('closeUpSceneRatioMax', 'INV-011');
+if (dialogueScenes.length > 0 && closeUpRatioMax !== null) {
   const closeCount = dialogueScenes.filter(isCloseUp).length;
   const ratio = closeCount / dialogueScenes.length;
-  if (ratio > 0.35) {
-    warn('INV-011', 'scenes', `${closeCount}/${dialogueScenes.length} dialogue scenes (${(ratio * 100).toFixed(0)}%) are close or extreme. Budget is 35%.`);
+  if (ratio > closeUpRatioMax) {
+    warn('INV-011', 'scenes', `${closeCount}/${dialogueScenes.length} dialogue scenes (${(ratio * 100).toFixed(0)}%) are close or extreme. Budget for preset "${presetId}" is ${(closeUpRatioMax * 100).toFixed(0)}%.`);
   }
   for (let i = 1; i < dialogueScenes.length; i++) {
     if (isCloseUp(dialogueScenes[i - 1]) && isCloseUp(dialogueScenes[i])) {
@@ -278,13 +353,14 @@ for (let i = 0; i < flatLines.length; i++) {
 }
 
 // --- INV-020 monotony ----------------------------------------------------
+const identicalPanelRunMax = presetThreshold('identicalPanelRunMax', 'INV-020');
 let runStart = 0;
-for (let i = 1; i <= dialogueScenes.length; i++) {
+for (let i = 1; identicalPanelRunMax !== null && i <= dialogueScenes.length; i++) {
   const same = i < dialogueScenes.length &&
     JSON.stringify(dialogueScenes[i].panels) === JSON.stringify(dialogueScenes[runStart].panels);
   if (!same) {
     const len = i - runStart;
-    if (len > 4) {
+    if (len > identicalPanelRunMax) {
       warn('INV-020', `scenes ${dialogueScenes[runStart].id}..${dialogueScenes[i - 1].id}`, `${len} consecutive scenes with an identical panel configuration.`);
     }
     runStart = i;
@@ -311,8 +387,9 @@ for (const sheet of sb.expressionSheets) {
     }
   }
   const dialogueEntries = sheet.entries.filter((e) => !(e.suitableFor.length === 1 && e.suitableFor[0] === 'titleCard'));
-  if (dialogueEntries.length > 8) {
-    warn('INV-024', `expressionSheets ${sheet.characterId}`, `${dialogueEntries.length} dialogue expressions; MVP budget is 8.`);
+  const expressionMax = threshold('INV-024', 'dialogueExpressionMax');
+  if (dialogueEntries.length > expressionMax) {
+    warn('INV-024', `expressionSheets ${sheet.characterId}`, `${dialogueEntries.length} dialogue expressions; MVP budget is ${expressionMax}.`);
   }
   if (sheet.basePortraitId && !sheet.entries.some((e) => e.id === sheet.basePortraitId)) {
     err('INV-002', `expressionSheets ${sheet.characterId}`, `basePortraitId "${sheet.basePortraitId}" is not among the entries.`);
@@ -324,8 +401,9 @@ if (brief) {
   // INV-018 duration target
   const seconds = totalExpected / sb.project.fps;
   const target = brief.targetDurationSeconds;
-  if (target && Math.abs(seconds - target) / target > 0.2) {
-    warn('INV-018', 'project', `duration ${seconds.toFixed(1)}s is more than 20% from the ${target}s target.`);
+  const durationTolerance = threshold('INV-018', 'durationToleranceFraction');
+  if (target && Math.abs(seconds - target) / target > durationTolerance) {
+    warn('INV-018', 'project', `duration ${seconds.toFixed(1)}s is more than ${(durationTolerance * 100).toFixed(0)}% from the ${target}s target.`);
   }
   // INV-019 must-include lines
   const allText = flatLines.map(({ l }) => l.text);
@@ -343,23 +421,43 @@ finish();
 
 // --- output --------------------------------------------------------------
 function finish() {
-  const errors = findings.filter((f) => f.severity === 'error');
-  const warnings = findings.filter((f) => f.severity === 'warning');
+  // A finding's class is its severity unless its rule's provenance is house-style, in which
+  // case it is a diagnostic: visible, attributable, and outside the defect count.
+  for (const f of findings) {
+    f.provenance = ruleOf.get(f.id)?.provenance ?? 'unlabelled';
+    f.class = DIAGNOSTIC_PROVENANCE.has(f.provenance) ? 'diagnostic' : f.severity;
+  }
+  const errors = findings.filter((f) => f.class === 'error');
+  const warnings = findings.filter((f) => f.class === 'warning');
+  const diagnostics = findings.filter((f) => f.class === 'diagnostic');
 
   const out = {
     storyboard: storyboardPath.replace(ROOT + '/', ''),
     projectId: sb.project?.id ?? null,
+    stylePresetId: presetId,
     errorCount: errors.length,
     warningCount: warnings.length,
+    diagnosticCount: diagnostics.length,
+    // Rules that could not be evaluated. Absent coverage must not read as a clean result.
+    skippedRules,
     findings,
   };
   if (jsonOut && typeof jsonOut === 'string') {
     writeFileSync(resolve(jsonOut), JSON.stringify(out, null, 2) + '\n');
   }
 
-  const label = { error: 'ERROR  ', warning: 'WARNING' };
-  for (const f of findings) console.log(`${label[f.severity]} ${f.id}  ${f.location}\n         ${f.message}`);
-  console.log(`\n${errors.length} error(s), ${warnings.length} warning(s) — ${out.storyboard}`);
+  const label = { error: 'ERROR     ', warning: 'WARNING   ', diagnostic: 'DIAGNOSTIC' };
+  for (const f of [...errors, ...warnings]) {
+    console.log(`${label[f.class]} ${f.id}  ${f.location}\n           ${f.message}`);
+  }
+  if (diagnostics.length) {
+    console.log('\n--- diagnostics: house-style observations, not defects ---');
+    for (const f of diagnostics) {
+      console.log(`${label[f.class]} ${f.id}  ${f.location}  [${f.provenance}]\n           ${f.message}`);
+    }
+  }
+  for (const s of skippedRules) console.log(`SKIPPED    ${s.id}  ${s.reason}`);
+  console.log(`\n${errors.length} error(s), ${warnings.length} warning(s), ${diagnostics.length} diagnostic(s) — ${out.storyboard}`);
 
   process.exit(errors.length > 0 || (strict && warnings.length > 0) ? 1 : 0);
 }

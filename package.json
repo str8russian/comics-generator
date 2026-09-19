@@ -8,6 +8,7 @@
     "golden": "node tools/build-golden.mjs",
     "validate": "node tools/validate.mjs",
     "metrics": "node tools/metrics.mjs",
+    "mutations": "node tools/mutations.mjs",
     "check": "node tools/build-golden.mjs && node tools/validate.mjs golden/zayavka-full/storyboard.json && node tools/metrics.mjs golden/zayavka-full/storyboard.json"
   },
   "dependencies": {

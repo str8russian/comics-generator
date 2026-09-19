@@ -5,142 +5,189 @@
     "error": "Output is invalid. The producing role must repair it before the storyboard is accepted.",
     "warning": "Output is suspicious. Requires either a fix or an explicit recorded justification."
   },
+  "provenanceMeaning": {
+    "note": "Where a rule came from, which is what licenses how hard it may be enforced. The validator counts findings in three buckets derived from this field: errors and warnings are defects, while findings from house-style provenance are reported as diagnostics and excluded from the defect count. A diagnostic is still printed and still written to the JSON output — it is visible, it just does not make a run look broken.",
+    "structural": "Mechanically necessary given the schema, the renderer, or the expression-sheet contract. Nothing subjective and nothing tunable. Always a defect.",
+    "brief-derived": "Computable from the brief. May become a hard check. Counts as a defect.",
+    "style-preset preference": "A property of a visual language, not of storyboards in general. Its threshold lives in catalog/style-presets.json keyed by preset, so a second preset cannot silently break the rule set. Reported as a diagnostic.",
+    "single-sample prior": "Derived from one video (zayavka-v1). Frozen until 5+ videos are accepted. Reported as a diagnostic.",
+    "arbitrary initial threshold": "Nobody validated this number. Recorded as such so it is not mistaken for a measurement. Reported as a diagnostic.",
+    "totalityNote": "'structural' is a fifth label beyond the four named in the handoff. The four describe house-style rules; applying any of them to schema validation or timing arithmetic would be false. Only validator rules carry this field: reviewer and human rules contribute to no automated count, so labelling them would assert a precision nothing checks."
+  },
   "rules": [
     {
       "id": "INV-001", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "The storyboard validates against storyboard.schema.json.",
       "rationale": "Everything downstream assumes structure. An LLM producing prose or TSX cannot be checked at all."
     },
     {
       "id": "INV-002", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "Every panel expressionId exists in that character's expression sheet.",
       "rationale": "Prevents the Director inventing assets that will never be generated.",
       "evidence": "Directly enforces the original requirement to avoid a different image per line."
     },
     {
       "id": "INV-003", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "Every line's speaker has a panel in the same scene.",
       "rationale": "Dialogue is displayed under the speaker's panel. An off-screen speaker has nowhere to put text."
     },
     {
       "id": "INV-004", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "The speaking character's expression entry lists 'speaking' in suitableFor.",
       "rationale": "A neutral image while the character talks reads as a bug.",
       "evidence": "zayavka-v1: 'When Veronika started speaking again, her image sometimes remained neutral.'"
     },
     {
       "id": "INV-005", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "Every non-speaking character's expression entry lists 'listening' in suitableFor.",
       "rationale": "This is the listener-gesture bug, made structurally impossible. An active gesturing image is marked speaking-only in the sheet, so it cannot be placed in a listener slot.",
       "evidence": "zayavka-v1: Veronika held an emphatic raised-finger pose while listening to two consecutive lines from Anton."
     },
     {
       "id": "INV-006", "severity": "warning", "checkedBy": "validator",
+      "provenance": "single-sample prior",
       "statement": "A character who is a listener in two adjacent scenes with the same layout must keep the same expression, unless the scene sets deliberateReaction=true with a reason.",
       "rationale": "Listener churn reads as noise. Changing a listener must be a decision, not a side effect.",
       "evidence": "zayavka-v1: 'change the listener's expression only when that change has a clear dramatic purpose.'"
     },
     {
       "id": "INV-007", "severity": "warning", "checkedBy": "validator",
+      "provenance": "single-sample prior",
       "statement": "Between adjacent scenes with the same layout, the same cast in the same slots, AND the same speaker, at most one panel's expression changes, unless deliberateReaction=true with a reason.",
       "rationale": "Restricted to an unchanged speaker on purpose. When the speaker changes, both portraits SHOULD change — the new speaker becomes active and the previous speaker drops to attentive. Flagging that would fight the correct behaviour. The real defect is churn while the same person keeps talking.",
       "evidence": "zayavka-v1: 'When Anton began speaking, both portraits changed' — the reported bug was Veronika acquiring an active gesture, which INV-005 catches. This rule catches the residual case."
     },
     {
       "id": "INV-008", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "Timing arithmetic is consistent: line duration = preRollFrames + revealFrames + holdFrames; scene.durationFrames = sum of line durations + extraHoldFrames; project.totalDurationFrames = sum of scene durations.",
       "rationale": "Frame counts are authoritative so the renderer stays dumb and every platform agrees. Arithmetic drift here silently desynchronises text from image."
     },
     {
       "id": "INV-009", "severity": "warning", "checkedBy": "validator",
+      "provenance": "arbitrary initial threshold",
+      "threshold": { "revealToleranceFrames": 1, "validated": false, "note": "Wide enough to absorb rounding between the derivation and a hand-entered value, narrow enough to catch invented durations. Neither bound was measured." },
       "statement": "revealFrames is within 1 frame of ceil(graphemeCount / charactersPerSecond * fps).",
       "rationale": "Catches a Director that invents typing durations instead of deriving them, which would make text truncate or hang."
     },
     {
       "id": "INV-010", "severity": "warning", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "holdFrames equals project.timing.beatHoldFrames[line.beat].",
       "rationale": "Rhythm is tuned in one table, not per line by a language model. A deliberate exception must be recorded in scene.reason.",
       "evidence": "The hand-tuned values 18/24/30/36/42/48/54/66 in zayavka-v1 map onto a closed set of beat types."
     },
     {
       "id": "INV-011", "severity": "warning", "checkedBy": "validator",
+      "provenance": "style-preset preference",
+      "thresholdSource": "catalog/style-presets.json → presets[].thresholds.closeUpSceneRatioMax",
       "statement": "Close-up and extreme shots together are at most 35% of dialogue scenes, and no two consecutive scenes are close-ups unless the second is a silentReaction.",
       "rationale": "Close-ups lose their meaning when they are the default framing.",
       "evidence": "zayavka-v1 owner correction: 'avoiding constant close-ups'."
     },
     {
       "id": "INV-012", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
+      "threshold": { "crossfadeDurationFramesMin": 4, "crossfadeDurationFramesMax": 8, "validated": false, "note": "The legality conditions are mechanical, which is why this rule is structural. The 4–8 window itself is an unvalidated threshold: below 4 the dissolve is invisible, above 8 a double-exposure ghost appears around the jaw and eyes, but neither bound was measured frame by frame." },
       "statement": "transitionIn.kind=crossfade is permitted only when the previous scene has identical layout, identical cast in identical slots, identical shot and flip, and differs only in expressionId; and durationFrames is 4–8.",
       "rationale": "A crossfade between different characters or framings reads as a flashback and muddies both images. Between two variants of the same masked portrait it reads as the face changing rather than the image popping."
     },
     {
       "id": "INV-013", "severity": "warning", "checkedBy": "validator",
+      "provenance": "single-sample prior",
       "statement": "In split2, the two panels do not share both the same headOrientation and the same gaze direction.",
       "rationale": "Two characters with identical head tilt looking the same way look absurd together even when each portrait is fine on its own.",
       "evidence": "zayavka-v1: the composition informally described as 'two pigeons'."
     },
     {
       "id": "INV-014", "severity": "warning", "checkedBy": "validator",
+      "provenance": "single-sample prior",
       "statement": "In split2, gaze directions converge: the left panel does not gaze screen-left while the right panel gazes screen-right.",
       "rationale": "Divergent gaze breaks the illusion that the two characters are talking to each other.",
       "evidence": "zayavka-v1: Veronika 'was looking in the wrong direction for a split-screen conversation with Anton'."
     },
     {
       "id": "INV-015", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "flipHorizontal=true only on panels whose expression entry has flipSafe=true.",
       "rationale": "Mirroring corrupts text in the image and asymmetric identifying features."
     },
     {
       "id": "INV-016", "severity": "warning", "checkedBy": "validator",
+      "provenance": "single-sample prior",
       "statement": "Any line with beat=punchline is followed by a scene containing a silentReaction line.",
       "rationale": "Without the reaction beat the joke does not land.",
       "evidence": "zayavka-v1: Roman's closing line required an added silent reaction shot of Anton."
     },
     {
       "id": "INV-017", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "No line text begins with a speaker name followed by a colon.",
       "rationale": "Speaker attribution is positional — text sits under the speaker's panel.",
       "evidence": "zayavka-v1 owner correction: 'removing speaker-name labels and colored cursors'."
     },
     {
       "id": "INV-018", "severity": "warning", "checkedBy": "validator",
+      "provenance": "brief-derived",
+      "threshold": { "durationToleranceFraction": 0.2, "validated": false, "note": "The target comes from the brief, so the rule is brief-derived and counts as a defect. The ±20% band around it is an unvalidated choice." },
       "statement": "Total duration is within 20% of brief.targetDurationSeconds.",
       "rationale": "The Writer's length budget is meaningless if nothing checks it."
     },
     {
       "id": "INV-019", "severity": "error", "checkedBy": "validator",
+      "provenance": "brief-derived",
       "statement": "Every string in brief.mustIncludeLines appears verbatim as some line's text.",
       "rationale": "User-supplied lines must survive editing."
     },
     {
       "id": "INV-020", "severity": "warning", "checkedBy": "validator",
+      "provenance": "style-preset preference",
+      "thresholdSource": "catalog/style-presets.json → presets[].thresholds.identicalPanelRunMax",
       "statement": "No identical panel configuration persists for more than 4 consecutive scenes.",
       "rationale": "Balances against DEV-SUSTAINED-HOLD: long holds are good, but total stasis across a third of the video is not."
     },
     {
       "id": "INV-021", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "Every expression entry referenced by at least one panel; unreferenced entries are reported.",
       "rationale": "An unused entry is a paid-for image that never appears. Points at either a planning error or a missed opportunity."
     },
     {
       "id": "INV-022", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "Every device id cited in scene.devices exists in devices.json with status=active.",
       "rationale": "Prevents the Director claiming a deferred or invented device. Invention belongs in proposedDevices."
     },
     {
       "id": "INV-023", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "Placeholder assets carry both a visibleDescription and a generationPrompt.",
       "rationale": "The visible text is what the proxy render shows; the prompt is what the image pipeline will later consume. Losing either wastes the run."
     },
     {
       "id": "INV-025", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
       "statement": "A line with empty text has beat=silentReaction, and a line with beat=silentReaction has empty text.",
       "rationale": "A silent beat is a deliberate device, not an accidentally blank line. Keeping the two in sync stops an empty line from silently eating screen time."
     },
     {
       "id": "INV-024", "severity": "warning", "checkedBy": "validator",
+      "provenance": "arbitrary initial threshold",
+      "threshold": { "dialogueExpressionMax": 8, "validated": false, "note": "8 was chosen as an MVP budget, not measured. The golden uses a reuse factor of 2.54, which neither confirms nor refutes the cap. Expression-sheet economy is a primary metric, so this number should be revisited from run data rather than defended." },
       "statement": "Each character has at most 8 expression entries that are not titleCard-only.",
       "rationale": "The MVP expression budget. Title-card portraits are a different framing and are budgeted separately, but they are still a generated asset per character."
+    },
+    {
+      "id": "INV-026", "severity": "error", "checkedBy": "validator",
+      "provenance": "structural",
+      "statement": "No expression entry id is defined more than once, within a sheet or across sheets.",
+      "rationale": "The validator and the renderer both resolve a panel's expressionId through one flat index, so a repeated id silently resolves to whichever definition was loaded first. Every panel meaning the other one then renders the wrong character's asset, and the INV-002 ownership check fires on the innocent panel, which points debugging at the wrong artefact.",
+      "evidence": "Not observed in zayavka-v1, which was hand-authored. Added because a Director generating ids from expression names will collide on any shared descriptor (\"neutral\", \"surprised\") the moment two characters have one."
     },
 
     {

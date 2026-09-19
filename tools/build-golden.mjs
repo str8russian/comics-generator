@@ -3,8 +3,11 @@
 //
 // The scene data below is transcribed from Zayavka.tsx and IntroSequences.tsx. The timing
 // constants and the utteranceDuration formula are reproduced exactly, so the emitted
-// totalDurationFrames must equal the shipped video's 4748 frames. That equality is the
-// proof that the JSON format loses nothing from the original composition.
+// totalDurationFrames must equal the shipped video's 4748 frames.
+//
+// That equality proves the timing survived the conversion. It says nothing about the pixels:
+// visual agreement was checked at 15 sampled frames only, so neither this file nor that check
+// supports a claim that the format loses nothing. Full-frame parity is what would.
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';

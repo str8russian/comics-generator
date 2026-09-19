@@ -23,24 +23,32 @@ Read `README.md`, then `docs/CORRECTION_PROCESS.md`.
 ## 2. What exists
 
 Schema for storyboards and briefs; Writer / Editor / Director / Reviewer prompts; an 18-entry device
-catalog; a validator with 25 named rules; an eval harness with 4 case briefs; a golden storyboard
+catalog; a validator with 26 named rules; an eval harness with 4 case briefs; a golden storyboard
 converted from a previously hand-authored 158-second video; and a data-driven Remotion renderer with
 an intro-template registry.
 
 ## 3. Verified facts — state these precisely, do not inflate them
 
-- `npm run check` prints `4748 frames` then `0 error(s), 0 warning(s)`. 4748 matches the shipped
-  video's frame count from `ffprobe` exactly.
+- `npm run check` prints `4748 frames` then `0 error(s), 0 warning(s), 0 diagnostic(s)`. 4748 matches
+  the shipped video's frame count from `ffprobe` exactly.
 - The JSON-driven renderer is pixel-identical to the original hand-written composition at
   **15 sampled frames** (`mse_avg 0.00`). This is **not** full-frame parity. Do not claim it is.
-- `evals/fixtures/broken-storyboard.json` yields 4 errors and 2 warnings, proving that rules
-  INV-005, INV-007, INV-012 and INV-017 fire.
+- `evals/fixtures/broken-storyboard.json` yields 4 errors, 0 warnings and 2 diagnostics, proving that
+  rules INV-005, INV-006, INV-009, INV-012 and INV-017 fire. **Corrected during Task 1:** this entry
+  previously credited the fixture with INV-007, which it never fired — the fixture contains no
+  INV-007 violation. Verified against the pre-Task-1 validator, so this was a bookkeeping error, not
+  a regression. INV-006 and INV-009 were firing and went unrecorded; they are now diagnostics.
 - Golden metrics baseline: 9.1 lines/min, close-up scene ratio 0.158, expression reuse factor 2.54.
 - All four case briefs validate against `schema/brief.schema.json`.
 
-**Known non-fact:** zero findings on the golden does *not* constitute positive coverage for all 25
-rules. It shows the rule set as a whole accepts one artifact. It says nothing about each rule's
-false-positive behaviour near its threshold.
+- `npm run mutations` prints `26/26 rules proved to fire`. One mutation per rule against the golden,
+  asserting the expected finding id appears.
+
+**Known non-fact:** zero findings on the golden does *not* constitute positive coverage for all 26
+rules. It shows the rule set as a whole accepts one artifact. Negative coverage now exists for every
+rule via `npm run mutations` — each rule has been observed to fire on a targeted violation. That is
+still *negative* coverage only: it says nothing about each rule's false-positive behaviour near its
+threshold, which is what the deferred positive boundary tests are for.
 
 **The main open question:** the role prompts have never been executed end to end. Nothing yet
 demonstrates the pipeline can produce a good *new* video.

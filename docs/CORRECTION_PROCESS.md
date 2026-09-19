@@ -54,8 +54,16 @@ whether a likeness is flattering enough to show the depicted person.
 
 **An invariant ships with a failing fixture first.** Take the actual bad output that prompted the
 correction, freeze it under `evals/fixtures/`, write the rule, and confirm it flags that file. A rule
-never observed to fire is indistinguishable from a rule that does not work. `evals/fixtures/broken-storyboard.json`
-exists for exactly this purpose and currently proves INV-005, INV-007, INV-012, and INV-017.
+never observed to fire is indistinguishable from a rule that does not work.
+
+`evals/fixtures/broken-storyboard.json` exists for exactly this purpose and proves INV-005, INV-006,
+INV-009, INV-012 and INV-017. It does **not** prove INV-007, despite earlier notes saying so: the
+fixture contains no INV-007 violation.
+
+Coverage for every rule comes from `tools/mutations.mjs` (`npm run mutations`) — a flat table of
+`rule -> mutation -> expected finding id` that breaks one thing at a time in the golden and asserts
+the rule fires. A new invariant adds a row there as well as a fixture, or it has not been shown to
+work.
 
 **A heuristic ships with a rubric item**, so you can tell later whether adding the line to the prompt
 actually changed anything.
@@ -67,8 +75,12 @@ failure.
 
 ## The rule that keeps this from collapsing
 
-**Role prompts have a hard budget of 60 lines of rules.** When a prompt exceeds it, you may not just
-add. You must either:
+**Role prompts have a guideline budget of 60 lines of rules.** Nothing enforces it and the existing
+prompts already exceed it — the Director is 136 lines, the Writer 81, the Reviewer 83. So treat
+crossing it as the signal to do a promote/retire/merge pass, not as a limit that has been held.
+Deliberately unenforced: a token or line counter would be easy to add and would only measure
+compliance with a number nobody validated. When a prompt exceeds the guideline, prefer not to just
+add. Either:
 
 - **promote** a heuristic to an invariant, moving it out of the prompt into code; or
 - **retire** a rule that has not fired in the last N runs; or
