@@ -1,0 +1,499 @@
+{
+  "schemaVersion": "1.0.0",
+  "minimumRendererVersion": 1,
+  "requiredFeatures": [
+    "layout.single",
+    "layout.split2",
+    "shot.close",
+    "asset.placeholder",
+    "scene.template",
+    "text.typewriter"
+  ],
+  "project": {
+    "id": "telegram-unblock-60s",
+    "title": "Совещание о Telegram",
+    "language": "ru-RU",
+    "targetDurationSeconds": 60,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "totalDurationFrames": 1327,
+    "timing": {
+      "charactersPerSecond": 12,
+      "preRollFrames": 12,
+      "beatHoldFrames": {
+        "listItem": 18,
+        "acknowledgement": 24,
+        "quickBeat": 30,
+        "ordinary": 36,
+        "silentReaction": 42,
+        "emphasis": 48,
+        "punchline": 36,
+        "explanation": 54,
+        "longExplanation": 66
+      }
+    }
+  },
+  "style": {
+    "presetId": "cel-heavy-outline-01",
+    "kenBurnsScale": 1
+  },
+  "theme": {
+    "backgroundColor": "#02090b",
+    "panelGutterPx": 8,
+    "dialogueBarHeightPx": 300,
+    "dialogueBarColor": "#030607",
+    "dialogueBarBorderColor": "#536064",
+    "textColor": "#f6f4ed",
+    "fontFamily": "Arial, Helvetica, sans-serif"
+  },
+  "characters": [
+    {
+      "id": "putin",
+      "displayName": "Владимир Путин",
+      "role": "Президент России",
+      "traits": "Внешне спокоен и статусен, говорит коротко и ожидает немедленного исполнения решений",
+      "storyFunction": "protagonist"
+    },
+    {
+      "id": "peskov",
+      "displayName": "Дмитрий Песков",
+      "role": "Пресс-секретарь президента России",
+      "traits": "Привык к официальным формулировкам, но может оказаться застигнутым врасплох и невольно разрушить серьёзность встречи",
+      "storyFunction": "comic-relief"
+    },
+    {
+      "id": "durov",
+      "displayName": "Павел Дуров",
+      "role": "Основатель Telegram",
+      "traits": "Сдержанный, независимый и настороженный; ожидает, что за любым предложением стоят сложные условия",
+      "storyFunction": "sceptic"
+    }
+  ],
+  "expressionSheets": [
+    {
+      "characterId": "putin",
+      "basePortraitId": "putin.calm-authority",
+      "entries": [
+        {
+          "id": "putin.calm-authority",
+          "label": "Спокойная властность",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "screen-right",
+            "headOrientation": "three-quarter-right",
+            "gesture": "none"
+          },
+          "suitableFor": ["speaking", "listening"],
+          "flipSafe": true,
+          "asset": {
+            "kind": "placeholder",
+            "visibleDescription": "Путин, спокойная властность, сжатые губы, взгляд вправо",
+            "generationPrompt": "chest-up three-quarter portrait of VLADIMIR PUTIN, calm authority, level brows, lips closed, looking screen-right, no gesture"
+          }
+        },
+        {
+          "id": "putin.firm-criterion",
+          "label": "Жёсткий критерий",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 2,
+            "mouth": "closed",
+            "gaze": "screen-right",
+            "headOrientation": "three-quarter-right",
+            "gesture": "none"
+          },
+          "suitableFor": ["speaking", "listening"],
+          "flipSafe": true,
+          "asset": {
+            "kind": "placeholder",
+            "visibleDescription": "Путин, твёрдый взгляд, сведённые брови, губы сжаты",
+            "generationPrompt": "chest-up three-quarter portrait of VLADIMIR PUTIN, firm controlled resolve, brows slightly drawn, lips closed, looking screen-right, no gesture"
+          }
+        },
+        {
+          "id": "putin.deadpan-reaction",
+          "label": "Молчаливое недовольство",
+          "descriptor": {
+            "valence": "comedic",
+            "intensity": 2,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "frontal",
+            "gesture": "none"
+          },
+          "suitableFor": ["listening", "reaction"],
+          "flipSafe": true,
+          "asset": {
+            "kind": "placeholder",
+            "visibleDescription": "Путин, неподвижное недовольство, тяжёлый взгляд в камеру",
+            "generationPrompt": "chest-up frontal portrait of VLADIMIR PUTIN, restrained deadpan displeasure, heavy level gaze to camera, mouth closed, no gesture"
+          }
+        },
+        {
+          "id": "putin.title-portrait",
+          "label": "Титульный портрет",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "frontal",
+            "gesture": "none"
+          },
+          "suitableFor": ["titleCard"],
+          "flipSafe": true,
+          "asset": {
+            "kind": "placeholder",
+            "visibleDescription": "Путин, официальный титульный портрет, спокойный взгляд",
+            "generationPrompt": "waist-up frontal title-card portrait of VLADIMIR PUTIN, formal calm expression, lips closed, looking to camera, no gesture"
+          }
+        }
+      ]
+    },
+    {
+      "characterId": "peskov",
+      "basePortraitId": "peskov.official-deadpan",
+      "entries": [
+        {
+          "id": "peskov.official-deadpan",
+          "label": "Официальный невозмутимый тон",
+          "descriptor": {
+            "valence": "comedic",
+            "intensity": 1,
+            "mouth": "slightly-open",
+            "gaze": "to-camera",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": ["speaking", "listening"],
+          "flipSafe": true,
+          "asset": {
+            "kind": "placeholder",
+            "visibleDescription": "Песков, невозмутимый официоз, едва приоткрытый рот",
+            "generationPrompt": "chest-up three-quarter portrait of DMITRY PESKOV, perfectly official deadpan composure, mouth slightly open, looking to camera, no gesture"
+          }
+        },
+        {
+          "id": "peskov.title-portrait",
+          "label": "Титульный портрет",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "frontal",
+            "gesture": "none"
+          },
+          "suitableFor": ["titleCard"],
+          "flipSafe": true,
+          "asset": {
+            "kind": "placeholder",
+            "visibleDescription": "Песков, официальный титульный портрет, нейтральный взгляд",
+            "generationPrompt": "waist-up frontal title-card portrait of DMITRY PESKOV, neutral formal expression, lips closed, looking to camera, no gesture"
+          }
+        }
+      ]
+    },
+    {
+      "characterId": "durov",
+      "basePortraitId": "durov.guarded-query",
+      "entries": [
+        {
+          "id": "durov.guarded-query",
+          "label": "Настороженный вопрос",
+          "descriptor": {
+            "valence": "negative",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "screen-left",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": ["speaking", "listening"],
+          "flipSafe": true,
+          "asset": {
+            "kind": "placeholder",
+            "visibleDescription": "Дуров, настороженный взгляд влево, губы сжаты",
+            "generationPrompt": "chest-up three-quarter portrait of PAVEL DUROV, guarded scepticism, lips closed, looking screen-left, no gesture"
+          }
+        },
+        {
+          "id": "durov.procedural-sceptic",
+          "label": "Процедурный скепсис",
+          "descriptor": {
+            "valence": "negative",
+            "intensity": 2,
+            "mouth": "slightly-open",
+            "gaze": "screen-left",
+            "headOrientation": "three-quarter-left",
+            "gesture": "none"
+          },
+          "suitableFor": ["speaking", "listening"],
+          "flipSafe": true,
+          "asset": {
+            "kind": "placeholder",
+            "visibleDescription": "Дуров, прищуренный скепсис, взгляд влево",
+            "generationPrompt": "chest-up three-quarter portrait of PAVEL DUROV, pointed procedural scepticism, narrowed eyes, mouth slightly open, looking screen-left, no gesture"
+          }
+        },
+        {
+          "id": "durov.title-portrait",
+          "label": "Титульный портрет",
+          "descriptor": {
+            "valence": "neutral",
+            "intensity": 1,
+            "mouth": "closed",
+            "gaze": "to-camera",
+            "headOrientation": "frontal",
+            "gesture": "none"
+          },
+          "suitableFor": ["titleCard"],
+          "flipSafe": true,
+          "asset": {
+            "kind": "placeholder",
+            "visibleDescription": "Дуров, сдержанный титульный портрет, прямой взгляд",
+            "generationPrompt": "waist-up frontal title-card portrait of PAVEL DUROV, restrained neutral expression, lips closed, looking to camera, no gesture"
+          }
+        }
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "id": "t01",
+      "kind": "template",
+      "templateId": "cast-panel-strip",
+      "slots": {
+        "supertitle": "ВЫМЫШЛЕННАЯ ВСТРЕЧА",
+        "title": "О СНЯТИИ ОГРАНИЧЕНИЙ С TELEGRAM",
+        "putinName": "Владимир Путин",
+        "putinRole": "Президент России",
+        "putinPortrait": {
+          "kind": "placeholder",
+          "visibleDescription": "Путин, официальный титульный портрет, спокойный взгляд",
+          "generationPrompt": "waist-up frontal title-card portrait of VLADIMIR PUTIN, formal calm expression, lips closed, looking to camera, no gesture"
+        },
+        "peskovName": "Дмитрий Песков",
+        "peskovRole": "Пресс-секретарь президента России",
+        "peskovPortrait": {
+          "kind": "placeholder",
+          "visibleDescription": "Песков, официальный титульный портрет, нейтральный взгляд",
+          "generationPrompt": "waist-up frontal title-card portrait of DMITRY PESKOV, neutral formal expression, lips closed, looking to camera, no gesture"
+        },
+        "durovName": "Павел Дуров",
+        "durovRole": "Основатель Telegram",
+        "durovPortrait": {
+          "kind": "placeholder",
+          "visibleDescription": "Дуров, сдержанный титульный портрет, прямой взгляд",
+          "generationPrompt": "waist-up frontal title-card portrait of PAVEL DUROV, restrained neutral expression, lips closed, looking to camera, no gesture"
+        }
+      },
+      "transitionIn": {"kind": "cut"},
+      "durationFrames": 360,
+      "devices": ["DEV-CAST-TITLES"]
+    },
+    {
+      "id": "d01",
+      "kind": "dialogue",
+      "layout": "single",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "putin",
+          "expressionId": "putin.calm-authority",
+          "shot": "medium"
+        }
+      ],
+      "lines": [
+        {
+          "id": "b01",
+          "speakerId": "putin",
+          "text": "Предлагаю снять ограничения с Telegram. Без лишних церемоний.",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 153,
+          "holdFrames": 36,
+          "intent": "Сразу поставить задачу"
+        }
+      ],
+      "transitionIn": {"kind": "cut"},
+      "extraHoldFrames": 0,
+      "durationFrames": 201,
+      "devices": ["DEV-SOLO-EMPHASIS", "DEV-DELAYED-REVEAL"]
+    },
+    {
+      "id": "d02",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "putin",
+          "expressionId": "putin.calm-authority",
+          "shot": "medium"
+        },
+        {
+          "kind": "character",
+          "characterId": "durov",
+          "expressionId": "durov.guarded-query",
+          "shot": "medium"
+        }
+      ],
+      "lines": [
+        {
+          "id": "b02",
+          "speakerId": "durov",
+          "text": "Что потребуется взамен?",
+          "beat": "quickBeat",
+          "preRollFrames": 12,
+          "revealFrames": 58,
+          "holdFrames": 30,
+          "intent": "Обозначить недоверие"
+        }
+      ],
+      "transitionIn": {"kind": "cut"},
+      "extraHoldFrames": 0,
+      "durationFrames": 100,
+      "devices": ["DEV-SPLIT-DIALOGUE", "DEV-DELAYED-REVEAL", "DEV-SPEAKER-SHIFT"]
+    },
+    {
+      "id": "d03",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "putin",
+          "expressionId": "putin.firm-criterion",
+          "shot": "medium"
+        },
+        {
+          "kind": "character",
+          "characterId": "durov",
+          "expressionId": "durov.guarded-query",
+          "shot": "medium"
+        }
+      ],
+      "lines": [
+        {
+          "id": "b03",
+          "speakerId": "putin",
+          "text": "Результат один: Telegram должен заработать.",
+          "beat": "emphasis",
+          "preRollFrames": 12,
+          "revealFrames": 108,
+          "holdFrames": 48,
+          "intent": "Сформулировать жёсткий критерий"
+        }
+      ],
+      "transitionIn": {"kind": "cut"},
+      "extraHoldFrames": 0,
+      "durationFrames": 168,
+      "devices": ["DEV-SPLIT-DIALOGUE", "DEV-SPEAKER-SHIFT"]
+    },
+    {
+      "id": "d04",
+      "kind": "dialogue",
+      "layout": "split2",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "putin",
+          "expressionId": "putin.firm-criterion",
+          "shot": "medium"
+        },
+        {
+          "kind": "character",
+          "characterId": "durov",
+          "expressionId": "durov.procedural-sceptic",
+          "shot": "medium"
+        }
+      ],
+      "lines": [
+        {
+          "id": "b04",
+          "speakerId": "durov",
+          "text": "Значит, сначала вы проверите, что ограничения больше не мешают?",
+          "beat": "ordinary",
+          "preRollFrames": 12,
+          "revealFrames": 158,
+          "holdFrames": 36,
+          "intent": "Выявить процедурную ловушку"
+        }
+      ],
+      "transitionIn": {"kind": "cut"},
+      "extraHoldFrames": 0,
+      "durationFrames": 206,
+      "devices": ["DEV-SPLIT-DIALOGUE", "DEV-SPEAKER-SHIFT"]
+    },
+    {
+      "id": "d05",
+      "kind": "dialogue",
+      "layout": "single",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "peskov",
+          "expressionId": "peskov.official-deadpan",
+          "shot": "medium"
+        }
+      ],
+      "lines": [
+        {
+          "id": "b05",
+          "speakerId": "peskov",
+          "text": "Разумеется. Но сперва согласуем, кто официально нажмёт неофициальную кнопку.",
+          "beat": "punchline",
+          "preRollFrames": 12,
+          "revealFrames": 190,
+          "holdFrames": 36,
+          "intent": "Довести официоз до абсурда"
+        }
+      ],
+      "transitionIn": {"kind": "cut"},
+      "extraHoldFrames": 0,
+      "durationFrames": 238,
+      "devices": ["DEV-SOLO-EMPHASIS"]
+    },
+    {
+      "id": "d06",
+      "kind": "dialogue",
+      "layout": "single",
+      "panels": [
+        {
+          "kind": "character",
+          "characterId": "putin",
+          "expressionId": "putin.deadpan-reaction",
+          "shot": "close"
+        }
+      ],
+      "lines": [
+        {
+          "id": "b06",
+          "speakerId": "putin",
+          "text": "",
+          "beat": "silentReaction",
+          "preRollFrames": 12,
+          "revealFrames": 0,
+          "holdFrames": 42,
+          "intent": "Дать шутке отзвучать"
+        }
+      ],
+      "transitionIn": {"kind": "cut"},
+      "extraHoldFrames": 0,
+      "durationFrames": 54,
+      "devices": ["DEV-CLOSEUP-BEAT", "DEV-SILENT-REACTION"]
+    }
+  ],
+  "proposedDevices": [],
+  "notes": {
+    "hardCutSceneIds": ["d06"],
+    "hardCutReasons": {
+      "d06": "Финальная немая реакция должна мгновенно отсечь панчлайн, а не растворяться в нём."
+    },
+    "problems": []
+  }
+}

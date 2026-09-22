@@ -1,0 +1,73 @@
+{
+  "projectId": "telegram-unblock-60s",
+  "durationSeconds": 44.23,
+  "sceneCount": 7,
+  "dialogueSceneCount": 6,
+  "templateSceneCount": 1,
+  "textCardSceneCount": 0,
+  "lineCount": 6,
+  "spokenLineCount": 5,
+  "silentBeatCount": 1,
+  "meanLineChars": 53.2,
+  "medianLineChars": 61,
+  "maxLineChars": 76,
+  "linesOver120Chars": 0,
+  "linesPerMinute": 8.1,
+  "layoutCounts": {
+    "single": 3,
+    "split2": 3
+  },
+  "shotCounts": {
+    "medium": 8,
+    "close": 1
+  },
+  "closeUpSceneRatio": 0.167,
+  "splitSceneRatio": 0.5,
+  "soloSceneRatio": 0.5,
+  "layoutChangeRatio": 0.4,
+  "beatCounts": {
+    "ordinary": 2,
+    "quickBeat": 1,
+    "emphasis": 1,
+    "punchline": 1,
+    "silentReaction": 1
+  },
+  "meanSceneSeconds": 5.37,
+  "medianSceneSeconds": 6.15,
+  "maxSceneSeconds": 7.93,
+  "expressionChanges": 2,
+  "speakerShifts": 2,
+  "listenerChanges": 0,
+  "longestStaticRun": 1,
+  "distinctExpressionsUsed": 6,
+  "expressionSheetSize": 6,
+  "expressionReuseFactor": 1.5,
+  "placeholderAssetCount": 6,
+  "transitionCounts": {
+    "cut": 7
+  },
+  "deviceCounts": {
+    "DEV-CAST-TITLES": 1,
+    "DEV-SOLO-EMPHASIS": 2,
+    "DEV-DELAYED-REVEAL": 2,
+    "DEV-SPLIT-DIALOGUE": 3,
+    "DEV-SPEAKER-SHIFT": 3,
+    "DEV-CLOSEUP-BEAT": 1,
+    "DEV-SILENT-REACTION": 1
+  },
+  "distinctDevicesUsed": 7,
+  "deviceCoverage": 0.412,
+  "unusedActiveDevices": [
+    "DEV-EXTREME-CLOSEUP",
+    "DEV-ENSEMBLE-REACTION",
+    "DEV-DETAIL-INSERT",
+    "DEV-SUSTAINED-HOLD",
+    "DEV-LIST-OF-THREE",
+    "DEV-BEAT-PAUSE",
+    "DEV-TEXT-INTERSTITIAL",
+    "DEV-TEXT-OUTRO",
+    "DEV-CONTEXT-OPENER",
+    "DEV-GAZE-CORRECTION"
+  ],
+  "proposedDeviceCount": 0
+}

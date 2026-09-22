@@ -1,0 +1,43 @@
+{
+  "storyboard": "evals/runs/2026-09-21T21-37-15_telegram-unblock-staged-v1_e5c5d7/telegram-unblock-60s/03-storyboard.v1.json",
+  "projectId": "telegram-unblock-60s",
+  "stylePresetId": "cel-heavy-outline-01",
+  "errorCount": 3,
+  "warningCount": 1,
+  "diagnosticCount": 0,
+  "skippedRules": [],
+  "findings": [
+    {
+      "id": "INV-021",
+      "severity": "error",
+      "location": "expressionSheets putin",
+      "message": "entry \"putin.title-portrait\" is never used. That is a generated image nobody sees.",
+      "provenance": "structural",
+      "class": "error"
+    },
+    {
+      "id": "INV-021",
+      "severity": "error",
+      "location": "expressionSheets peskov",
+      "message": "entry \"peskov.title-portrait\" is never used. That is a generated image nobody sees.",
+      "provenance": "structural",
+      "class": "error"
+    },
+    {
+      "id": "INV-021",
+      "severity": "error",
+      "location": "expressionSheets durov",
+      "message": "entry \"durov.title-portrait\" is never used. That is a generated image nobody sees.",
+      "provenance": "structural",
+      "class": "error"
+    },
+    {
+      "id": "INV-018",
+      "severity": "warning",
+      "location": "project",
+      "message": "duration 44.2s is more than 20% from the 60s target.",
+      "provenance": "brief-derived",
+      "class": "warning"
+    }
+  ]
+}
