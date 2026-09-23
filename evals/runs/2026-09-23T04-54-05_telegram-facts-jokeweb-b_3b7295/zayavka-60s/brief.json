@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "zayavka-60s",
+  "title": "Заявка, коротко",
+  "language": "ru-RU",
+  "targetDurationSeconds": 60,
+  "stylePresetId": "cel-heavy-outline-01",
+  "tone": {
+    "register": "dry-comedic",
+    "notes": "Тот же тон, что в полной версии, но без разъяснений. Одна мысль, один поворот, одна шутка."
+  },
+  "premise": "Та же комиссия, но времени в три раза меньше. Скептик задаёт один вопрос, получает один ответ, который его переворачивает, и третий участник добивает шуткой.",
+  "desiredEnding": "Сухая бытовая шутка Романа и молчаливая реакция Антона.",
+  "requiredFacts": [
+    "ИИ готовит материалы на сервере, а видео собирается на устройстве пользователя"
+  ],
+  "cast": [
+    { "id": "anton", "displayName": "Антон", "role": "Руководитель контент-проектов", "traits": "Скептичный, прямой, перебивает, но быстро увлекается, когда понимает идею", "storyFunction": "sceptic", "likenessPolicy": "faithful" },
+    { "id": "veronika", "displayName": "Вероника", "role": "Исполнительный директор", "traits": "Спокойно объясняет, держит инициативу, говорит по делу без пафоса", "storyFunction": "explainer", "likenessPolicy": "faithful" },
+    { "id": "roman", "displayName": "Роман", "role": "Исполнительный директор", "traits": "Немногословный, вступает один раз и попадает в точку", "storyFunction": "comic-relief", "likenessPolicy": "faithful" }
+  ],
+  "intro": {
+    "templateId": "cast-panel-strip",
+    "supertitle": "КОНКУРС ИИ-ПРОДУКТОВ",
+    "title": "РАССМОТРЕНИЕ ЗАЯВКИ"
+  },
+  "outroText": ["Ни одна заявка при съёмках этого ролика не пострадала."],
+  "consent": { "hasRightsToPhotos": true, "depictsPublicFigures": false }
+}

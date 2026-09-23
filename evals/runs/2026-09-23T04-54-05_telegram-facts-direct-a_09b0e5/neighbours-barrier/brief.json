@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "neighbours-barrier",
+  "language": "ru-RU",
+  "targetDurationSeconds": 45,
+  "stylePresetId": "cel-heavy-outline-01",
+  "tone": { "register": "comedic", "notes": "Бытовой абсурд, который все узнают. Никто не злодей, просто все правы по-своему." },
+  "premise": "Чат жильцов подъезда обсуждает установку шлагбаума. Один за, одна против, третий предлагает третий вариант, который хуже обоих.",
+  "desiredEnding": "Третий вариант оказывается хуже обоих, и спорщики впервые за всё время соглашаются друг с другом.",
+  "cast": [
+    { "id": "zinaida", "displayName": "Зинаида Петровна", "role": "Председатель совета дома", "traits": "Говорит как на собрании, оперирует правилами, не слышит возражений", "storyFunction": "antagonist" },
+    { "id": "kirill", "displayName": "Кирилл", "role": "Живёт на первом этаже", "traits": "Устал, отвечает коротко, хочет только чтобы его оставили в покое", "storyFunction": "protagonist" },
+    { "id": "genrih", "displayName": "Генрих", "role": "Недавно переехал", "traits": "Энтузиаст, вносит предложения, которые никто не просил", "storyFunction": "comic-relief" }
+  ],
+  "outroText": ["Шлагбаум так и не установили."],
+  "consent": { "hasRightsToPhotos": true, "depictsPublicFigures": false }
+}

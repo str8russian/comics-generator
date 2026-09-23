@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0.0",
+  "id": "minimal-two-hander",
+  "language": "ru-RU",
+  "targetDurationSeconds": 30,
+  "stylePresetId": "cel-heavy-outline-01",
+  "cast": [
+    { "id": "lena", "displayName": "Лена" },
+    { "id": "pavel", "displayName": "Павел" }
+  ],
+  "consent": { "hasRightsToPhotos": true, "depictsPublicFigures": false }
+}

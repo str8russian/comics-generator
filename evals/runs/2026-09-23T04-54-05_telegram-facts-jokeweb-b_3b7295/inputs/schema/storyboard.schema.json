@@ -1,0 +1,393 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://comics-pipeline.local/schema/storyboard-1.0.0.json",
+  "title": "Video Comic Storyboard",
+  "description": "Platform-neutral description of a dialogue-driven video comic. Authoritative for timing: every duration is an explicit frame count. Renderers must not compute durations.",
+  "type": "object",
+  "required": ["schemaVersion", "project", "style", "characters", "expressionSheets", "scenes"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "minimumRendererVersion": { "type": "integer", "minimum": 1, "default": 1 },
+    "requiredFeatures": {
+      "description": "Feature tokens the renderer must support. A renderer that does not recognise a token must refuse the project and name the token.",
+      "type": "array",
+      "items": {
+        "enum": [
+          "layout.single", "layout.split2", "layout.split3",
+          "panel.insert", "panel.flip", "shot.close", "shot.extreme",
+          "asset.placeholder", "scene.textCard", "scene.template",
+          "transition.crossfade", "transition.fadeFromBlack",
+          "text.typewriter", "camera.kenBurns"
+        ]
+      },
+      "uniqueItems": true
+    },
+
+    "project": {
+      "type": "object",
+      "required": ["id", "language", "width", "height", "fps", "timing", "totalDurationFrames"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string" },
+        "language": { "type": "string", "description": "BCP-47 tag, e.g. ru-RU" },
+        "targetDurationSeconds": { "type": "number", "exclusiveMinimum": 0 },
+        "width": { "type": "integer", "enum": [1920, 1080] },
+        "height": { "type": "integer", "enum": [1080, 1920] },
+        "fps": { "type": "integer", "enum": [30] },
+        "totalDurationFrames": { "type": "integer", "minimum": 1 },
+        "timing": {
+          "type": "object",
+          "description": "Parameters used to derive frame counts. Recorded so the derivation is auditable and reproducible; the explicit frame counts remain authoritative.",
+          "required": ["charactersPerSecond", "preRollFrames", "beatHoldFrames"],
+          "additionalProperties": false,
+          "properties": {
+            "charactersPerSecond": { "type": "number", "exclusiveMinimum": 0 },
+            "preRollFrames": { "type": "integer", "minimum": 0 },
+            "beatHoldFrames": {
+              "type": "object",
+              "description": "Hold frames per beat type. Tune rhythm here, not in prompts.",
+              "additionalProperties": false,
+              "required": [
+                "listItem", "acknowledgement", "quickBeat", "ordinary",
+                "silentReaction", "emphasis", "punchline", "explanation", "longExplanation"
+              ],
+              "patternProperties": { "^.*$": { "type": "integer", "minimum": 0 } }
+            }
+          }
+        }
+      }
+    },
+
+    "style": {
+      "type": "object",
+      "required": ["presetId"],
+      "additionalProperties": false,
+      "properties": {
+        "presetId": { "type": "string", "minLength": 1 },
+        "kenBurnsScale": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1.12,
+          "description": "Style-level constant slow push-in for single-panel shots. 1.0 disables it. Not a per-scene directorial choice."
+        }
+      }
+    },
+
+    "theme": {
+      "type": "object",
+      "description": "Layout and typography tokens. Present in the bundle so that independent renderers can agree without sharing code.",
+      "additionalProperties": false,
+      "properties": {
+        "backgroundColor": { "$ref": "#/$defs/color" },
+        "panelGutterPx": { "type": "integer", "minimum": 0 },
+        "dialogueBarHeightPx": { "type": "integer", "minimum": 0 },
+        "dialogueBarColor": { "$ref": "#/$defs/color" },
+        "dialogueBarBorderColor": { "$ref": "#/$defs/color" },
+        "textColor": { "$ref": "#/$defs/color" },
+        "fontFamily": { "type": "string" },
+        "fontFile": { "type": "string", "description": "Path inside the bundle. Required for cross-renderer text-layout parity." }
+      }
+    },
+
+    "characters": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["id", "displayName"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/slug" },
+          "displayName": { "type": "string", "minLength": 1 },
+          "role": { "type": "string" },
+          "traits": { "type": "string" },
+          "storyFunction": { "type": "string" }
+        }
+      }
+    },
+
+    "expressionSheets": {
+      "description": "The bounded set of images that exist for each character. The director may only reference entries listed here.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["characterId", "entries"],
+        "additionalProperties": false,
+        "properties": {
+          "characterId": { "$ref": "#/$defs/slug" },
+          "basePortraitId": {
+            "type": "string",
+            "description": "Entry id of the approved base portrait all other entries are derived from."
+          },
+          "entries": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "Hard ceiling includes title-card portraits. Dialogue expressions are separately capped at 8 by INV-024.",
+            "items": { "$ref": "#/$defs/expressionEntry" }
+          }
+        }
+      }
+    },
+
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/dialogueScene" },
+          { "$ref": "#/$defs/textCardScene" },
+          { "$ref": "#/$defs/templateScene" }
+        ]
+      }
+    },
+
+    "proposedDevices": {
+      "description": "Devices the director invented that are NOT in the catalog. Advisory only: never referenced by scenes, never rendered. Reviewed by a human and promoted into the catalog or discarded.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "intent", "schemaExpression"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "intent": { "type": "string" },
+          "schemaExpression": {
+            "type": "string",
+            "description": "How it would be expressed using only existing schema fields. If it cannot be, say so explicitly."
+          },
+          "wouldApplyToSceneIds": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+
+    "notes": {
+      "type": "object",
+      "description": "Free-form rationale from the producing role. Never affects rendering.",
+      "additionalProperties": true
+    }
+  },
+
+  "$defs": {
+    "slug": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+
+    "asset": {
+      "description": "Either a real image or a described placeholder. Placeholders let the whole pipeline run and be evaluated with no image generation at all.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "visibleDescription", "generationPrompt"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "placeholder" },
+            "visibleDescription": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 220,
+              "description": "Short text drawn in the panel in place of the image. Must be readable at a glance."
+            },
+            "generationPrompt": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Full image-generation prompt. Stored, never displayed."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "file" },
+            "path": { "type": "string", "minLength": 1 },
+            "checksum": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 },
+            "generationPrompt": { "type": "string" }
+          }
+        }
+      ]
+    },
+
+    "expressionEntry": {
+      "type": "object",
+      "required": ["id", "label", "descriptor", "suitableFor", "asset"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*\\.[a-z0-9]+(-[a-z0-9]+)*$" },
+        "label": { "type": "string", "minLength": 1 },
+        "descriptor": {
+          "description": "A label alone is not a sufficient brief. 'astonished' produced screaming terror in production; these axes are what disambiguate it.",
+          "type": "object",
+          "required": ["valence", "intensity", "mouth", "gaze", "headOrientation"],
+          "additionalProperties": false,
+          "properties": {
+            "valence": { "enum": ["positive", "negative", "neutral", "fearful", "comedic"] },
+            "intensity": { "type": "integer", "minimum": 1, "maximum": 3 },
+            "mouth": { "enum": ["closed", "slightly-open", "open-speaking", "open-wide"] },
+            "gaze": { "enum": ["to-camera", "screen-left", "screen-right", "up", "down", "away"] },
+            "headOrientation": {
+              "enum": ["frontal", "three-quarter-left", "three-quarter-right", "profile-left", "profile-right", "tilted-back"]
+            },
+            "gesture": { "enum": ["none", "raised-finger", "open-hand", "both-hands", "closed-fist", "arms-crossed"] }
+          }
+        },
+        "suitableFor": {
+          "description": "Which timeline roles this image may occupy. An active gesturing image is speaking-only; this is what makes the listener-state rule mechanically checkable.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["speaking", "listening", "reaction", "titleCard"] }
+        },
+        "flipSafe": {
+          "type": "boolean",
+          "default": false,
+          "description": "False when the image contains text or an asymmetric identifying feature that mirroring would corrupt."
+        },
+        "asset": { "$ref": "#/$defs/asset" }
+      }
+    },
+
+    "transition": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["cut", "crossfade", "fadeFromBlack"] },
+        "durationFrames": { "type": "integer", "minimum": 0, "maximum": 30 }
+      }
+    },
+
+    "panel": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "characterId", "expressionId", "shot"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "character" },
+            "characterId": { "$ref": "#/$defs/slug" },
+            "expressionId": { "type": "string" },
+            "shot": { "enum": ["wide", "medium", "close", "extreme"] },
+            "flipHorizontal": { "type": "boolean", "default": false },
+            "focalPoint": {
+              "type": "object",
+              "description": "Normalised crop anchor. Preferred over absolute pixel sizes so the same bundle survives a change of asset resolution.",
+              "required": ["x", "y"],
+              "additionalProperties": false,
+              "properties": {
+                "x": { "type": "number", "minimum": 0, "maximum": 1 },
+                "y": { "type": "number", "minimum": 0, "maximum": 1 }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "A non-face panel: a gesture, a prop, a detail. Used by DEV-DETAIL-INSERT.",
+          "required": ["kind", "asset", "shot"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "insert" },
+            "label": { "type": "string" },
+            "asset": { "$ref": "#/$defs/asset" },
+            "shot": { "enum": ["wide", "medium", "close", "extreme"] },
+            "flipHorizontal": { "type": "boolean", "default": false }
+          }
+        }
+      ]
+    },
+
+    "line": {
+      "type": "object",
+      "required": ["id", "speakerId", "text", "beat", "preRollFrames", "revealFrames", "holdFrames"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "speakerId": { "$ref": "#/$defs/slug" },
+        "text": {
+          "type": "string",
+          "description": "Empty string means a silent beat: the speaker's panel is held with no text. Must not be prefixed with a speaker name."
+        },
+        "beat": {
+          "enum": [
+            "listItem", "acknowledgement", "quickBeat", "ordinary",
+            "silentReaction", "emphasis", "punchline", "explanation", "longExplanation"
+          ]
+        },
+        "preRollFrames": { "type": "integer", "minimum": 0 },
+        "revealFrames": { "type": "integer", "minimum": 0, "description": "Typewriter duration. 0 for silent beats." },
+        "holdFrames": { "type": "integer", "minimum": 0 },
+        "intent": { "type": "string", "description": "Why this line exists. Advisory." }
+      }
+    },
+
+    "dialogueScene": {
+      "type": "object",
+      "required": ["id", "kind", "layout", "panels", "lines", "transitionIn", "durationFrames"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "dialogue" },
+        "layout": { "enum": ["single", "split2", "split3"] },
+        "panels": { "type": "array", "minItems": 1, "maxItems": 3, "items": { "$ref": "#/$defs/panel" } },
+        "lines": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/line" } },
+        "transitionIn": { "$ref": "#/$defs/transition" },
+        "extraHoldFrames": { "type": "integer", "minimum": 0, "default": 0 },
+        "durationFrames": { "type": "integer", "minimum": 1 },
+        "devices": { "type": "array", "items": { "type": "string" } },
+        "deliberateReaction": {
+          "type": "boolean",
+          "default": false,
+          "description": "Set true to authorise a listener expression change that would otherwise be flagged as unmotivated. Requires a reason."
+        },
+        "reason": { "type": "string" }
+      }
+    },
+
+    "textCardScene": {
+      "type": "object",
+      "required": ["id", "kind", "lines", "transitionIn", "durationFrames"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "textCard" },
+        "variant": { "enum": ["interstitial", "outro", "chapter"], "default": "interstitial" },
+        "lines": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "type": "string" } },
+        "transitionIn": { "$ref": "#/$defs/transition" },
+        "durationFrames": { "type": "integer", "minimum": 1 },
+        "devices": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "templateScene": {
+      "type": "object",
+      "description": "A pre-authored, non-generated composition (opening card, cast panel strip, context shot). The AI chooses a template id and fills named slots; it never designs the layout.",
+      "required": ["id", "kind", "templateId", "slots", "transitionIn", "durationFrames"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "const": "template" },
+        "templateId": { "type": "string", "minLength": 1 },
+        "slots": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": "string" } },
+              { "$ref": "#/$defs/asset" }
+            ]
+          }
+        },
+        "transitionIn": { "$ref": "#/$defs/transition" },
+        "durationFrames": { "type": "integer", "minimum": 1 },
+        "devices": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
