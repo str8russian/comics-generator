@@ -1,0 +1,25 @@
+{
+  "artifact": "script",
+  "version": 1,
+  "title": "Совещание о Telegram",
+  "beats": [
+    { "id": "b01", "speakerId": "putin", "text": "Предлагаю обсудить снятие ограничений с Telegram. Коротко и по существу." },
+    { "id": "b02", "speakerId": "peskov", "text": "По существу подготовлена справка на сорок восемь страниц." },
+    { "id": "b03", "speakerId": "putin", "text": "Коротко." },
+    { "id": "b04", "speakerId": "peskov", "text": "Тогда оглавление." },
+    { "id": "b05", "speakerId": "durov", "text": "Какие условия?" },
+    { "id": "b06", "speakerId": "putin", "text": "Чтобы работало стабильно." },
+    { "id": "b07", "speakerId": "durov", "text": "Это техническое требование или политическое обещание?" },
+    { "id": "b08", "speakerId": "peskov", "text": "Формулировка проходит межведомственное уточнение." },
+    { "id": "b09", "speakerId": "putin", "text": "То есть?" },
+    { "id": "b10", "speakerId": "peskov", "text": "Пока никто не решается нажать кнопку." },
+    { "id": "b11", "speakerId": "durov", "text": "Кнопка хотя бы существует?" },
+    { "id": "b12", "speakerId": "peskov", "text": "Да. Но она в Telegram." },
+    { "id": "b13", "speakerId": "putin", "text": "И что мешает?" },
+    { "id": "b14", "speakerId": "peskov", "text": "Код подтверждения не приходит." },
+    { "id": "b15", "speakerId": "durov", "text": "Вероятно, из-за ограничений." },
+    { "id": "b16", "speakerId": "putin", "text": "Снимите ограничения, получите код и доложите." },
+    { "id": "b17", "speakerId": "peskov", "text": "А как снять ограничения без кода?" },
+    { "id": "b18", "speakerId": "putin", "text": "Вот это и внесите в оглавление." }
+  ]
+}

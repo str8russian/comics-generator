@@ -1,0 +1,13 @@
+{
+  "warning": "Do not open before the product owner finishes blind evaluation.",
+  "model": "gpt-5.6-sol",
+  "reasoningEffort": "high",
+  "pairs": {
+    "1": { "left": "current-b1", "right": "plain-a1" },
+    "2": { "left": "plain-a2", "right": "current-b2" },
+    "3": { "left": "current-b3", "right": "plain-a3" },
+    "4": { "left": "plain-a4", "right": "current-b4" },
+    "5": { "left": "current-b5", "right": "plain-a5" },
+    "6": { "left": "plain-a6", "right": "current-b6" }
+  }
+}

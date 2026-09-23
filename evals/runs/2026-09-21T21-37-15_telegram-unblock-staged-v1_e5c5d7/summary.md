@@ -47,8 +47,8 @@ invariant (code) / heuristic (prompt + rubric) / device (catalog) / schema gap /
 
 | observation | location | triage | artefact changed |
 |---|---|---|---|
-| Cast-panel intro renders without portraits because supplied slot names do not match the template contract | `t01.slots` | schema gap | none in this run |
-| Fixed four-line deduction for a cast-title intro leaves a 60s brief at 44.23s | shared line-budget guidance | heuristic | none in this run |
-| Script uses no character-specific public material and remains generic | Writer output | research/input hypothesis; attribution deferred | none in this run |
-| Final punchline is not strong enough for release despite Reviewer `accept` | `b05`–`b06` | taste / human gate | none in this run |
-| Editor made one rewrite and no cuts; Reviewer made no findings | role outputs | role value unproven | none in this run |
+| Cast-panel intro renders without portraits because supplied slot names do not match the template contract; the unused title entries were the same bug's mechanical trace | `t01.slots`, title entries | schema gap and failed repair policy | none in this run |
+| Fixed four-line deduction yields five spoken lines plus one short silent beat; 44.23s itself is not a defect because duration is a ceiling | shared line-budget guidance | heuristic | none in this run |
+| Putin's answer does not communicate a response to Durov; the following inference exists only in `intent` | `b02`–`b04` | Writer-stage semantic failure | none in this run |
+| Script uses no character-specific public material and remains generic | Writer output | attribution deferred pending writer-only baseline | none in this run |
+| Editor's sole rewrite worsens the question-answer link; Reviewer still returns `accept` | role outputs | current Editor and Reviewer value unproven | none in this run |

@@ -6,10 +6,11 @@ rendering were complete. The sealed human reference was not available to any gen
 ## Outcome
 
 The staged result is mechanically renderable after one repair, but it is not a usable creative
-result. The human reference wins decisively. The generated script has a coherent setup and one safe
-bureaucratic wordplay ending, but it does not exploit the three public personas, does not escalate,
-and contains no essential visual joke. The result could be rewritten for almost any official,
-spokesperson and technology founder without materially changing it.
+result. The human reference wins decisively. The generated script breaks conversational causality at
+the answer to Durov's question; the following inference exists in the `intent` metadata but is not
+communicated by the spoken lines. It also does not exploit the three public personas, does not
+escalate, and contains no essential visual joke. The result could be rewritten for almost any
+official, spokesperson and technology founder without materially changing it.
 
 The machine Reviewer returned `accept`. That verdict means only that it found no remaining issue
 inside its deliberately narrow remit. It explicitly deferred whether the punchline is funny, and it
@@ -19,7 +20,7 @@ did not have enough template-contract information to detect the broken intro bef
 
 | criterion | staged result | judgement |
 |---|---|---|
-| Complete setup, development and landing in 45–60s | Complete but only 44.23s; development consists of one procedural loop | weak / partial |
+| Complete setup, development and landing within the duration ceiling | 44.23s is acceptable in itself, but the dialogue does not establish its intended procedural loop | fail on development, not duration |
 | Distinct function and voice for all three characters | Putin and Durov are legible; Peskov is a generic bureaucrat | partial |
 | Serious opening that escalates | Serious opening, but no escalation: the exchange moves directly to one generic contradiction | fail |
 | Economical, recognisable real-world material | Uses only the premise that Telegram is restricted; no character-specific public material | fail creatively, safe factually |
@@ -54,13 +55,16 @@ intro makes the already short piece feel more underfilled.
 ## Triage
 
 1. **Schema gap:** template-specific required slots are absent from the storyboard contract supplied
-   to the Director. Fix by making the template registry machine-readable to generation and
-   validation (or by expressing template variants in schema), then add a validator mutation for a
-   missing/wrong slot. Do not treat this as a one-off Director typo.
-2. **Heuristic:** the universal “subtract four lines for a cast-title intro” instruction underfills
-   this 60-second case. The budget must be derived from the selected intro's actual duration rather
-   than a fixed line deduction. This run is evidence for revisiting the heuristic, not yet for a new
-   hard invariant.
+   to the Director. The three unused `*.title-portrait` entries and the empty intro were two symptoms
+   of this same gap: the renderer expected a `portraits` array of expression-entry ids, while the
+   Director invented per-character inline slot names. The repair deleted the referenced-capable
+   entries but left three ignored inline assets, clearing the rule without fixing the render or image
+   cost. Make the template registry machine-readable to generation and validation; do not treat this
+   as a one-off Director typo.
+2. **Heuristic:** short duration is not a defect; the target is a ceiling. The relevant issue is that
+   the universal four-line intro deduction yielded five spoken lines plus one silent beat and charged
+   more dialogue capacity than the 12-second intro used. Revisit the accounting only after the
+   writing baseline is established.
 3. **Input/research hypothesis (no artifact changed yet):** without supplied facts or a bounded
    research stage, Writer fell back to generic bureaucracy. The next controlled test should keep the
    prompts unchanged and add a concise, sourced comedy-material packet to the brief/input. If Writer
@@ -68,8 +72,9 @@ intro makes the already short piece feel more underfilled.
    attributed to the Writer prompt.
 4. **Taste / human gate:** the final punchline is too weak for release even though Reviewer accepted
    it. Funny remains a human approval decision in the current architecture.
-5. **Role-value evidence:** Editor made one useful rewrite and no cuts; Reviewer produced no
-   actionable findings. One run is insufficient to remove either role, but neither role has yet
-   justified its cost.
+5. **Role-value evidence:** Editor made one rewrite and no cuts; the rewrite removed the remaining
+   grammatical tether to Durov's question and was not useful. Reviewer produced no actionable
+   findings despite the visible non-sequitur. One run is insufficient to rule out redesigned roles,
+   but neither current role has justified its cost.
 
 No role prompt, schema, validator or catalog was changed in response to this run.

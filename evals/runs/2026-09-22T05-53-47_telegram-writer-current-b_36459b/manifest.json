@@ -1,0 +1,44 @@
+{
+  "runId": "2026-09-22T05-53-47_telegram-writer-current-b_36459b",
+  "createdAt": "2026-09-22T05:53:47.769Z",
+  "label": "telegram-writer-current-b",
+  "model": "openai/gpt-5.6-sol",
+  "generation": {
+    "temperature": null,
+    "topP": null,
+    "seed": null,
+    "reasoningEffort": "high",
+    "interface": "codex-subagent"
+  },
+  "generationNote": "null means the setting was not recorded. For a run driven by hand through a chat UI that is expected: set PIPELINE_INTERFACE to say so, and do not invent values you did not control.",
+  "promptHashes": {
+    "00-shared-context.md": "8ca0a2968fe8",
+    "01-writer.md": "5af6ef5f42ba",
+    "02-editor.md": "a4372b972ab3",
+    "03-director.md": "d206428e7d5e",
+    "04-reviewer.md": "dd17447011bc",
+    "05-single-shot.md": "41901b31ba74",
+    "06-plain-writer-baseline.md": "1070c0377393"
+  },
+  "catalogHashes": {
+    "devices.json": "b92fd713b35c",
+    "invariants.json": "995928a7a2fb",
+    "style-presets.json": "6b87433260ab",
+    "storyboard.schema.json": "cfa4164e222a",
+    "brief.schema.json": "2e4b51d45c85"
+  },
+  "inputsCopiedTo": "inputs/",
+  "stages": [
+    "01-script",
+    "02-script-edited",
+    "03-storyboard",
+    "04-review"
+  ],
+  "cases": [
+    "minimal-two-hander",
+    "neighbours-barrier",
+    "telegram-unblock-60s",
+    "zayavka-60s",
+    "zayavka-full"
+  ]
+}

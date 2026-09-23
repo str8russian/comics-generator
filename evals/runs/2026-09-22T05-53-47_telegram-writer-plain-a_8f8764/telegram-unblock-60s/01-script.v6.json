@@ -1,0 +1,29 @@
+{
+  "artifact": "script",
+  "version": 1,
+  "title": "Совещание о Telegram",
+  "beats": [
+    { "id": "b01", "speakerId": "putin", "text": "Коллеги, вопрос короткий. Ограничения с Telegram снять." },
+    { "id": "b02", "speakerId": "peskov", "text": "Владимир Владимирович, короткий вопрос требует развёрнутой формулировки." },
+    { "id": "b03", "speakerId": "durov", "text": "И уточнения: снять технически или снять официально, оставив технически?" },
+    { "id": "b04", "speakerId": "putin", "text": "Снять так, чтобы работало." },
+    { "id": "b05", "speakerId": "peskov", "text": "Это существенно сужает пространство для трактовок." },
+    { "id": "b06", "speakerId": "durov", "text": "А условия будут?" },
+    { "id": "b07", "speakerId": "putin", "text": "Будет одно: после снятия не мешать." },
+    { "id": "b08", "speakerId": "durov", "text": "Кому?" },
+    { "id": "b09", "speakerId": "putin", "text": "Никому." },
+    { "id": "b10", "speakerId": "peskov", "text": "Можно записать: не мешать неопределённому кругу лиц." },
+    { "id": "b11", "speakerId": "putin", "text": "Запишите проще." },
+    { "id": "b12", "speakerId": "peskov", "text": "Не мешать." },
+    { "id": "b13", "speakerId": "durov", "text": "Подозрительно разумно." },
+    { "id": "b14", "speakerId": "putin", "text": "Тогда оформляйте." },
+    { "id": "b15", "speakerId": "peskov", "text": "Система просит подтвердить решение кодом." },
+    { "id": "b16", "speakerId": "putin", "text": "Куда прислали?" },
+    { "id": "b17", "speakerId": "peskov", "text": "В Telegram." },
+    { "id": "b18", "speakerId": "durov", "text": "И?" },
+    { "id": "b19", "speakerId": "peskov", "text": "Не приходит." },
+    { "id": "b20", "speakerId": "putin", "text": "Почему?" },
+    { "id": "b21", "speakerId": "peskov", "text": "Из-за ограничений." },
+    { "id": "b22", "speakerId": "putin", "text": "Вот с них и начните." }
+  ]
+}
