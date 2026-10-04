@@ -35,7 +35,7 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "Спокойно говорит Дурову; корпус развёрнут внутрь.",
           "description": "Спокойное выражение; взгляд направлен внутрь, на Дурова; сидит за столом, корпус развёрнут к собеседнику; отдельный жест не задан.",
-          "asset": "image-assets/putin-state-s01-speaking-to-durov-v1.png",
+          "asset": "image-assets/putin-state-s01-speaking-to-durov-v2.png",
           "position": "50% 30%",
           "align": "50% 30%",
           "zoom": 1
@@ -70,7 +70,7 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "Продолжает говорить; взгляд уходит к Пескову вне кадра.",
           "description": "Спокойное выражение; взгляд и лёгкий поворот головы направлены от Дурова к Пескову за пределами кадра; остаётся сидеть; новый жест не вводится.",
-          "asset": "image-assets/putin-state-s03-attention-to-peskov-v1.png",
+          "asset": "image-assets/putin-state-s03-attention-to-peskov-v2.png",
           "position": "50% 28%",
           "align": "50% 28%",
           "zoom": 1
@@ -105,7 +105,7 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "Ожидающе смотрит к Пескову за пределами кадра.",
           "description": "Ожидающее выражение; взгляд направлен к Пескову за пределами кадра; корпус и голова слегка развёрнуты в его сторону; отдельный жест не задан.",
-          "asset": "image-assets/putin-state-s03-attention-to-peskov-v1.png",
+          "asset": "image-assets/frame-f03-putin-s03-landscape-1920x780-v1.png",
           "position": "50% 27%",
           "align": "50% 27%",
           "zoom": 1.04
@@ -121,8 +121,7 @@ window.STORYBOARD_DATA = {
       "source": "ACT-01",
       "provenance": "Источник",
       "silent": true,
-      "note": "Одиночный кадр раскрывает причину паузы. Другие персонажи не нужны.",
-      "dialogue": "Тишина · Песков спит",
+      "note": "Одиночный кадр раскрывает причину паузы. Другие персонажи не нужны.", 
       "panels": [
         {
           "subject": "Песков",
@@ -130,7 +129,7 @@ window.STORYBOARD_DATA = {
           "role": "Действие",
           "brief": "Спит; глаза закрыты, поза сна.",
           "description": "Спящее выражение; глаза закрыты, направления взгляда нет; поза показывает сон; жест и дополнительные детали не заданы.",
-          "asset": "image-assets/peskov-state-s01-sleep-v1.png",
+          "asset": "image-assets/frame-f04-peskov-s01-landscape-1920x1080-v1.png",
           "position": "50% 31%",
           "align": "50% 31%",
           "zoom": 1.05
@@ -155,10 +154,10 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "Резко зовёт Пескова, подавшись вперёд.",
           "description": "Резкое, напряжённое выражение во время крика; взгляд направлен к Пескову за пределами кадра; корпус подан вперёд; отдельный жест руками не задан.",
-          "asset": "image-assets/putin-state-s04-shout-v1.png",
+          "asset": "image-assets/frame-f05-putin-s04-landscape-1920x780-v1.png",
           "position": "50% 30%",
           "align": "50% 30%",
-          "zoom": 1.08
+          "zoom": 1.78
         }
       ]
     },
@@ -172,7 +171,6 @@ window.STORYBOARD_DATA = {
       "provenance": "Источник",
       "silent": true,
       "note": "Контрастный ответ на крик: тот же одиночный принцип, теперь на Пескове.",
-      "dialogue": "Тишина · Песков просыпается в панике",
       "panels": [
         {
           "subject": "Песков",
@@ -180,10 +178,10 @@ window.STORYBOARD_DATA = {
           "role": "Действие",
           "brief": "В панике просыпается; глаза широко раскрыты.",
           "description": "Паническое выражение и широко раскрытые глаза; взгляд направлен к источнику голоса за пределами кадра; поза резко проснувшегося человека; жест руками не задан.",
-          "asset": "image-assets/peskov-state-s02-panic-v1.png",
+          "asset": "image-assets/frame-f06-peskov-s02-landscape-1920x1080-v1.png",
           "position": "50% 28%",
           "align": "50% 28%",
-          "zoom": 1.08
+          "zoom": 1.88
         }
       ]
     },
@@ -204,10 +202,10 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "То же паническое состояние, что в F06.",
           "description": "Переиспользуется состояние F06: паническое выражение, широко раскрытые глаза, взгляд к источнику голоса за пределами кадра и поза резко проснувшегося человека; новый жест не добавляется.",
-          "asset": "image-assets/peskov-state-s02-panic-v1.png",
+          "asset": "image-assets/frame-f06-peskov-s02-landscape-1920x1080-v1.png",
           "position": "50% 31%",
           "align": "50% 31%",
-          "zoom": 1
+          "zoom": 1.55
         }
       ]
     },
@@ -228,7 +226,7 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "Сухое раздражение; смотрит внутрь, на Пескова.",
           "description": "Сухое раздражённое выражение; взгляд направлен внутрь, на Пескова; поза спокойная и собранная; отдельный жест не задан.",
-          "asset": "image-assets/putin-state-s05-dry-irritation-v1.png",
+          "asset": "image-assets/putin-state-s05-dry-irritation-v2.png",
           "position": "50% 30%",
           "align": "50% 30%",
           "zoom": 1
@@ -263,7 +261,7 @@ window.STORYBOARD_DATA = {
           "role": "Слушает",
           "brief": "Невозмутимо слушает; взгляд внутрь, на Дурова.",
           "description": "Невозмутимое выражение; взгляд направлен внутрь, на Дурова; поза спокойная и неподвижная; отдельный жест не задан.",
-          "asset": "image-assets/putin-state-s02-listening-to-durov-v1.png",
+          "asset": "image-assets/putin-state-s02-listening-to-durov-v2.png",
           "position": "50% 30%",
           "align": "50% 30%",
           "zoom": 1
@@ -298,7 +296,7 @@ window.STORYBOARD_DATA = {
           "role": "Слушает",
           "brief": "Невозмутимо слушает; взгляд внутрь, на Дурова.",
           "description": "Невозмутимое выражение; взгляд направлен внутрь, на Дурова; поза спокойная и неподвижная; отдельный жест не задан.",
-          "asset": "image-assets/putin-state-s02-listening-to-durov-v1.png",
+          "asset": "image-assets/putin-state-s02-listening-to-durov-v2.png",
           "position": "50% 30%",
           "align": "50% 30%",
           "zoom": 1
@@ -333,7 +331,7 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "Невозмутимо отвечает; взгляд внутрь, на Дурова.",
           "description": "Невозмутимое выражение; взгляд направлен внутрь, на Дурова; поза спокойная и неподвижная; жест не задан.",
-          "asset": "image-assets/putin-state-s01-speaking-to-durov-v1.png",
+          "asset": "image-assets/putin-state-s01-speaking-to-durov-v2.png",
           "position": "50% 30%",
           "align": "50% 30%",
           "zoom": 1
@@ -368,7 +366,7 @@ window.STORYBOARD_DATA = {
           "role": "Слушает",
           "brief": "Невозмутимо слушает; взгляд внутрь, на Дурова.",
           "description": "Невозмутимое выражение; взгляд направлен внутрь, на Дурова; поза спокойная и неподвижная; жест не задан.",
-          "asset": "image-assets/putin-state-s02-listening-to-durov-v1.png",
+          "asset": "image-assets/putin-state-s02-listening-to-durov-v2.png",
           "position": "50% 30%",
           "align": "50% 30%",
           "zoom": 1
@@ -403,7 +401,7 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "Невозмутимо отвечает; взгляд внутрь, на Дурова.",
           "description": "Невозмутимое выражение; взгляд направлен внутрь, на Дурова; поза спокойная и неподвижная; жест не задан.",
-          "asset": "image-assets/putin-state-s01-speaking-to-durov-v1.png",
+          "asset": "image-assets/putin-state-s01-speaking-to-durov-v2.png",
           "position": "50% 30%",
           "align": "50% 30%",
           "zoom": 1
@@ -438,7 +436,7 @@ window.STORYBOARD_DATA = {
           "role": "Слушает",
           "brief": "Невозмутимо слушает; взгляд внутрь, на Дурова.",
           "description": "Невозмутимое выражение; взгляд направлен внутрь, на Дурова; поза спокойная и неподвижная; жест не задан.",
-          "asset": "image-assets/putin-state-s02-listening-to-durov-v1.png",
+          "asset": "image-assets/putin-state-s02-listening-to-durov-v2.png",
           "position": "50% 30%",
           "align": "50% 30%",
           "zoom": 1
@@ -473,10 +471,10 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "Серьёзный крупный план; обращается к Дурову вне кадра.",
           "description": "Серьёзное невозмутимое выражение; взгляд направлен к Дурову за пределами кадра; поза неподвижная; отдельный жест не задан.",
-          "asset": "image-assets/putin-state-s01-speaking-to-durov-v1.png",
+          "asset": "image-assets/frame-f15-f17-putin-s01-landscape-1920x780-v1.png",
           "position": "50% 24%",
           "align": "50% 24%",
-          "zoom": 1.12
+          "zoom": 1.72
         }
       ]
     },
@@ -497,7 +495,7 @@ window.STORYBOARD_DATA = {
           "role": "Слушает",
           "brief": "Невозмутимо слушает; взгляд внутрь, на Дурова.",
           "description": "Невозмутимое выражение; взгляд направлен внутрь, на Дурова; поза спокойная и неподвижная; жест не задан.",
-          "asset": "image-assets/putin-state-s02-listening-to-durov-v1.png",
+          "asset": "image-assets/putin-state-s02-listening-to-durov-v2.png",
           "position": "50% 30%",
           "align": "50% 30%",
           "zoom": 1
@@ -532,10 +530,10 @@ window.STORYBOARD_DATA = {
           "role": "Говорит",
           "brief": "Ровно произносит setup; Дуров остаётся вне кадра.",
           "description": "Невозмутимое выражение; взгляд направлен к Дурову за пределами кадра; поза спокойная и неподвижная; жест не задан.",
-          "asset": "image-assets/putin-state-s01-speaking-to-durov-v1.png",
+          "asset": "image-assets/frame-f15-f17-putin-s01-landscape-1920x780-v1.png",
           "position": "50% 28%",
           "align": "50% 28%",
-          "zoom": 1
+          "zoom": 1.88
         }
       ]
     },

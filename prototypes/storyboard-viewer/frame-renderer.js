@@ -3,7 +3,7 @@
   var WIDTH = 1920;
   var HEIGHT = 1080;
   var DIALOGUE_BAR_HEIGHT = 300;
-  var PANEL_GUTTER = 8;
+  var PANEL_GUTTER = 48;
   var FRAME_BG = "#02090b";
 
   function el(tag, className) {
@@ -37,7 +37,8 @@
     canvas.style.height = HEIGHT + "px";
 
     var strip = el("div", "panel-strip");
-    strip.style.bottom = DIALOGUE_BAR_HEIGHT + "px";
+    var dialogue = typeof frame.dialogue === "string" && frame.dialogue.trim() ? frame.dialogue : "";
+    strip.style.bottom = dialogue ? (DIALOGUE_BAR_HEIGHT + "px") : "0";
 
     panels.forEach(function (panel, index) {
       var column = el("section", "panel");
@@ -59,9 +60,13 @@
       strip.append(column);
     });
 
+    if (!dialogue) {
+      canvas.append(strip);
+      return canvas;
+    }
+
     var bar = el("div", "dialogue-bar");
     bar.style.height = DIALOGUE_BAR_HEIGHT + "px";
-    var dialogue = frame.dialogue || "";
     var fontSize = fontSizeFor(dialogue, split);
 
     panels.forEach(function (panel, index) {
