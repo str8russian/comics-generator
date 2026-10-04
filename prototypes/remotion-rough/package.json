@@ -1,0 +1,17 @@
+{
+  "name": "telegram-unblock-remotion-rough",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:spec": "node tools/build-video-spec.mjs",
+    "studio": "npm run build:spec && remotion studio src/index.jsx",
+    "render": "npm run build:spec && remotion render src/index.jsx TelegramUnblockRough out/telegram-unblock-rough-v1.mp4 --codec=h264"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.532",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.532"
+  }
+}
