@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="">
+  <meta name="theme-color" content="#e8e9eb">
+  <title></title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23242a30'/%3E%3Cpath d='M14 17h36v30H14z' fill='%23f4f2ec'/%3E%3Cpath d='M14 26h36M26 17v30' stroke='%237b8490' stroke-width='3'/%3E%3Ccircle cx='43' cy='40' r='4' fill='%23d84a3a'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="viewer.css">
+  <script src="storyboard-data.js"></script>
+</head>
+<body class="review-visual">
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Просмотр раскадровки</p>
+        <h1 id="story-title"></h1>
+      </div>
+      <div class="summary" id="story-summary" aria-label="Сводка раскадровки"></div>
+    </header>
+
+    <div class="workspace-bar">
+      <div class="mode-switch" role="group" aria-label="Режим просмотра">
+        <button type="button" data-mode="structure">Структура</button>
+        <button type="button" data-mode="visual">Визуал</button>
+      </div>
+      <button class="metadata-toggle" type="button" data-metadata-toggle>Метаданные</button>
+    </div>
+
+    <div class="legend diagnostic" aria-label="Легенда происхождения">
+      <span><i aria-hidden="true"></i> Основа кадра — авторский источник</span>
+      <span class="derived"><i aria-hidden="true"></i> Постановка — решение раскадровщика (Storyboarder)</span>
+    </div>
+
+    <section class="storyboard-grid" id="storyboard" aria-label="Все кадры раскадровки"></section>
+  </main>
+
+  <dialog id="detail" aria-labelledby="detail-title">
+    <div class="detail-header">
+      <h2 class="detail-title" id="detail-title">Кадр</h2>
+      <div class="detail-toolbar">
+        <div class="mode-switch" role="group" aria-label="Режим просмотра">
+          <button type="button" data-mode="structure">Структура</button>
+          <button type="button" data-mode="visual">Визуал</button>
+        </div>
+        <button class="metadata-toggle" type="button" data-metadata-toggle>Метаданные</button>
+        <button class="close-button" id="close-detail" type="button">Назад к сетке</button>
+      </div>
+    </div>
+    <div class="detail-layout">
+      <div class="frame-host" id="detail-frame"></div>
+      <div class="detail-copy diagnostic">
+        <p class="note-label">Режиссёрская заметка</p>
+        <p class="frame-note" id="detail-note"></p>
+        <dl class="meta-list">
+          <dt>Тип</dt><dd id="detail-type"></dd>
+          <dt>Макет</dt><dd id="detail-layout-meta"></dd>
+          <dt>Основа</dt><dd id="detail-source"></dd>
+          <dt>Происхождение</dt><dd id="detail-provenance"></dd>
+        </dl>
+        <p class="panels-label">Панели</p>
+        <div class="detail-panels" id="detail-panels"></div>
+      </div>
+    </div>
+    <div class="detail-controls">
+      <button class="control" id="prev-frame" type="button">Предыдущий</button>
+      <span class="position" id="detail-position" aria-live="polite"></span>
+      <button class="control" id="next-frame" type="button">Следующий</button>
+    </div>
+    <p class="keys"><kbd>←</kbd> <kbd>→</kbd> соседние кадры · <kbd>Esc</kbd> сетка</p>
+  </dialog>
+
+  <script src="frame-renderer.js"></script>
+  <script src="viewer.js"></script>
+</body>
+</html>
