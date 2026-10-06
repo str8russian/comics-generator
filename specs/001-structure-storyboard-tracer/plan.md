@@ -91,7 +91,7 @@ Historical `prompts/`, `tools/`, `schema/`, `evals/`, and `spikes/` stay outside
 2. The server reads configuration from the environment. See [Provider configuration](#provider-configuration). Those values are never sent to the browser.
 3. The server splits the draft into lossless segments and separators before any model call. Interpret may reference segment ids and an exact quote. It cannot submit numeric offsets. The server slices `draft.text`.
 4. An utterance whose speaker status is `unresolved` blocks readiness. Stage is not called.
-5. Stage sends one `json_object` completion. The payload is the complete frame list in array order. It is not continued if truncated. Dialogue strings and fit offsets are not accepted from the model.
+5. Stage sends one `json_object` completion. The payload is the complete frame list in array order. It is not continued if truncated. The model does not send fit offsets. A directing `quote` is a non-authoritative copy and must resolve to the spoken text.
 6. Schema failure stops the request as `failed`. A schema-valid result that fails source fidelity is `blocked`. A schema-valid, fidelity-valid result is HTTP `checked`, which is not a ready storyboard.
 7. On `checked`, the page stays in loading. It measures dialogue in the browser, runs `overflow.mjs`, and only then shows `ready`. On `blocked` or `failed`, the page shows that state and does not present frames as ready.
 
@@ -139,36 +139,51 @@ Node tests call `compileOverflow` with an injected `(text, { layout, speakerPane
 
 ## Source anchoring
 
-The model does not calculate numeric offsets. Before Interpret, `segment.mjs` scans `draft.text` as a JavaScript string:
+The model does not calculate numeric offsets. A physical line is not a source item. One item may cover several lines, and several ordered items may share one line. `Путин: Привет. (пауза) Дуров: Пока.` is one line and three source items: two utterances and one action.
+
+Before Interpret, `segment.mjs` scans `draft.text` as a JavaScript string:
 
 - A separator is the first match of `\r\n`, otherwise `\n`, otherwise `\r`.
 - A segment is the run between separators, including an empty run. Ids are `seg-0`, `seg-1`, in order.
 - Each segment stores `draftStart` and `draftEnd` such that `draft.text.slice(draftStart, draftEnd) === text`.
-- Separators are server-owned. They are not source items and are not model fields.
 - Concatenating segments and separators in order reproduces `draft.text` exactly.
 
-The model receives `{ id, text }` for every segment, including empty text. Interpret returns `segmentIds` plus, for an utterance, `utteranceQuote`. The schema has no `start` or `end`. A model offset is `additionalProperties` and is `failed` / `invalid-output`, not a fidelity block.
+The model receives `{ id, text }` for every segment, including empty text. Every source item returns `segmentIds` and `sourceQuote`. `segmentIds` is the search window: one contiguous increasing range, which may be one line or several. `sourceQuote` is a non-authoritative exact copy of that item's whole source slice, including an explicit speaker label when the label is part of the slice. The schema has no `start` or `end`. A model offset is `additionalProperties` and is `failed` / `invalid-output`, not a fidelity block.
 
-After the schema passes, the server reconciles each item:
+The server resolves each quote inside its window:
 
-- Segment ids are known, unique inside the item, and a contiguous increasing range.
-- Every non-empty segment id appears in exactly one source item. Source items are ordered by their first segment. Empty segments may sit inside a range and do not need their own item.
-- The item slice `S` is the contiguous draft slice from the first segment's `draftStart` through the last segment's `draftEnd`, including internal separators.
-- An utterance quote must occur exactly once in `S`. Zero matches is `invalid-anchor`. More than one is `ambiguous-anchor`.
-- The accepted quote `Q` is `S`, or, only for `speakerStatus: "explicit"`, `S` with one prefix removed. That prefix is exactly `speakerLabel + ":"` or `speakerLabel + ": "`. No other trimming is accepted. `inferred` and `unresolved` require `Q === S`.
-- An explicit label must be a non-empty exact substring of `S`. An inferred label is metadata and is not required to occur in `S`.
-- The server records absolute UTF-16 offsets of `Q`. Display text is `Q`, not a model string.
+1. The window `H` is the contiguous draft span from the first segment's `draftStart` through the last segment's `draftEnd`, including separators that fall between those segments.
+2. A candidate is a half-open range `[start, end)` inside `H` such that `draft.text.slice(start, end) === sourceQuote`, and both edges are scalar boundaries. A scalar boundary is `0`, `draft.text.length`, or an index that does not fall between a high surrogate and a low surrogate.
+3. Items are considered in array order. An assignment picks one candidate per item so that each item ends at or before the next item starts.
+4. No candidate for an item is `invalid-anchor`. More than one assignment is `ambiguous-anchor`. No ordered assignment, while some selection of candidates is non-overlapping once sorted by start, is `reordered-dialogue`. Otherwise the empty result is `overlapping-anchor`.
+5. Exactly one assignment is accepted. The server records those UTF-16 offsets. The recorded slice is authoritative. The model string is kept only because it compared equal to that slice.
+
+Coverage then walks every code unit:
+
+- A unit in two accepted spans is `overlapping-anchor`.
+- A unit in no span is allowed only when it is server-owned. Server-owned units are segmenter separators, and horizontal whitespace: a code point for which `/\s/u` matches, excluding U+000A, U+000D, U+2028, and U+2029.
+- Any other uncovered unit is `invalid-coverage`. This includes letters, punctuation, emoji, combining marks, and speaker labels that were left outside every quote.
+- Whitespace inside an accepted quote is part of that item. It is not structural.
+
+`empty-draft` means the draft has no code unit outside that server-owned set. The provider is not called.
+
+Spoken dialogue is derived from the accepted slice `Q`. It is not a second model field.
+
+- `explicit`: if `Q` starts with `speakerLabel + ": "`, the spoken text is the remainder after that prefix. Otherwise, if `Q` starts with `speakerLabel + ":"`, the spoken text is the remainder after that shorter prefix. The longer prefix is tested first. The label, the ASCII colon, and that one space stay inside `Q`, so coverage still includes them. They are not part of the spoken text. Any other shape is `invalid-speaker-label`. The remainder must contain a non-server-owned code unit.
+- `inferred` and `unresolved`: the spoken text is `Q`. No prefix is removed. An inferred label is metadata and is not required to occur in `Q`.
+
+Display-block offsets index the spoken text. The absolute draft position of a relative offset `r` is `Q.draftStart + prefixLength + r`.
 
 Coordinate unit, wherever a number remains:
 
 - The unit is the JavaScript UTF-16 code unit, the same index used by `String.prototype.slice` and `indexOf`. It is not a Unicode code point and not a grapheme.
-- An absolute offset indexes `draft.text`. A display-block offset indexes the utterance quote. `draftStart + relative` is valid only because `Q` is a contiguous draft slice.
-- A stored cut is a grapheme boundary from `Intl.Segmenter(undefined, { granularity: "grapheme" })`, which is also a scalar boundary: it is never between a high surrogate and a low surrogate. The stored number is still a UTF-16 index.
-- Planned tests cover Cyrillic slices, an emoji surrogate pair, `е` plus U+0308, and a draft that contains CRLF and a following LF. CRLF is one separator and one grapheme. Joining segments and separators must equal that draft.
+- An absolute offset indexes `draft.text`. A display-block offset indexes the spoken text.
+- A compiler cut is a grapheme boundary from `Intl.Segmenter(undefined, { granularity: "grapheme" })`, which is also a scalar boundary. The stored number is still a UTF-16 index.
+- Planned tests cover two utterances on one line, an utterance and an action on one line, a context note and dialogue on one line, one utterance spanning lines, Cyrillic, an emoji surrogate pair, `е` plus U+0308, CRLF, and a whitespace-only gap. Exactly two occurrences of one quote, each owned by one item in draft order, is one assignment. `Да Да Да` with two items quoting `Да` is `ambiguous-anchor`. A period left outside every quote is `invalid-coverage`. Joining segments and separators must equal the draft.
 
 ## Overflow transformation
 
-Stage returns one frame per utterance. That frame's dialogue reference is the whole accepted quote. The model does not say whether the text fits and does not emit fit offsets.
+Stage returns one frame per utterance. That frame's dialogue reference is the whole spoken text derived from the accepted slice. The model does not say whether the text fits and does not emit fit offsets.
 
 `compileOverflow` creates any additional consecutive frames:
 
@@ -176,13 +191,13 @@ Stage returns one frame per utterance. That frame's dialogue reference is the wh
 - If it does not fit at the minimum size, the compiler binary-searches the longest grapheme prefix that fits at that minimum. A shorter grapheme prefix is assumed to fit when a longer one fits. It then retreats to the latest whitespace grapheme boundary inside that prefix when the prefix before that boundary is non-empty. The whitespace stays at the end of the earlier block. Nothing is inserted or dropped.
 - Pieces replace the Stage frame in place. Ids are `${stageId}#1` through `${stageId}#N` when `N > 1`. Stage ids cannot contain `#`.
 - Array order after that replacement is the only order. There is no `order` field.
-- Each piece stores a half-open UTF-16 range `[start, end)` relative to the utterance quote. Concatenation equals the quote.
+- Each piece stores a half-open UTF-16 range `[start, end)` relative to the spoken text. Concatenation equals that spoken text.
 - Composition copied onto every ordinary overflow piece is `layout`, panel descriptions, and `speakerPanel`. `fontSize` is chosen again for each piece, so a short tail may use a larger size. `origin` stays `source`.
 
 Two exceptions are not fit decisions:
 
 - A source-authored action, context, or note is its own source item. The compiler does not split across source items and does not copy an utterance composition onto an action or derived frame.
-- `directingBeat: true` supplies two or more `segments` whose quotes must concatenate exactly to the utterance, in order. Adjacent segments must differ in layout, `speakerPanel`, or panel description. The frame's own layout, panels, and `speakerPanel` must equal the first segment. The server assigns the relative ranges. The compiler measures each segment and, if a segment still overflows, splits that segment while copying that segment's composition.
+- `directingBeat: true` supplies two or more `segments`. Each `quote` is a non-authoritative copy. The quotes must be the unique exact partition of the spoken text: ordered, non-overlapping, no gap, and concatenation equal to that spoken text. The server records the relative ranges. Adjacent segments must differ in layout, `speakerPanel`, or panel description. The frame's own layout, panels, and `speakerPanel` must equal the first segment. A quote that does not resolve, or a partition with more than one assignment, is `invalid-directing-beat`. The compiler measures each segment and, if a segment still overflows, splits that segment while copying that segment's composition.
 
 A single grapheme that does not fit at the minimum size is `invalid-display-block`. The page does not show a ready storyboard.
 
@@ -194,7 +209,7 @@ The blocked codes and the provider failure kinds are normative in [contracts/sto
 
 `unresolved` is schema-valid and blocks with `unresolved-speaker` before Stage. An utterance with speaker status `none`, or a non-utterance that carries a label, fails the schema and is `invalid-output`.
 
-A derived frame cannot carry a dialogue reference. The deterministic derived-beat check requires the derived origin, no source reference, and the surrounding source anchors defined in the contract. A new factual claim inside a panel description is not something this checker can prove. Spoken text on a derived frame is rejected by the schema.
+A derived frame cannot carry a dialogue reference. Its placement is a gap in the ordered source-item list, including context and notes, as defined in the contract. A new factual claim inside a panel description is not something this checker can prove. Spoken text on a derived frame is rejected by the schema.
 
 ## Provider configuration
 
@@ -250,7 +265,7 @@ See [quickstart.md](./quickstart.md).
 
 - Offline provider tests record `/v1/chat/completions`, `json_object`, per-function `model`, per-function `reasoning_effort`, and `max_completion_tokens` when a limit is configured. They cover `finish_reason` missing, `length`, and a value other than `stop`, plus timeout, non-2xx, invalid JSON, and schema failure. They assert no second Stage request after truncation or after an Interpret failure.
 - Schema tests compile both contracts with Ajv strict mode and cover the speaker, panel-count, derived-frame, and directing-segment combinations.
-- Anchor tests cover Cyrillic, emoji, combining characters, and CRLF reconstruction.
+- Anchor tests cover several items on one line, an item that spans lines, ambiguous repeated text, Cyrillic, emoji, combining characters, CRLF, and whitespace-only gaps.
 - Fidelity tests seed one defect at a time for the blocked codes in the contract.
 - Overflow tests use the injected measurer, not a DOM layout stub.
 - Renderer structure tests use a DOM stub and do not assert fit. A CSS source test locks the measurement declarations.

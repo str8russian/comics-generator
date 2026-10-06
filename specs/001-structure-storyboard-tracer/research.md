@@ -28,9 +28,9 @@ Decisions for this feature only. No new dependency is required. Decisions supers
 
 ## Decision: Server-created segments, not model offsets
 
-- Decision: The server splits the draft into segments and separators before Interpret. The model references segment ids and, for an utterance, an exact quote. The server checks that the quote occurs once and equals the segment slice, with one explicit-label prefix exception. Display-block numbers are produced later by the compiler and are UTF-16 indexes into that quote.
-- Rationale: A model-calculated offset is not a reliability mechanism. The spike showed a schema-valid storyboard can still differ by about 100 characters. Server-owned segments are lossless because joining them with their separators reproduces the draft.
-- Alternatives considered: Trusting model `start` and `end` leaves bounds, surrogate pairs, and CRLF as unexplained model arithmetic. Asking the model for line numbers without a server segment list has the same problem. Trusting a model dialogue string when it happens to match is still model-authored wording.
+- Decision: The server splits the draft into lossless line segments and separators before Interpret. A segment range is a search window, not a source item. Every source item carries a non-authoritative `sourceQuote`. The server accepts the quote only when there is exactly one ordered, non-overlapping assignment inside those windows, then records the UTF-16 offsets itself. Several items may share one line. One item may span lines. Spoken text is the accepted slice, minus an explicit `Label:` or `Label: ` prefix when that prefix is present. Uncovered characters are allowed only for separators and horizontal whitespace. Stage `segments[].quote` is the same kind of non-authoritative copy and must partition the spoken text exactly. Derived-beat placement uses adjacent ids from the full source-item order, including context and notes. `review` lists context and note ids in that same order.
+- Rationale: Loosely structured dialogue can put two utterances and an action on one line, as in `Путин: Привет. (пауза) Дуров: Пока.` One item per physical line cannot represent that. A model-calculated offset is still not a reliability mechanism. The spike showed a schema-valid storyboard can differ by about 100 characters.
+- Alternatives considered: Trusting model `start` and `end` leaves bounds, surrogate pairs, and CRLF as unexplained model arithmetic. Requiring a line break between items rejects a valid paste. Taking the leftmost match whenever a quote repeats would hide an ambiguous anchor. Trusting a model dialogue string that merely looks similar is still model-authored wording.
 
 ## Decision: Stage returns one frame; the compiler splits
 
@@ -85,4 +85,5 @@ Decisions for this feature only. No new dependency is required. Decisions supers
 - `app/tracer/` as the application directory. Replaced by `app/storyboard-web/`.
 - `fitDialogue` exported from the IIFE, and any description of `fontSizeFor` as a capacity test. Replaced by browser `measureDialogue` plus `compileOverflow`.
 - Model-authored draft offsets as the anchoring mechanism. Replaced by server segments and exact quotes.
+- One source item per non-empty physical line, and derived anchors taken only from rendered source frames. Replaced by quote assignment inside a segment range, and by placement in the full source-item order.
 - `schema-invalid` as a blocked code, and one `CONTEST_REQUEST_JSON` object for both functions. Replaced by the failure split and per-function configuration in the contract.

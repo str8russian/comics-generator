@@ -7,7 +7,7 @@ Model payloads are validated with Ajv strict mode against:
 - [interpret-response.schema.json](./interpret-response.schema.json)
 - [stage-response.schema.json](./stage-response.schema.json)
 
-Those schemas contain no numeric offsets and no dialogue strings. A schema failure is `failed` / `invalid-output`. It is not a blocked code. There is no `schema-invalid` code.
+Those schemas contain no numeric offsets. Interpret `sourceQuote` and Stage `segments[].quote` are non-authoritative copies. Each must resolve to an exact server slice of the draft or of the spoken text. The recorded slice is authoritative. A copy that does not resolve is a fidelity block, not accepted wording. A schema failure is `failed` / `invalid-output`. It is not a blocked code. There is no `schema-invalid` code.
 
 ## `POST /api/storyboard`
 
@@ -21,7 +21,7 @@ The page treats only `status: "checked"` as input to fitting. It shows `ready` o
 
 Responses:
 
-- `200` and `{ "status": "checked", "draft": "...", "sourceItems": [], "frames": [], "review": [] }` when schema validation and source fidelity both pass. `frames` follows Stage array order. Each `dialogue` string is a server slice of `draft`. Display-block ranges are utterance-relative UTF-16 indexes. `fontSize` is omitted. The page is still loading.
+- `200` and `{ "status": "checked", "draft": "...", "sourceItems": [], "frames": [], "review": [] }` when schema validation and source fidelity both pass. `frames` follows Stage array order. `review` follows source order. Each `dialogue` string is spoken text derived from a server slice of `draft`. Display-block ranges are UTF-16 indexes into that spoken text. `fontSize` is omitted. The page is still loading.
 - `200` and `{ "status": "blocked", "failures": [{ "code": "string", "sourceItemId": "optional" }] }` when a deterministic source check fails. `frames` is omitted. The checker returns every applicable code for that result.
 - `400` and `{ "status": "failed", "kind": "invalid-request" }` when the JSON is malformed or `draft` is not a string.
 - `413` when the body exceeds `STORYBOARD_MAX_BODY_BYTES` (default 262144). This is the operational ceiling, not the open product input limit.
@@ -38,23 +38,25 @@ The page uses one additional failure that has no HTTP response: `{ "status": "fa
 
 | Code | When it is used |
 |---|---|
-| `empty-draft` | No non-empty server segment. The provider is not called. |
+| `empty-draft` | The draft contains only separators and horizontal whitespace. The provider is not called. |
 | `duplicate-id` | Two source items or two Stage frames share an id. |
-| `invalid-coverage` | Segment ids are unknown, non-contiguous, overlapping, out of order, or leave a non-empty segment uncovered. |
-| `invalid-anchor` | An utterance quote is missing from its slice, or it is not the whole slice and not the one allowed explicit-label prefix. |
-| `ambiguous-anchor` | An utterance quote occurs more than once in its slice. |
-| `invalid-speaker-label` | An explicit label is not an exact substring of the item slice. |
+| `invalid-coverage` | Segment ids are unknown or not one contiguous increasing range, or a code unit outside the server-owned set is in no accepted span. |
+| `invalid-anchor` | `sourceQuote` has no scalar-boundary match inside its segment window. |
+| `ambiguous-anchor` | More than one ordered, non-overlapping assignment of the quotes exists. |
+| `overlapping-anchor` | No ordered assignment exists, and the candidates also cannot be packed without overlap. A code unit in two spans uses this code as well. |
+| `invalid-speaker-label` | An explicit slice does not start with `speakerLabel + ": "` or `speakerLabel + ":"`, or the spoken remainder has no covered source character. |
 | `unresolved-speaker` | An utterance has speaker status `unresolved`. Stage is not called. |
-| `unknown-source-item` | A frame, anchor, or review id does not match a source item. |
+| `unknown-source-item` | A frame, placement, or review id does not match a source item. |
 | `invalid-source-role` | A frame's `sourceRole` does not match that source item's kind. |
 | `unaccounted-source-item` | An utterance or action has no frame, or a context or note is missing from `review`. |
-| `invalid-derived-beat` | A derived frame's anchors are not exactly the nearest surrounding source items. |
-| `invalid-directing-beat` | Directing quotes do not partition the utterance, adjacent segments share a composition, or the frame composition differs from the first segment. |
-| `lost-dialogue` | Part of an accepted utterance quote is absent from the display blocks. |
-| `duplicated-dialogue` | The same utterance span is shown twice. |
-| `reordered-dialogue` | Display blocks or source items are out of draft order. |
-| `changed-wording` | Concatenated display blocks differ from the accepted quote. |
-| `invalid-display-block` | Ranges overlap, leave a gap, leave the quote, split a grapheme, or a single grapheme does not fit at the minimum size. |
+| `invalid-derived-beat` | Placement is not one adjacent gap in the full source-item order, or the frame array puts the beat outside that gap. |
+| `reordered-review` | `review` does not list context and note ids in resolved source order. |
+| `invalid-directing-beat` | Directing quotes do not form the unique exact partition of the spoken text, adjacent segments share a composition, or the frame composition differs from the first segment. |
+| `lost-dialogue` | Part of the spoken text is absent from the display blocks. |
+| `duplicated-dialogue` | The same spoken span is shown twice. |
+| `reordered-dialogue` | Source items are not in draft order, or display blocks are not in spoken order. |
+| `changed-wording` | Concatenated display blocks differ from the spoken text. |
+| `invalid-display-block` | Ranges overlap, leave a gap, leave the spoken text, split a grapheme, or a single grapheme does not fit at the minimum size. |
 
 Speaker combinations, panel counts, `speakerPanel`, and the absence of dialogue on a derived or action frame are schema constraints. When they fail, the response is `502` `invalid-output`, not one of the codes above.
 
@@ -64,29 +66,37 @@ Checked on the Stage payload, before overflow compilation:
 
 - An utterance is accounted for by exactly one frame with `sourceRole: "utterance"`.
 - An action is accounted for by exactly one frame with `sourceRole: "action"`. The HTTP frame carries `outsideFrameText` from that action's server slice. The renderer does not paint it.
-- A context or note is accounted for by exactly one id in Stage `review`. The HTTP `review` array is `{ sourceItemId, kind, text }` with `text` sliced by the server.
+- A context or note is accounted for by exactly one id in Stage `review`. The ids appear in resolved source order. The HTTP `review` array is `{ sourceItemId, kind, text }` with `text` equal to the accepted slice, in that order.
 - Utterance and action ids do not appear in `review`. Context and note ids do not appear as frame source ids.
 
-After compilation, that one utterance frame may be several consecutive frames. They share its `sourceItemId`, and their display blocks partition the quote. That is still one account. It is `duplicated-dialogue` only when a span is repeated. The page runs `lost-dialogue`, `duplicated-dialogue`, `reordered-dialogue`, `changed-wording`, and `invalid-display-block` on the compiler output and can show `blocked` without another HTTP request. The server also runs those codes on the pre-fit frames.
+After compilation, that one utterance frame may be several consecutive frames. They share its `sourceItemId`, and their display blocks partition the spoken text. That is still one account. It is `duplicated-dialogue` only when a span is repeated. The page runs `lost-dialogue`, `duplicated-dialogue`, `reordered-dialogue`, `changed-wording`, and `invalid-display-block` on the compiler output and can show `blocked` without another HTTP request. The server also runs those codes on the pre-fit frames.
 
-### Derived anchors
+### Derived placement
 
-For a derived frame, walk the Stage array. The predecessor is the nearest `origin: "source"` frame before it. The successor is the nearest one after it. Derived frames are skipped. The anchor list is exactly those neighbors' `sourceItemId` values. At least one neighbor must exist. If both exist, both ids are required.
+Placement uses the resolved source-item list, not the list of rendered frames. Context and notes count.
+
+- Both ids: `beforeSourceItemId` is the source item immediately after `afterSourceItemId`. The beat sits in that gap.
+- Only `beforeSourceItemId`: the id is the first source item. The beat sits before it.
+- Only `afterSourceItemId`: the id is the last source item. The beat sits after it.
+- Any other pair, including a pair that skips a context or note, is `invalid-derived-beat`.
+
+Give each frame a sort key. A derived beat in the gap before source index `g` has key `g`. A derived beat after the last item has key `sourceItems.length`. A source frame for item index `k` has key `k + 0.5`. Walking the frame array, these keys must be non-decreasing. Equal keys are allowed only for derived beats in the same gap, and their array order is the order inside the gap. A source key must not repeat.
 
 ### Checked frame shape
 
 Dialogue frame, before overflow compilation:
 
-- `dialogue` is the accepted quote.
-- `displayBlock` is `{ sourceItemId, start: 0, end: quote.length }` in UTF-16 units, unless directing segments already carry server-computed ranges that partition that quote.
+- `dialogue` is the spoken text, after the explicit prefix rule.
+- `displayBlock` is `{ sourceItemId, start: 0, end: dialogue.length }` in UTF-16 units of that spoken text, unless directing segments already carry server-computed ranges that partition it.
 - `speakerPanel` is present.
 - `fontSize` is absent.
 
-Action frame: `dialogue` is `""`, `outsideFrameText` is the action slice, and `speakerPanel` is absent.
+Action frame: `dialogue` is `""`, `outsideFrameText` is the accepted action slice, and `speakerPanel` is absent.
 
-Derived frame: `dialogue` is `""`, anchors are present, and `speakerPanel` is absent.
+Derived frame: `dialogue` is `""`, `placement` is present, and `speakerPanel` is absent.
 
-After compilation, split pieces use `${id}#1` … `${id}#N`, relative display-block ranges, and a `fontSize` from the ladder in the plan. Concatenation of the pieces equals the quote.
+After compilation, split pieces use `${id}#1` … `${id}#N`, relative display-block ranges, and a `fontSize` from the ladder in the plan. Concatenation of the pieces equals the spoken text.
+
 
 ## Provider request
 
@@ -141,10 +151,10 @@ A `length` finish does not start another request. Markdown wrapped around JSON i
 Interpret and Stage model JSON do not carry offsets. Server and compiler offsets use JavaScript UTF-16 code units.
 
 - Absolute offsets index `draft.text`.
-- Display-block offsets index the accepted utterance quote.
-- `quote.draftStart + relative` is valid because the quote is a contiguous draft slice.
+- Display-block offsets index the spoken text. Absolute position is `draftStart + prefixLength + relative`.
+- `sourceQuote` and directing `quote` are matched with `String.prototype.slice`. They do not supply the stored offsets.
 - Compiler cuts are grapheme boundaries from `Intl.Segmenter(undefined, { granularity: "grapheme" })`. Those boundaries are also scalar boundaries, so a cut never falls inside a surrogate pair. The stored index is still UTF-16.
-- Tests include Cyrillic, an emoji surrogate pair, a combining character, and CRLF.
+- Tests include two utterances on one line, an utterance and an action on one line, a context note followed by dialogue on one line, one utterance spanning lines, Cyrillic, an emoji surrogate pair, a combining character, CRLF, and a whitespace-only gap. Exactly two ordered copies of one quote form one assignment. Three copies and two items is `ambiguous-anchor`.
 
 ## HTTP file safety
 

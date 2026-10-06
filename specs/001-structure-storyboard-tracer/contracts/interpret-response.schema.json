@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://comics-pipeline.local/storyboard-web/interpret-response.json",
   "title": "In-session interpretation response",
-  "description": "Source-item references to server-created segments. This object contains no numeric offsets. The server slices the draft.",
+  "description": "Source-item references to server-created segments. This object contains no numeric offsets. sourceQuote is a non-authoritative copy and must match a server-resolved draft slice exactly.",
   "type": "object",
   "additionalProperties": false,
   "required": ["sourceItems"],
@@ -19,11 +19,16 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
     },
     "speakerLabel": { "type": "string", "minLength": 1 },
-    "utteranceQuote": { "type": "string", "minLength": 1 },
+    "sourceQuote": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S",
+      "description": "Non-authoritative exact copy of this item's source slice, including a speaker label when that label is part of the slice. The server locates it. The model string is not authoritative."
+    },
     "sourceItem": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "segmentIds", "speakerStatus"],
+      "required": ["id", "kind", "segmentIds", "speakerStatus", "sourceQuote"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "kind": { "enum": ["utterance", "action", "context", "note"] },
@@ -38,7 +43,7 @@
         },
         "speakerStatus": { "enum": ["explicit", "inferred", "unresolved", "none"] },
         "speakerLabel": { "$ref": "#/$defs/speakerLabel" },
-        "utteranceQuote": { "$ref": "#/$defs/utteranceQuote" }
+        "sourceQuote": { "$ref": "#/$defs/sourceQuote" }
       },
       "allOf": [
         {
@@ -47,10 +52,8 @@
             "required": ["kind"]
           },
           "then": {
-            "required": ["utteranceQuote"],
             "properties": {
-              "speakerStatus": { "enum": ["explicit", "inferred", "unresolved"] },
-              "utteranceQuote": { "$ref": "#/$defs/utteranceQuote" }
+              "speakerStatus": { "enum": ["explicit", "inferred", "unresolved"] }
             }
           }
         },
@@ -62,8 +65,7 @@
           "then": {
             "properties": {
               "speakerStatus": { "const": "none" },
-              "speakerLabel": false,
-              "utteranceQuote": false
+              "speakerLabel": false
             }
           }
         },

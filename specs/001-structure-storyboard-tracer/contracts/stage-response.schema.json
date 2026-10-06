@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://comics-pipeline.local/storyboard-web/stage-response.json",
   "title": "Stage storyboard response",
-  "description": "One completion of frame structure and source references. No authoritative dialogue strings and no fit offsets. Array order is the story order.",
+  "description": "One completion of frame structure and source references. No numeric fit offsets. segments[].quote is a non-authoritative copy and must resolve to an exact partition of the server-derived spoken text. Array order is the story order. review order is source order and is checked locally.",
   "type": "object",
   "additionalProperties": false,
   "required": ["frames", "review"],
@@ -50,12 +50,27 @@
       "items": { "$ref": "#/$defs/panel" }
     },
     "speakerPanel": { "type": "integer", "minimum": 0, "maximum": 1 },
-    "anchorSourceItemIds": {
-      "type": "array",
-      "minItems": 1,
-      "maxItems": 2,
-      "uniqueItems": true,
-      "items": { "$ref": "#/$defs/id" }
+    "placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "afterSourceItemId": { "$ref": "#/$defs/id" },
+        "beforeSourceItemId": { "$ref": "#/$defs/id" }
+      },
+      "anyOf": [
+        {
+          "required": ["afterSourceItemId"],
+          "properties": {
+            "afterSourceItemId": { "$ref": "#/$defs/id" }
+          }
+        },
+        {
+          "required": ["beforeSourceItemId"],
+          "properties": {
+            "beforeSourceItemId": { "$ref": "#/$defs/id" }
+          }
+        }
+      ]
     },
     "segments": {
       "type": "array",
@@ -67,7 +82,11 @@
       "additionalProperties": false,
       "required": ["quote", "layout", "panels", "speakerPanel"],
       "properties": {
-        "quote": { "type": "string", "minLength": 1 },
+        "quote": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Non-authoritative exact slice of the spoken dialogue. The server resolves it. It is not authoritative wording."
+        },
         "layout": { "enum": ["single", "split2"] },
         "speakerPanel": { "$ref": "#/$defs/speakerPanel" },
         "panels": { "$ref": "#/$defs/panels" }
@@ -110,7 +129,7 @@
         "speakerPanel": { "$ref": "#/$defs/speakerPanel" },
         "sourceItemId": { "$ref": "#/$defs/id" },
         "sourceRole": { "enum": ["utterance", "action"] },
-        "anchorSourceItemIds": { "$ref": "#/$defs/anchorSourceItemIds" },
+        "placement": { "$ref": "#/$defs/placement" },
         "directingBeat": { "type": "boolean" },
         "segments": { "$ref": "#/$defs/segments" }
       },
@@ -143,9 +162,9 @@
             "required": ["origin"]
           },
           "then": {
-            "required": ["anchorSourceItemIds"],
+            "required": ["placement"],
             "properties": {
-              "anchorSourceItemIds": { "$ref": "#/$defs/anchorSourceItemIds" },
+              "placement": { "$ref": "#/$defs/placement" },
               "speakerPanel": false,
               "sourceItemId": false,
               "sourceRole": false,
@@ -164,7 +183,7 @@
             "properties": {
               "sourceItemId": { "$ref": "#/$defs/id" },
               "sourceRole": { "enum": ["utterance", "action"] },
-              "anchorSourceItemIds": false
+              "placement": false
             }
           }
         },
