@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { interpretDraft } from "./interpret.mjs";
+import { stageStoryboard } from "./stage.mjs";
 
 export const DEFAULT_MAX_BODY_BYTES = 262144;
 
@@ -95,7 +97,19 @@ function readLimited(req, maxBodyBytes) {
   });
 }
 
-async function handleStoryboard(req, res, maxBodyBytes) {
+function sendOutcome(res, outcome) {
+  if (outcome.status === "blocked") {
+    sendJson(res, 200, { status: "blocked", failures: outcome.failures });
+    return;
+  }
+  if (outcome.status === "failed") {
+    sendJson(res, outcome.httpStatus, { status: "failed", kind: outcome.kind });
+    return;
+  }
+  sendJson(res, 200, outcome.body);
+}
+
+async function handleStoryboard(req, res, { maxBodyBytes, env, fetchImpl }) {
   const declared = req.headers["content-length"];
   if (declared != null && declared !== "") {
     const size = Number(declared);
@@ -125,11 +139,25 @@ async function handleStoryboard(req, res, maxBodyBytes) {
     sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
-  // Storyboard generation is a later pass. This route does not call a provider.
-  sendJson(res, 500, { status: "failed", kind: "configuration" });
+  const interpreted = await interpretDraft({ draft: payload.draft, env, fetchImpl });
+  if (!interpreted.ok) {
+    sendOutcome(res, interpreted);
+    return;
+  }
+  const staged = await stageStoryboard({
+    draft: payload.draft,
+    sourceItems: interpreted.sourceItems,
+    env,
+    fetchImpl,
+  });
+  if (!staged.ok) {
+    sendOutcome(res, staged);
+    return;
+  }
+  sendOutcome(res, staged);
 }
 
-async function handle(req, res, { load, maxBodyBytes }) {
+async function handle(req, res, { load, maxBodyBytes, env, fetchImpl }) {
   const pathname = pathnameOf(req.url);
   const method = req.method || "GET";
   if (pathname == null) {
@@ -141,7 +169,7 @@ async function handle(req, res, { load, maxBodyBytes }) {
       sendEmpty(res, 405, { Allow: "POST" });
       return;
     }
-    await handleStoryboard(req, res, maxBodyBytes);
+    await handleStoryboard(req, res, { maxBodyBytes, env, fetchImpl });
     return;
   }
   const route = routesByPath.get(pathname);
@@ -170,10 +198,10 @@ async function handle(req, res, { load, maxBodyBytes }) {
   res.end(body);
 }
 
-export function createServer({ readFile, maxBodyBytes = DEFAULT_MAX_BODY_BYTES } = {}) {
+export function createServer({ readFile, maxBodyBytes = DEFAULT_MAX_BODY_BYTES, env, fetchImpl } = {}) {
   const load = readFile ?? defaultRead;
   const server = createHttpServer((req, res) => {
-    handle(req, res, { load, maxBodyBytes }).catch(() => {
+    handle(req, res, { load, maxBodyBytes, env, fetchImpl }).catch(() => {
       if (!res.headersSent) sendJson(res, 500, { status: "failed", kind: "configuration" });
     });
   });

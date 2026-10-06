@@ -1,0 +1,88 @@
+body {
+  margin: 0;
+  background: #e7e4dc;
+  color: #1d2428;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 28px 24px 48px;
+}
+
+h1 {
+  margin: 0 0 20px;
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.paste-form {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.paste-form label {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.paste-form textarea {
+  min-height: 180px;
+  padding: 12px;
+  border: 1px solid #9aa3a8;
+  font: 16px/1.45 Arial, Helvetica, sans-serif;
+}
+
+.paste-form button,
+#open-last,
+#close-detail {
+  justify-self: start;
+  padding: 8px 14px;
+  border: 1px solid #1d2428;
+  background: #f7f4ee;
+  font: 15px/1.2 Arial, Helvetica, sans-serif;
+}
+
+.loading,
+.notice {
+  margin: 0 0 16px;
+  font-size: 18px;
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.story-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.outside-frame {
+  margin: 0;
+  max-width: 420px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.detail-layout {
+  display: grid;
+  gap: 12px;
+}
+
+#detail {
+  max-width: calc(100vw - 32px);
+  border: 0;
+  padding: 16px;
+}

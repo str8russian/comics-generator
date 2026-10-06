@@ -1,0 +1,259 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import http from "node:http";
+import test from "node:test";
+import { FONT_LADDER } from "../../../prototypes/storyboard-viewer/frame-renderer.mjs";
+import { compileOverflow } from "../overflow.mjs";
+import { createServer } from "../server.mjs";
+
+const interpretPrompt = readFileSync(new URL("../prompts/interpret.md", import.meta.url), "utf8");
+const stagePrompt = readFileSync(new URL("../prompts/stage.md", import.meta.url), "utf8");
+
+const draft = "Аня: Привет.\n(пауза)\nБорис: Пока.";
+
+function completion(content) {
+  return JSON.stringify({
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: JSON.stringify(content) },
+      finish_reason: "stop",
+    }],
+  });
+}
+
+function interpretBody() {
+  return {
+    sourceItems: [
+      {
+        id: "anya",
+        kind: "utterance",
+        segmentIds: ["seg-0"],
+        speakerStatus: "explicit",
+        speakerLabel: "Аня",
+        sourceQuote: "Аня: Привет.",
+      },
+      {
+        id: "pause",
+        kind: "action",
+        segmentIds: ["seg-1"],
+        speakerStatus: "none",
+        sourceQuote: "(пауза)",
+      },
+      {
+        id: "boris",
+        kind: "utterance",
+        segmentIds: ["seg-2"],
+        speakerStatus: "explicit",
+        speakerLabel: "Борис",
+        sourceQuote: "Борис: Пока.",
+      },
+    ],
+  };
+}
+
+function stageBody() {
+  return {
+    frames: [
+      {
+        id: "fAnya",
+        layout: "single",
+        origin: "source",
+        panels: [{ description: "Аня говорит" }],
+        sourceItemId: "anya",
+        sourceRole: "utterance",
+        speakerPanel: 0,
+      },
+      {
+        id: "fPause",
+        layout: "single",
+        origin: "source",
+        panels: [{ description: "Пауза" }],
+        sourceItemId: "pause",
+        sourceRole: "action",
+      },
+      {
+        id: "fDerived",
+        layout: "split2",
+        origin: "derived",
+        panels: [{ description: "Ждёт" }, { description: "Слушает" }],
+        placement: { afterSourceItemId: "pause", beforeSourceItemId: "boris" },
+      },
+      {
+        id: "fBoris",
+        layout: "split2",
+        origin: "source",
+        panels: [{ description: "Борис слева" }, { description: "Борис справа" }],
+        sourceItemId: "boris",
+        sourceRole: "utterance",
+        speakerPanel: 1,
+      },
+    ],
+    review: [],
+  };
+}
+
+function listen(server) {
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+  });
+}
+
+function close(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+function postDraft(port, text) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ draft: text });
+    const req = http.request({
+      hostname: "127.0.0.1",
+      port,
+      method: "POST",
+      path: "/api/storyboard",
+      headers: {
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(body),
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        resolve({
+          status: res.statusCode,
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+      });
+    });
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+test("returns checked dialogue slices and a last frame after synchronous fitting", async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    const content = calls.length === 1 ? interpretBody() : stageBody();
+    return {
+      status: 200,
+      headers: { get: () => "application/json" },
+      async text() {
+        return completion(content);
+      },
+    };
+  };
+  const server = createServer({
+    env: {
+      BASE_URL: "https://provider.example.test",
+      CONTEST_API_TOKEN: "test-token",
+      CONTEST_MODEL: "test-model",
+    },
+    fetchImpl,
+  });
+  const port = await listen(server);
+  try {
+    const response = await postDraft(port, draft);
+    assert.equal(response.status, 200);
+    const payload = JSON.parse(response.body);
+    assert.equal(payload.status, "checked");
+    assert.equal(payload.status === "ready", false);
+    assert.equal(Object.hasOwn(payload, "frames"), true);
+    const anya = payload.frames.find((frame) => frame.sourceItemId === "anya");
+    const pause = payload.frames.find((frame) => frame.sourceItemId === "pause");
+    const boris = payload.frames.find((frame) => frame.sourceItemId === "boris");
+    assert.equal(anya.dialogue, "Привет.");
+    assert.equal(boris.dialogue, "Пока.");
+    assert.equal(pause.dialogue, "");
+    assert.equal(pause.outsideFrameText, "(пауза)");
+    for (const frame of payload.frames) assert.equal(frame.fontSize, undefined);
+    assert.equal(draft.slice(draft.indexOf("Аня: Привет.") + "Аня: ".length, draft.indexOf("Аня: Привет.") + "Аня: Привет.".length), anya.dialogue);
+    const fitted = compileOverflow(payload.frames, () => true);
+    assert.equal(fitted.ok, true);
+    const lastIndex = fitted.frames.length - 1;
+    assert.equal(fitted.frames[lastIndex].dialogue, "Пока.");
+    assert.equal(fitted.frames[lastIndex].fontSize, FONT_LADDER.split2[0]);
+    assert.equal(fitted.frames[lastIndex].speakerPanel, 1);
+    assert.equal(calls.length, 2);
+    assert.equal(JSON.parse(calls[0].init.body).messages[0].content, interpretPrompt);
+    assert.equal(JSON.parse(calls[1].init.body).messages[0].content, stagePrompt);
+  } finally {
+    await close(server);
+  }
+});
+
+test("does not call Stage when Interpret output is invalid", async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls > 1) throw new Error("Stage was called");
+    return {
+      status: 200,
+      headers: { get: () => "application/json" },
+      async text() {
+        return completion({ sourceItems: [] });
+      },
+    };
+  };
+  const server = createServer({
+    env: {
+      BASE_URL: "https://provider.example.test",
+      CONTEST_API_TOKEN: "test-token",
+      CONTEST_MODEL: "test-model",
+    },
+    fetchImpl,
+  });
+  const port = await listen(server);
+  try {
+    const response = await postDraft(port, draft);
+    assert.equal(response.status, 502);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "invalid-output" });
+    assert.equal(calls, 1);
+  } finally {
+    await close(server);
+  }
+});
+
+test("does not call Stage when the anchor pass fails", async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls > 1) throw new Error("Stage was called");
+    return {
+      status: 200,
+      headers: { get: () => "application/json" },
+      async text() {
+        return completion({
+          sourceItems: [{
+            id: "missing",
+            kind: "utterance",
+            segmentIds: ["seg-0"],
+            speakerStatus: "explicit",
+            speakerLabel: "Аня",
+            sourceQuote: "нет такого",
+          }],
+        });
+      },
+    };
+  };
+  const server = createServer({
+    env: {
+      BASE_URL: "https://provider.example.test",
+      CONTEST_API_TOKEN: "test-token",
+      CONTEST_MODEL: "test-model",
+    },
+    fetchImpl,
+  });
+  const port = await listen(server);
+  try {
+    const response = await postDraft(port, "Аня: да");
+    assert.equal(response.status, 200);
+    const payload = JSON.parse(response.body);
+    assert.equal(payload.status, "blocked");
+    assert.equal(Object.hasOwn(payload, "frames"), false);
+    assert.equal(calls, 1);
+  } finally {
+    await close(server);
+  }
+});
