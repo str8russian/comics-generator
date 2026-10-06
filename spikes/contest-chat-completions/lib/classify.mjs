@@ -123,6 +123,13 @@ export function classifyResponseMetadata(obs) {
   return { classification: missing.length ? 'INCONCLUSIVE' : 'SUPPORTED', missing };
 }
 
+export function aggregateFullStoryboard(classifications) {
+  if (classifications.includes('SUPPORTED')) return 'SUPPORTED';
+  if (classifications.includes('UNSUPPORTED')) return 'UNSUPPORTED';
+  if (classifications.length === 0) return 'UNTESTED';
+  return 'INCONCLUSIVE';
+}
+
 export function classifyFullStoryboard(obs) {
   if (!obs) return 'UNTESTED';
   if (obs.transportError) return 'INCONCLUSIVE';

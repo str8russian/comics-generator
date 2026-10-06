@@ -430,7 +430,8 @@ test('runs the live matrix once against a fake server', async () => {
   const reasoning = exact.report.observations.find((item) => item.id === 'reasoning_effort_low');
   assert.equal(reasoning.acceptance, 'ACCEPTED');
   assert.equal(reasoning.effectiveness, 'NOT_OBSERVABLE');
-  const measured = exact.report.observations.find((item) => item.id === 'full_structure_storyboard');
+  const measured = exact.report.observations.find((item) => item.id === 'full_structure_storyboard_strict');
+  assert.equal(exact.report.observations.some((item) => item.id === 'full_structure_storyboard_json_object_fallback'), false);
   assert.equal(measured.fixtureMatch, true);
   assert.equal(measured.schemaValid, true);
   assert.equal(measured.truncated, false);
@@ -439,6 +440,8 @@ test('runs the live matrix once against a fake server', async () => {
   assert.equal(measured.actualCharLength, measured.expectedCharLength);
   assert.equal(measured.requestShape.outputLimit.field, 'max_completion_tokens');
   assert.equal(measured.requestShape.outputLimit.verified, true);
+  assert.equal(exact.report.compatibleFullPayloadFormat, 'json_schema');
+  assert.equal(exact.report.capabilities.json_schema, 'SUPPORTED');
   assertReportHidesSecrets(exact.report);
 
   const shorter = await runMatrixAgainst((id, body, res, fixtureText) => {
@@ -462,15 +465,22 @@ test('runs the live matrix once against a fake server', async () => {
     }
     writeChat(res, 'pong');
   });
-  assertNineInOrder(shorter.seen);
-  assert.equal(shorter.seen.at(-1).body.response_format.type, 'json_schema');
+  assert.equal(shorter.seen.length, 10);
+  assert.equal(shorter.report.requestsAttempted, 10);
+  assert.equal(shorter.seen.at(-2).body.response_format.type, 'json_schema');
+  assert.equal(shorter.seen.at(-1).body.response_format.type, 'json_object');
   assert.equal(shorter.seen.at(-1).body.max_completion_tokens, fixtureOutputLimit(shorter.fixtureText));
-  const shortened = shorter.report.observations.find((item) => item.id === 'full_structure_storyboard');
+  assert.equal(shorter.seen.at(-1).body.messages[0].content, shorter.seen.at(-2).body.messages[0].content);
+  const shortened = shorter.report.observations.find((item) => item.id === 'full_structure_storyboard_strict');
+  const shortenedFallback = shorter.report.observations.find((item) => item.id === 'full_structure_storyboard_json_object_fallback');
   assert.equal(shortened.schemaValid, true);
   assert.equal(shortened.fixtureMatch, false);
   assert.equal(shortened.truncated, false);
+  assert.equal(shortenedFallback.fixtureMatch, false);
   assert.ok(shortened.actualByteLength < shortened.expectedByteLength);
   assert.equal(shorter.report.capabilities.full_structure_storyboard, 'INCONCLUSIVE');
+  assert.equal(shorter.report.capabilities.json_schema, 'SUPPORTED');
+  assert.equal(shorter.report.compatibleFullPayloadFormat, null);
   assert.doesNotMatch(shorter.report.storyboardSuitability, /Chunking or continuation may be required/);
   assertReportHidesSecrets(shorter.report);
 
@@ -497,12 +507,15 @@ test('runs the live matrix once against a fake server', async () => {
     }
     writeChat(res, 'pong');
   });
-  assertNineInOrder(cappedByDefault.seen);
-  const defaultStory = cappedByDefault.seen.at(-1).body;
+  assert.equal(cappedByDefault.seen.length, 10);
+  const defaultStory = cappedByDefault.seen.at(-2).body;
+  const defaultFallback = cappedByDefault.seen.at(-1).body;
   assert.equal('max_tokens' in defaultStory, false);
   assert.equal('max_completion_tokens' in defaultStory, false);
+  assert.equal('max_completion_tokens' in defaultFallback, false);
   assert.equal(defaultStory.response_format.type, 'json_schema');
-  const truncated = cappedByDefault.report.observations.find((item) => item.id === 'full_structure_storyboard');
+  assert.equal(defaultFallback.response_format.type, 'json_object');
+  const truncated = cappedByDefault.report.observations.find((item) => item.id === 'full_structure_storyboard_strict');
   assert.equal(truncated.truncated, true);
   assert.equal(truncated.explicitOutputLimitVerified, false);
   assert.equal(truncated.fixtureMatch, false);
@@ -546,7 +559,95 @@ test('does not treat a non-conforming json_schema object as verified', async () 
   assert.equal(run.report.capabilities.json_schema, 'INCONCLUSIVE');
   assert.equal(run.report.capabilities.json_object, 'SUPPORTED');
   assert.equal(run.seen.at(-1).body.response_format.type, 'json_object');
+  assert.equal(run.report.observations.some((item) => item.id === 'full_structure_storyboard_json_object_fallback'), false);
   assertReportHidesSecrets(run.report);
+});
+
+test('uses one json_object fallback after a failed strict full storyboard', async () => {
+  const failedStrict = await runMatrixAgainst((id, body, res, fixtureText) => {
+    if (id === 'invalid_body') {
+      writeChat(res, '', { status: 400, error: 'messages must be an array' });
+      return;
+    }
+    if (id === 'output_limit_max_tokens' || id === 'output_limit_max_completion_tokens') {
+      writeChat(res, '1 2 3', { finishReason: 'length', completionTokens: 16 });
+      return;
+    }
+    if (id === 'json_object' || id === 'json_schema') {
+      writeChat(res, '{"ok":true}');
+      return;
+    }
+    if (id === 'full_structure_storyboard' && body.response_format?.type === 'json_schema') {
+      writeChat(res, '', { status: 400, error: 'Invalid JSON' });
+      return;
+    }
+    if (id === 'full_structure_storyboard' && body.response_format?.type === 'json_object') {
+      writeChat(res, fixtureText);
+      return;
+    }
+    writeChat(res, 'pong');
+  });
+  assert.equal(failedStrict.seen.length, 10);
+  assert.equal(failedStrict.report.requestsAttempted, 10);
+  const strictBody = failedStrict.seen.at(-2).body;
+  const fallbackBody = failedStrict.seen.at(-1).body;
+  assert.equal(strictBody.response_format.type, 'json_schema');
+  assert.equal(fallbackBody.response_format.type, 'json_object');
+  assert.equal(fallbackBody.max_completion_tokens, strictBody.max_completion_tokens);
+  assert.equal(fallbackBody.max_completion_tokens, fixtureOutputLimit(failedStrict.fixtureText));
+  assert.equal(fallbackBody.messages[0].content, strictBody.messages[0].content);
+  const strictObs = failedStrict.report.observations.find((item) => item.id === 'full_structure_storyboard_strict');
+  const fallbackObs = failedStrict.report.observations.find((item) => item.id === 'full_structure_storyboard_json_object_fallback');
+  assert.equal(strictObs.httpStatus, 400);
+  assert.equal(strictObs.fixtureMatch, false);
+  assert.equal(fallbackObs.fixtureMatch, true);
+  assert.equal(fallbackObs.schemaValid, true);
+  assert.equal(fallbackObs.truncated, false);
+  assert.equal(fallbackObs.finishReason, 'stop');
+  assert.equal(fallbackObs.usagePresent, true);
+  assert.equal(fallbackObs.outputLimitField, strictObs.outputLimitField);
+  assert.equal(fallbackObs.outputLimitValue, strictObs.outputLimitValue);
+  assert.equal(failedStrict.report.capabilities.full_structure_storyboard, 'SUPPORTED');
+  assert.equal(failedStrict.report.capabilities.json_schema, 'SUPPORTED');
+  assert.match(failedStrict.report.largeStrictSchemaNote, /Small json_schema compatibility was observed/);
+  assert.match(failedStrict.report.largeStrictSchemaNote, /Large strict-schema compatibility was not/);
+  assert.equal(failedStrict.report.compatibleFullPayloadFormat, 'json_object');
+  assert.match(failedStrict.report.planningNote, /local validation and bounded repair/);
+  assertReportHidesSecrets(failedStrict.report);
+
+  const alteredFallback = await runMatrixAgainst((id, body, res, fixtureText) => {
+    if (id === 'invalid_body') {
+      writeChat(res, '', { status: 400, error: 'messages must be an array' });
+      return;
+    }
+    if (id === 'output_limit_max_tokens' || id === 'output_limit_max_completion_tokens') {
+      writeChat(res, '1 2 3', { finishReason: 'length', completionTokens: 16 });
+      return;
+    }
+    if (id === 'json_object' || id === 'json_schema') {
+      writeChat(res, '{"ok":true}');
+      return;
+    }
+    if (id === 'full_structure_storyboard' && body.response_format?.type === 'json_schema') {
+      writeChat(res, '', { status: 400, error: 'Invalid JSON' });
+      return;
+    }
+    if (id === 'full_structure_storyboard' && body.response_format?.type === 'json_object') {
+      const document = JSON.parse(fixtureText);
+      document.frames[0].dialogue = 'Коротко.';
+      writeChat(res, JSON.stringify(document));
+      return;
+    }
+    writeChat(res, 'pong');
+  });
+  assert.equal(alteredFallback.seen.length, 10);
+  assert.equal(alteredFallback.report.capabilities.full_structure_storyboard, 'INCONCLUSIVE');
+  assert.equal(alteredFallback.report.compatibleFullPayloadFormat, null);
+  assert.equal(alteredFallback.report.capabilities.json_schema, 'SUPPORTED');
+  const altered = alteredFallback.report.observations.find((item) => item.id === 'full_structure_storyboard_json_object_fallback');
+  assert.equal(altered.schemaValid, true);
+  assert.equal(altered.fixtureMatch, false);
+  assertReportHidesSecrets(alteredFallback.report);
 });
 
 test('skips the live suite when configuration is absent', () => {

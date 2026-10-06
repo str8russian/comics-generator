@@ -4,6 +4,8 @@ Isolated probe of an OpenAI-compatible `POST /v1/chat/completions` endpoint. It 
 
 The probe schema and the synthetic Russian fixture exist only to measure whether one completion can return a Structure-storyboard-sized JSON document. They are not the application contract. This spike does not modify `schema/`, `tools/validate.mjs`, or `FrameRenderer`.
 
+The accepted live observations are recorded in [FINDINGS.md](FINDINGS.md).
+
 ## Offline
 
 ```sh
@@ -35,6 +37,6 @@ Optional variables, from the same sources:
 
 Do not put the token on a command line, in chat, or in any tracked file. Offline tests invoke the live script directly and do not load `.env.local`.
 
-The live plan makes 9 sequential requests and will not exceed 10. It does not retry. A full-storyboard result is `SUPPORTED` only when the completion finishes normally and the parsed JSON matches the whole fixture. A schema-valid but shorter or altered document is `INCONCLUSIVE`. Chunking is mentioned only when that request used a verified explicit output limit and still did not return the fixture. A 2xx `reasoning_effort` response is recorded as accepted; the level is marked effective only when response metadata echoes it. `json_schema` is compatible only when the object matches the requested probe schema; that is observed compatibility, not proof of universal enforcement. `json_object` treats a parsed object as compatibility and cannot separate server enforcement from the model following the prompt.
+The live plan makes 9 sequential requests. If the full-storyboard attempt uses strict `json_schema` and that attempt returns an HTTP error or stays inconclusive, it makes one `json_object` fallback with the same fixture and output limit. It never exceeds 10 requests and does not retry either attempt. A failed large strict schema does not mark small `json_schema` compatibility unsupported. A full-storyboard result is `SUPPORTED` only when the completion finishes normally and the parsed JSON matches the whole fixture. A schema-valid but shorter or altered document is `INCONCLUSIVE`. Chunking is mentioned only when that request used a verified explicit output limit and still did not return the fixture. A 2xx `reasoning_effort` response is recorded as accepted; the level is marked effective only when response metadata echoes it. `json_schema` is compatible only when the object matches the requested probe schema; that is observed compatibility, not proof of universal enforcement. `json_object` treats a parsed object as compatibility and cannot separate server enforcement from the model following the prompt.
 
 The report records the resolved endpoint path, request shape, HTTP status, content type, `finish_reason`, usage field names, parameter acceptance, effectiveness, and a shortened error. It does not record message content, credentials, query parameters, or the host. The gitignored file is `results/capability-report.json`.

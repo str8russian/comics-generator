@@ -6,6 +6,7 @@ import {
   assessJsonMode,
   assessOutputLimit,
   assessReasoning,
+  aggregateFullStoryboard,
   classifyFullStoryboard,
   classifyInvalidBody,
   classifyMinimal,
@@ -184,6 +185,52 @@ function sizeRejected(result) {
     && /context length|maximum context|too large|too long|payload too|request entity/i.test(result.error ?? '');
 }
 
+function measureFullAttempt(result, fixtureText, outputLimit) {
+  const parsed = tryParseJson(result.content);
+  const validation = parsed.jsonParsed
+    ? validateStructureProbe(parsed.value)
+    : { schemaValid: false, schemaErrors: ['response was not JSON'] };
+  const fixtureMatch = parsed.jsonParsed && jsonValuesEqual(parsed.value, JSON.parse(fixtureText));
+  const content = result.content ?? '';
+  const measured = {
+    transportError: result.transportError,
+    httpStatus: result.httpStatus,
+    finishReason: result.finishReason,
+    jsonParsed: parsed.jsonParsed,
+    schemaValid: validation.schemaValid,
+    fixtureMatch,
+    truncated: result.finishReason === 'length',
+    sizeRejected: sizeRejected(result),
+    explicitOutputLimitVerified: outputLimit.verified,
+  };
+  return {
+    classification: classifyFullStoryboard(measured),
+    extra: {
+      outputLimitVerified: outputLimit.verified,
+      outputLimitField: outputLimit.field,
+      outputLimitValue: outputLimit.value,
+      expectedByteLength: Buffer.byteLength(fixtureText),
+      actualByteLength: Buffer.byteLength(content),
+      expectedCharLength: fixtureText.length,
+      actualCharLength: content.length,
+      jsonParsed: parsed.jsonParsed,
+      schemaValid: validation.schemaValid,
+      schemaErrorCount: validation.schemaErrors.length,
+      fixtureMatch,
+      truncated: measured.truncated,
+      explicitOutputLimitVerified: outputLimit.verified,
+      frameCount: Array.isArray(parsed.value?.frames) ? parsed.value.frames.length : null,
+      classification: classifyFullStoryboard(measured),
+    },
+  };
+}
+
+function shouldFallbackToJsonObject(formatKind, result, classification) {
+  if (formatKind !== 'json_schema') return false;
+  const httpError = Boolean(result.transportError) || result.httpStatus == null || result.httpStatus >= 400;
+  return httpError || classification === 'INCONCLUSIVE';
+}
+
 function responseFormatBody(kind) {
   if (kind === 'json_schema') {
     return {
@@ -338,44 +385,47 @@ export async function runLiveMatrix({ config, fixtureText, fetchImpl }) {
   const outputLimit = outputLimitField
     ? { field: outputLimitField, value: fixtureOutputLimit(fixtureText), verified: true }
     : { field: null, value: null, verified: false };
-  const responseFormat = responseFormatBody(selectResponseFormat(capabilities));
+  const formatKind = selectResponseFormat(capabilities);
+  const responseFormat = responseFormatBody(formatKind);
   const storyBody = buildRequest('full_structure_storyboard', { ...ctx, responseFormat, outputLimit });
   const story = await send('full_structure_storyboard', storyBody);
-  const parsedStory = tryParseJson(story.content);
-  const expectedValue = JSON.parse(fixtureText);
-  const validation = parsedStory.jsonParsed ? validateStructureProbe(parsedStory.value) : { schemaValid: false, schemaErrors: ['response was not JSON'] };
-  const fixtureMatch = parsedStory.jsonParsed && jsonValuesEqual(parsedStory.value, expectedValue);
-  const truncated = story.finishReason === 'length';
-  const sizeWasRejected = sizeRejected(story);
-  const content = story.content ?? '';
-  const storyObs = {
-    transportError: story.transportError,
-    httpStatus: story.httpStatus,
-    finishReason: story.finishReason,
-    jsonParsed: parsedStory.jsonParsed,
-    schemaValid: validation.schemaValid,
-    fixtureMatch,
-    truncated,
-    sizeRejected: sizeWasRejected,
-    explicitOutputLimitVerified: outputLimit.verified,
-  };
-  capabilities.full_structure_storyboard = classifyFullStoryboard(storyObs);
-  observations.push(publicObservation('full_structure_storyboard', storyBody, story, {
-    outputLimitVerified: outputLimit.verified,
-    expectedByteLength: Buffer.byteLength(fixtureText),
-    actualByteLength: Buffer.byteLength(content),
-    expectedCharLength: fixtureText.length,
-    actualCharLength: content.length,
-    jsonParsed: parsedStory.jsonParsed,
-    schemaValid: validation.schemaValid,
-    schemaErrorCount: validation.schemaErrors.length,
-    fixtureMatch,
-    truncated,
-    explicitOutputLimitVerified: outputLimit.verified,
-    frameCount: Array.isArray(parsedStory.value?.frames) ? parsedStory.value.frames.length : null,
+  const strictAttempt = measureFullAttempt(story, fixtureText, outputLimit);
+  observations.push(publicObservation('full_structure_storyboard_strict', storyBody, story, {
+    fullPayloadFormat: formatKind,
+    ...strictAttempt.extra,
   }));
 
-  if (attempted !== LIVE_SEQUENCE.length) throw new Error('live request count did not match the plan');
+  let fallbackAttempt = null;
+  if (shouldFallbackToJsonObject(formatKind, story, strictAttempt.classification)) {
+    const fallbackBody = buildRequest('full_structure_storyboard', {
+      ...ctx,
+      responseFormat: { type: 'json_object' },
+      outputLimit,
+    });
+    const fallback = await send('full_structure_storyboard_json_object_fallback', fallbackBody);
+    fallbackAttempt = measureFullAttempt(fallback, fixtureText, outputLimit);
+    observations.push(publicObservation('full_structure_storyboard_json_object_fallback', fallbackBody, fallback, {
+      fullPayloadFormat: 'json_object',
+      ...fallbackAttempt.extra,
+    }));
+  }
+
+  const attemptClassifications = [strictAttempt.classification, fallbackAttempt?.classification].filter(Boolean);
+  capabilities.full_structure_storyboard = aggregateFullStoryboard(attemptClassifications);
+  const supportedFormat = strictAttempt.classification === 'SUPPORTED'
+    ? formatKind
+    : (fallbackAttempt?.classification === 'SUPPORTED' ? 'json_object' : null);
+  const unsupportedAttempt = [strictAttempt, fallbackAttempt].find((attempt) => attempt?.classification === 'UNSUPPORTED');
+  const largeStrictSchemaNote = capabilities.json_schema === 'SUPPORTED' && formatKind === 'json_schema' && strictAttempt.classification !== 'SUPPORTED'
+    ? 'Small json_schema compatibility was observed. Large strict-schema compatibility was not.'
+    : null;
+  const planningNote = supportedFormat === 'json_object' && fallbackAttempt?.classification === 'SUPPORTED'
+    ? 'json_object is the currently compatible full-payload format. Later planning should use server-side local validation and bounded repair. This spike does not implement that repair loop.'
+    : null;
+
+  if (attempted !== LIVE_SEQUENCE.length + (fallbackAttempt ? 1 : 0) || attempted > MAX_LIVE_REQUESTS) {
+    throw new Error('live request count did not match the plan');
+  }
 
   return {
     spike: 'contest-chat-completions',
@@ -386,8 +436,11 @@ export async function runLiveMatrix({ config, fixtureText, fetchImpl }) {
     capabilities,
     responseMetadataMissing: metadata.missing,
     observations,
+    compatibleFullPayloadFormat: supportedFormat,
+    largeStrictSchemaNote,
+    planningNote,
     storyboardSuitability: storyboardSuitability(capabilities.full_structure_storyboard, {
-      explicitOutputLimitVerified: outputLimit.verified,
+      explicitOutputLimitVerified: unsupportedAttempt?.extra.explicitOutputLimitVerified === true,
     }),
   };
 }
@@ -405,6 +458,9 @@ export function formatReport(report) {
       return `- ${name}: ${value} (acceptance ${observation.acceptance}; effectiveness ${observation.effectiveness})`;
     }),
     `Storyboard output: ${report.storyboardSuitability}`,
+    report.compatibleFullPayloadFormat ? `Compatible full-payload format: ${report.compatibleFullPayloadFormat}` : null,
+    report.largeStrictSchemaNote,
+    report.planningNote,
   ];
   if (report.live === 'SKIPPED') lines.push('No capability was verified.');
   for (const observation of report.observations ?? []) {
