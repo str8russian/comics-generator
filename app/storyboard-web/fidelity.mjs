@@ -344,7 +344,8 @@ export function assessStage(sourceItems, stage) {
   }
 
   const accounts = new Map();
-  const keys = [];
+  let lastSourceIndex = -1;
+  const pendingDerived = [];
   for (const frame of frames) {
     if (frame.origin === "derived") {
       const placed = placementKey(frame.placement, sourceItems);
@@ -352,20 +353,30 @@ export function assessStage(sourceItems, stage) {
         for (const id of placed.unknown) failures.push({ code: "unknown-source-item", sourceItemId: id });
       } else if (!placed.valid) {
         failures.push({ code: "invalid-derived-beat" });
+      } else if (lastSourceIndex >= placed.key) {
+        failures.push({ code: "invalid-derived-beat" });
+      } else {
+        pendingDerived.push(placed.key);
       }
-      keys.push(placed.valid ? placed.key : null);
       continue;
     }
     const item = byId.get(frame.sourceItemId);
     if (!item) {
       failures.push({ code: "unknown-source-item", sourceItemId: frame.sourceItemId });
-      keys.push(null);
       continue;
     }
     if (frame.sourceRole !== item.kind) failures.push({ code: "invalid-source-role", sourceItemId: item.id });
     accounts.set(item.id, (accounts.get(item.id) || 0) + 1);
     if (frame.directingBeat === true) checkDirecting(frame, item, failures);
-    keys.push(sourceIndex(sourceItems, item.id) + 0.5);
+    const index = sourceIndex(sourceItems, item.id);
+    if (lastSourceIndex >= 0 && index < lastSourceIndex) {
+      failures.push({ code: "reordered-dialogue", sourceItemId: item.id });
+    }
+    for (const gap of pendingDerived) {
+      if (gap > index) failures.push({ code: "invalid-derived-beat" });
+    }
+    pendingDerived.length = 0;
+    if (index >= lastSourceIndex) lastSourceIndex = index;
   }
 
   for (const item of sourceItems) {
@@ -383,6 +394,10 @@ export function assessStage(sourceItems, stage) {
       failures.push({ code: "unknown-source-item", sourceItemId: id });
       continue;
     }
+    if (item.kind === "utterance" || item.kind === "action") {
+      failures.push({ code: "reordered-review", sourceItemId: id });
+      continue;
+    }
     if (item.kind === "context" || item.kind === "note") actualReview.push(id);
   }
   for (const id of expectedReview) {
@@ -392,18 +407,6 @@ export function assessStage(sourceItems, stage) {
     && expectedReview.every((id) => actualReview.includes(id));
   if (sameReviewSet && expectedReview.some((id, index) => actualReview[index] !== id)) {
     failures.push({ code: "reordered-review" });
-  }
-
-  let previous = null;
-  const sourceKeys = new Set();
-  for (const key of keys) {
-    if (key == null) continue;
-    const sourceKey = !Number.isInteger(key);
-    if (sourceKey && sourceKeys.has(key)) failures.push({ code: "invalid-derived-beat" });
-    if (sourceKey) sourceKeys.add(key);
-    if (previous != null && key < previous) failures.push({ code: "invalid-derived-beat" });
-    if (previous != null && key === previous && sourceKey) failures.push({ code: "invalid-derived-beat" });
-    previous = key;
   }
 
   return settle(failures);

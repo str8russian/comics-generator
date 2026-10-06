@@ -54,6 +54,55 @@ function derived(placement, id = "fBeat") {
   };
 }
 
+test("blocks ordinary source frames emitted in reverse source order", () => {
+  const reversed = anchored("Борис: нет\nАня: да", [
+    {
+      id: "boris",
+      kind: "utterance",
+      segmentIds: ["seg-0"],
+      speakerStatus: "explicit",
+      speakerLabel: "Борис",
+      sourceQuote: "Борис: нет",
+    },
+    {
+      id: "anya",
+      kind: "utterance",
+      segmentIds: ["seg-1"],
+      speakerStatus: "explicit",
+      speakerLabel: "Аня",
+      sourceQuote: "Аня: да",
+    },
+  ]);
+  const result = assessStage(reversed, {
+    frames: [
+      utteranceFrame(),
+      {
+        id: "fBoris",
+        layout: "single",
+        origin: "source",
+        panels: [{ description: "Борис" }],
+        sourceItemId: "boris",
+        sourceRole: "utterance",
+        speakerPanel: 0,
+      },
+    ],
+    review: [],
+  });
+  assert.deepEqual(codes(result), ["reordered-dialogue"]);
+});
+
+test("allows several derived frames in one gap", () => {
+  const result = assessStage(items(), {
+    frames: [
+      derived({ afterSourceItemId: "note", beforeSourceItemId: "anya" }, "fBeatA"),
+      derived({ afterSourceItemId: "note", beforeSourceItemId: "anya" }, "fBeatB"),
+      utteranceFrame(),
+    ],
+    review: ["note"],
+  });
+  assert.equal(result.ok, true);
+});
+
 test("accepts a derived beat that names the note and the next utterance", () => {
   const result = assessStage(items(), {
     frames: [

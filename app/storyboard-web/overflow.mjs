@@ -180,7 +180,7 @@ function diagnoseDialogue(text, blocks) {
   if (blocks.length === 0) return text.length === 0 ? null : "lost-dialogue";
   for (const block of blocks) {
     if (!Number.isInteger(block.start) || !Number.isInteger(block.end)) return "invalid-display-block";
-    if (block.start < 0 || block.end > text.length || block.start > block.end) return "invalid-display-block";
+    if (block.start < 0 || block.end > text.length || block.start >= block.end) return "invalid-display-block";
     if (!graphemeBoundary(text, block.start) || !graphemeBoundary(text, block.end)) return "invalid-display-block";
   }
   const ordered = blocks.every((block, index) => index === 0 || blocks[index - 1].end <= block.start);
@@ -208,9 +208,16 @@ function diagnoseDialogue(text, blocks) {
 export function assessDialogue(sourceItems, frames) {
   const failures = [];
   const spoken = new Map(sourceItems.filter((item) => item.kind === "utterance").map((item) => [item.id, item.text]));
+  const knownIds = new Set(sourceItems.map((item) => item.id));
   const groups = new Map();
   for (const frame of frames) {
-    const sourceItemId = frame?.sourceItemId || frame?.displayBlock?.sourceItemId;
+    const blockId = frame?.displayBlock?.sourceItemId;
+    if (frame?.displayBlock && blockId && frame.sourceItemId && blockId !== frame.sourceItemId) {
+      failures.push({ code: "invalid-display-block", sourceItemId: frame.sourceItemId });
+    } else if (frame?.displayBlock && blockId && !knownIds.has(blockId)) {
+      failures.push({ code: "invalid-display-block", sourceItemId: blockId });
+    }
+    const sourceItemId = frame?.sourceItemId || blockId;
     if (!sourceItemId || !spoken.has(sourceItemId)) continue;
     if (frame.sourceRole && frame.sourceRole !== "utterance") continue;
     if (!groups.has(sourceItemId)) groups.set(sourceItemId, []);
@@ -235,7 +242,15 @@ export function assessDialogue(sourceItems, frames) {
     if (code) failures.push({ code, sourceItemId });
   }
   if (failures.length === 0) return { ok: true };
-  return { ok: false, failures };
+  const seen = new Set();
+  const unique = [];
+  for (const failure of failures) {
+    const key = `${failure.code}\0${failure.sourceItemId || ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(failure);
+  }
+  return { ok: false, failures: unique };
 }
 
 const FAILED_KINDS = new Set([

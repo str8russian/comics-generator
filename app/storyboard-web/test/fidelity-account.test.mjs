@@ -208,6 +208,50 @@ test("blocks a context item missing from review", () => {
   })), ["unaccounted-source-item"]);
 });
 
+test("blocks utterance and action ids in review", () => {
+  const spoken = anchored("Аня: да", [utterance("anya", "Аня", "Аня: да")]);
+  assert.deepEqual(codes(assessStage(spoken, {
+    frames: [frame("f1", "anya", "utterance")],
+    review: ["anya"],
+  })), ["reordered-review"]);
+
+  const silent = anchored("(пауза)", [{
+    id: "pause",
+    kind: "action",
+    segmentIds: ["seg-0"],
+    speakerStatus: "none",
+    sourceQuote: "(пауза)",
+  }]);
+  assert.deepEqual(codes(assessStage(silent, {
+    frames: [frame("f1", "pause", "action")],
+    review: ["pause"],
+  })), ["reordered-review"]);
+
+  const draft = "[утро]\nАня: да";
+  const withContext = anchored(draft, [
+    {
+      id: "morning",
+      kind: "context",
+      segmentIds: ["seg-0"],
+      speakerStatus: "none",
+      sourceQuote: "[утро]",
+    },
+    { ...utterance("anya", "Аня", "Аня: да"), segmentIds: ["seg-1"] },
+  ]);
+  assert.deepEqual(codes(assessStage(withContext, {
+    frames: [frame("f1", "anya", "utterance")],
+    review: ["morning", "anya"],
+  })), ["reordered-review"]);
+});
+
+test("blocks a second frame for the same source item", () => {
+  const items = anchored("Аня: да", [utterance("anya", "Аня", "Аня: да")]);
+  assert.deepEqual(codes(assessStage(items, {
+    frames: [frame("f1", "anya", "utterance"), frame("f2", "anya", "utterance")],
+    review: [],
+  })), ["unaccounted-source-item"]);
+});
+
 test("requires context and note ids in resolved source order", () => {
   const draft = "[утро]\nзаметка\nАня: да";
   const items = anchored(draft, [

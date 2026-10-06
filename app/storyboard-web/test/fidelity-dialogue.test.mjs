@@ -47,6 +47,23 @@ test("blocks schema-valid wording that is not the server slice", () => {
   assert.equal(JSON.stringify(result).includes("schema-invalid"), false);
 });
 
+test("blocks an empty or reversed display range", () => {
+  assert.deepEqual(codes(assessDialogue(sourceItems, [piece(0, 0), piece(0, 7, "Привет.", "f2")])), ["invalid-display-block"]);
+  assert.deepEqual(codes(assessDialogue(sourceItems, [piece(0, 7, "Привет.", "f1"), piece(7, 7, "", "f2")])), ["invalid-display-block"]);
+  assert.deepEqual(codes(assessDialogue(sourceItems, [piece(5, 2)])), ["invalid-display-block"]);
+});
+
+test("blocks a display block whose source id does not match the frame", () => {
+  const mismatched = piece(0, 7, "Привет.");
+  mismatched.displayBlock.sourceItemId = "boris";
+  const known = [{ ...sourceItems[0] }, { id: "boris", kind: "action", text: "(пауза)" }];
+  assert.deepEqual(codes(assessDialogue(known, [mismatched])), ["invalid-display-block"]);
+
+  const unknown = piece(0, 7, "Привет.");
+  unknown.displayBlock.sourceItemId = "ghost";
+  assert.deepEqual(codes(assessDialogue(sourceItems, [unknown])), ["invalid-display-block"]);
+});
+
 test("blocks a display range that splits a grapheme", () => {
   const emoji = [{ id: "anya", kind: "utterance", text: "а😀" }];
   const result = assessDialogue(emoji, [{
