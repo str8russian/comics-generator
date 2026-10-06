@@ -1,3 +1,4 @@
+import "./frame-renderer.mjs";
 (function () {
   var data = window.STORYBOARD_DATA;
   var frames = data.frames;
