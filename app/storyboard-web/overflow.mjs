@@ -164,3 +164,118 @@ export function compileOverflow(frames, measure) {
   }
   return { ok: true, frames: next };
 }
+
+function graphemeBoundary(text, index) {
+  if (!Number.isInteger(index) || index < 0 || index > text.length) return false;
+  if (index === 0 || index === text.length) return true;
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  for (const part of segmenter.segment(text)) {
+    if (part.index === index) return true;
+    if (part.index > index) return false;
+  }
+  return false;
+}
+
+function diagnoseDialogue(text, blocks) {
+  if (blocks.length === 0) return text.length === 0 ? null : "lost-dialogue";
+  for (const block of blocks) {
+    if (!Number.isInteger(block.start) || !Number.isInteger(block.end)) return "invalid-display-block";
+    if (block.start < 0 || block.end > text.length || block.start > block.end) return "invalid-display-block";
+    if (!graphemeBoundary(text, block.start) || !graphemeBoundary(text, block.end)) return "invalid-display-block";
+  }
+  const ordered = blocks.every((block, index) => index === 0 || blocks[index - 1].end <= block.start);
+  const ranges = blocks.map((block) => ({ start: block.start, end: block.end }));
+  const sorted = ranges.slice().sort((left, right) => left.start - right.start || left.end - right.end);
+  let overlap = false;
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (sorted[index].start < sorted[index - 1].end) overlap = true;
+  }
+  if (overlap) return "duplicated-dialogue";
+  if (!ordered) return "reordered-dialogue";
+  let cursor = 0;
+  for (const block of sorted) {
+    if (block.start !== cursor) return "lost-dialogue";
+    cursor = block.end;
+  }
+  if (cursor !== text.length) return "lost-dialogue";
+  const joined = blocks.map((block) => block.dialogue ?? "").join("");
+  if (joined !== text || blocks.some((block) => block.dialogue !== text.slice(block.start, block.end))) {
+    return "changed-wording";
+  }
+  return null;
+}
+
+export function assessDialogue(sourceItems, frames) {
+  const failures = [];
+  const spoken = new Map(sourceItems.filter((item) => item.kind === "utterance").map((item) => [item.id, item.text]));
+  const groups = new Map();
+  for (const frame of frames) {
+    const sourceItemId = frame?.sourceItemId || frame?.displayBlock?.sourceItemId;
+    if (!sourceItemId || !spoken.has(sourceItemId)) continue;
+    if (frame.sourceRole && frame.sourceRole !== "utterance") continue;
+    if (!groups.has(sourceItemId)) groups.set(sourceItemId, []);
+    if (frame.directingBeat === true && Array.isArray(frame.segments) && frame.segments.every((segment) => Number.isInteger(segment.start))) {
+      for (const segment of frame.segments) {
+        groups.get(sourceItemId).push({
+          start: segment.start,
+          end: segment.end,
+          dialogue: segment.quote ?? "",
+        });
+      }
+    } else if (frame.displayBlock) {
+      groups.get(sourceItemId).push({
+        start: frame.displayBlock.start,
+        end: frame.displayBlock.end,
+        dialogue: frame.dialogue ?? "",
+      });
+    }
+  }
+  for (const [sourceItemId, text] of spoken) {
+    const code = diagnoseDialogue(text, groups.get(sourceItemId) || []);
+    if (code) failures.push({ code, sourceItemId });
+  }
+  if (failures.length === 0) return { ok: true };
+  return { ok: false, failures };
+}
+
+const FAILED_KINDS = new Set([
+  "provider",
+  "invalid-output",
+  "timeout",
+  "configuration",
+  "invalid-request",
+  "measurement",
+]);
+
+export function pageState({ http, fitted, dialogue, measurementError } = {}) {
+  if (measurementError) return { state: "failed", kind: "measurement", ready: false };
+  if (http && http.status === "blocked") {
+    return {
+      state: "blocked",
+      codes: (http.failures || []).map((failure) => failure.code),
+      ready: false,
+    };
+  }
+  if (http && http.status === "failed") {
+    const kind = FAILED_KINDS.has(http.kind) ? http.kind : "invalid-request";
+    return { state: "failed", kind, ready: false };
+  }
+  if (fitted && fitted.ok === false) {
+    return {
+      state: "blocked",
+      codes: (fitted.failures || []).map((failure) => failure.code),
+      ready: false,
+    };
+  }
+  if (dialogue && dialogue.ok === false) {
+    return {
+      state: "blocked",
+      codes: (dialogue.failures || []).map((failure) => failure.code),
+      ready: false,
+    };
+  }
+  if (http && http.status === "checked" && fitted && fitted.ok !== false && (!dialogue || dialogue.ok !== false)) {
+    return { state: "ready", ready: true };
+  }
+  return { state: "failed", kind: "invalid-request", ready: false };
+}

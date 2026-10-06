@@ -1,10 +1,12 @@
-import { compileOverflow } from "/overflow.mjs";
+import { assessDialogue, compileOverflow, pageState } from "/overflow.mjs";
 import * as FrameRenderer from "/frame-renderer.mjs";
 
 const form = document.querySelector("#draft-form");
 const draftField = document.querySelector("#draft");
 const loading = document.querySelector("#loading");
 const notice = document.querySelector("#notice");
+const failureCodes = document.querySelector("#failure-codes");
+const failureKind = document.querySelector("#failure-kind");
 const grid = document.querySelector("#storyboard");
 const openLast = document.querySelector("#open-last");
 const detail = document.querySelector("#detail");
@@ -26,14 +28,44 @@ function showLoading() {
   notice.hidden = true;
   notice.textContent = "";
   loading.hidden = false;
+  failureCodes.replaceChildren();
+  failureCodes.hidden = true;
+  failureKind.hidden = true;
+  failureKind.textContent = "";
+  delete document.body.dataset.kind;
 }
 
-function showTerminal(state) {
+function hideFailure() {
+  failureCodes.replaceChildren();
+  failureCodes.hidden = true;
+  failureKind.hidden = true;
+  failureKind.textContent = "";
+  delete document.body.dataset.kind;
+}
+
+function showTerminal(view) {
   loading.hidden = true;
   clearBoard();
-  document.body.dataset.state = state;
+  document.body.dataset.state = view.state;
   notice.hidden = false;
-  notice.textContent = state;
+  notice.textContent = view.state;
+  failureCodes.replaceChildren();
+  if (view.state === "blocked") {
+    failureCodes.hidden = false;
+    for (const code of view.codes || []) {
+      const item = document.createElement("li");
+      item.textContent = code;
+      failureCodes.append(item);
+    }
+    failureKind.hidden = true;
+    failureKind.textContent = "";
+    delete document.body.dataset.kind;
+    return;
+  }
+  failureCodes.hidden = true;
+  failureKind.hidden = false;
+  failureKind.textContent = view.kind || "";
+  document.body.dataset.kind = view.kind || "";
 }
 
 function mountFrame(host, frame, scale) {
@@ -50,6 +82,7 @@ function mountFrame(host, frame, scale) {
 function showReady(frames) {
   loading.hidden = true;
   notice.hidden = true;
+  hideFailure();
   readyFrames = frames;
   document.body.dataset.state = "ready";
   grid.replaceChildren();
@@ -95,18 +128,18 @@ form.addEventListener("submit", async (event) => {
       body: JSON.stringify({ draft: draftField.value }),
     });
   } catch {
-    showTerminal("failed");
+    showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
     return;
   }
   let payload = null;
   try {
     payload = await response.json();
   } catch {
-    showTerminal("failed");
+    showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
     return;
   }
   if (!payload || payload.status !== "checked" || !Array.isArray(payload.frames)) {
-    showTerminal(payload && payload.status === "blocked" ? "blocked" : "failed");
+    showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
     return;
   }
   if (document.fonts && document.fonts.ready) await document.fonts.ready;
@@ -119,11 +152,13 @@ form.addEventListener("submit", async (event) => {
       dialogue: text,
     }, options.fontSize));
   } catch {
-    showTerminal("failed");
+    showTerminal(pageState({ measurementError: true, http: payload }));
     return;
   }
-  if (!fitted.ok) {
-    showTerminal("blocked");
+  const dialogue = fitted.ok ? assessDialogue(payload.sourceItems || [], fitted.frames) : null;
+  const view = pageState({ http: payload, fitted, dialogue });
+  if (view.state !== "ready") {
+    showTerminal(view);
     return;
   }
   showReady(fitted.frames);

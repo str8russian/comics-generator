@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { assessStage } from "./fidelity.mjs";
+import { assessDialogue } from "./overflow.mjs";
 import { completeStage } from "./provider.mjs";
 
 const stageSchema = JSON.parse(readFileSync(new URL("../../specs/001-structure-storyboard-tracer/contracts/stage-response.schema.json", import.meta.url), "utf8"));
@@ -59,6 +61,10 @@ function partition(dialogue, segments) {
 }
 
 function buildChecked(draft, sourceItems, stage) {
+  const assessment = assessStage(sourceItems, stage);
+  if (!assessment.ok) {
+    return { ok: false, httpStatus: 200, status: "blocked", failures: assessment.failures };
+  }
   const byId = new Map(sourceItems.map((item) => [item.id, item]));
   const frames = [];
   for (const frame of stage.frames) {
@@ -121,6 +127,10 @@ function buildChecked(draft, sourceItems, stage) {
     const item = byId.get(sourceItemId);
     if (!item) return blocked("unknown-source-item", sourceItemId);
     review.push({ sourceItemId, kind: item.kind, text: item.text });
+  }
+  const dialogue = assessDialogue(sourceItems, frames);
+  if (!dialogue.ok) {
+    return { ok: false, httpStatus: 200, status: "blocked", failures: dialogue.failures };
   }
 
   return {

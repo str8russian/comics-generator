@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { anchorDraft } from "./fidelity.mjs";
+import { anchorDraft, isEmptyDraft } from "./fidelity.mjs";
 import { completeInterpret } from "./provider.mjs";
 import { segmentDraft } from "./segment.mjs";
 
@@ -7,6 +7,9 @@ const interpretSchema = JSON.parse(readFileSync(new URL("../../specs/001-structu
 const systemPrompt = readFileSync(new URL("./prompts/interpret.md", import.meta.url), "utf8");
 
 export async function interpretDraft({ draft, env, fetchImpl }) {
+  if (isEmptyDraft(draft)) {
+    return { ok: false, httpStatus: 200, status: "blocked", failures: [{ code: "empty-draft" }] };
+  }
   const { segments } = segmentDraft(draft);
   const result = await completeInterpret({
     messages: [

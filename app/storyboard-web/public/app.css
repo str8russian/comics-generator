@@ -46,9 +46,19 @@ h1 {
 }
 
 .loading,
-.notice {
+.notice,
+#failure-kind {
   margin: 0 0 16px;
   font-size: 18px;
+}
+
+#failure-codes {
+  margin: 0 0 16px;
+  padding-left: 20px;
+}
+
+#failure-kind {
+  font-weight: 700;
 }
 
 .grid {
