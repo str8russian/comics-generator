@@ -9,7 +9,9 @@
     "validate": "node tools/validate.mjs",
     "metrics": "node tools/metrics.mjs",
     "mutations": "node tools/mutations.mjs",
-    "check": "node tools/build-golden.mjs && node tools/validate.mjs golden/zayavka-full/storyboard.json && node tools/metrics.mjs golden/zayavka-full/storyboard.json"
+    "check": "node tools/build-golden.mjs && node tools/validate.mjs golden/zayavka-full/storyboard.json && node tools/metrics.mjs golden/zayavka-full/storyboard.json",
+    "spike:contest-api": "node --test spikes/contest-chat-completions/test/offline.test.mjs",
+    "spike:contest-api:live": "node spikes/contest-chat-completions/live.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",

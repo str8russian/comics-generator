@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://comics-pipeline.local/spikes/structure-probe-0.json",
+  "title": "Structure storyboard size probe",
+  "description": "Minimal shape used only to check that a contest Chat Completions response can carry one synthetic Structure storyboard. This is not the application contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "language", "title", "frames"],
+  "properties": {
+    "schemaVersion": { "const": "structure-probe-0" },
+    "language": { "const": "ru" },
+    "title": { "type": "string", "minLength": 1 },
+    "frames": {
+      "type": "array",
+      "minItems": 19,
+      "maxItems": 19,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "order", "layout", "derived", "speakerPanel", "dialogue", "directingNote", "panels"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^F(0[1-9]|1[0-9])$" },
+          "order": { "type": "integer", "minimum": 1, "maximum": 19 },
+          "layout": { "enum": ["single", "split2"] },
+          "derived": { "type": "boolean" },
+          "speakerPanel": { "type": "integer", "minimum": 0, "maximum": 1 },
+          "dialogue": { "type": "string" },
+          "directingNote": { "type": "string", "minLength": 1 },
+          "panels": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["character", "description"],
+              "properties": {
+                "character": { "type": "string", "minLength": 1 },
+                "description": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
