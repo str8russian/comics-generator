@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://comics-pipeline.local/storyboard-web/stage-response.json",
+  "title": "Stage storyboard response",
+  "description": "One completion of frame structure and source references. No authoritative dialogue strings and no fit offsets. Array order is the story order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["frames", "review"],
+  "properties": {
+    "frames": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/frame" }
+    },
+    "review": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "panel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "panels": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/panel" }
+    },
+    "onePanel": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": { "$ref": "#/$defs/panel" }
+    },
+    "twoPanels": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/panel" }
+    },
+    "speakerPanel": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "anchorSourceItemIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/id" }
+    },
+    "segments": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/$defs/segment" }
+    },
+    "segment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quote", "layout", "panels", "speakerPanel"],
+      "properties": {
+        "quote": { "type": "string", "minLength": 1 },
+        "layout": { "enum": ["single", "split2"] },
+        "speakerPanel": { "$ref": "#/$defs/speakerPanel" },
+        "panels": { "$ref": "#/$defs/panels" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "layout": { "const": "single" } },
+            "required": ["layout"]
+          },
+          "then": {
+            "properties": {
+              "panels": { "$ref": "#/$defs/onePanel" },
+              "speakerPanel": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "layout": { "const": "split2" } },
+            "required": ["layout"]
+          },
+          "then": {
+            "properties": {
+              "panels": { "$ref": "#/$defs/twoPanels" }
+            }
+          }
+        }
+      ]
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "layout", "origin", "panels"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "layout": { "enum": ["single", "split2"] },
+        "origin": { "enum": ["source", "derived"] },
+        "panels": { "$ref": "#/$defs/panels" },
+        "speakerPanel": { "$ref": "#/$defs/speakerPanel" },
+        "sourceItemId": { "$ref": "#/$defs/id" },
+        "sourceRole": { "enum": ["utterance", "action"] },
+        "anchorSourceItemIds": { "$ref": "#/$defs/anchorSourceItemIds" },
+        "directingBeat": { "type": "boolean" },
+        "segments": { "$ref": "#/$defs/segments" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "layout": { "const": "single" } },
+            "required": ["layout"]
+          },
+          "then": {
+            "properties": {
+              "panels": { "$ref": "#/$defs/onePanel" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "layout": { "const": "split2" } },
+            "required": ["layout"]
+          },
+          "then": {
+            "properties": {
+              "panels": { "$ref": "#/$defs/twoPanels" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "origin": { "const": "derived" } },
+            "required": ["origin"]
+          },
+          "then": {
+            "required": ["anchorSourceItemIds"],
+            "properties": {
+              "anchorSourceItemIds": { "$ref": "#/$defs/anchorSourceItemIds" },
+              "speakerPanel": false,
+              "sourceItemId": false,
+              "sourceRole": false,
+              "directingBeat": false,
+              "segments": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "origin": { "const": "source" } },
+            "required": ["origin"]
+          },
+          "then": {
+            "required": ["sourceItemId", "sourceRole"],
+            "properties": {
+              "sourceItemId": { "$ref": "#/$defs/id" },
+              "sourceRole": { "enum": ["utterance", "action"] },
+              "anchorSourceItemIds": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "sourceRole": { "const": "action" } },
+            "required": ["sourceRole"]
+          },
+          "then": {
+            "properties": {
+              "speakerPanel": false,
+              "directingBeat": false,
+              "segments": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceRole": { "const": "utterance" },
+              "layout": { "const": "single" }
+            },
+            "required": ["sourceRole", "layout"]
+          },
+          "then": {
+            "required": ["speakerPanel"],
+            "properties": {
+              "speakerPanel": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sourceRole": { "const": "utterance" },
+              "layout": { "const": "split2" }
+            },
+            "required": ["sourceRole", "layout"]
+          },
+          "then": {
+            "required": ["speakerPanel"],
+            "properties": {
+              "speakerPanel": { "$ref": "#/$defs/speakerPanel" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "directingBeat": { "const": true } },
+            "required": ["directingBeat"]
+          },
+          "then": {
+            "required": ["segments"],
+            "properties": {
+              "segments": { "$ref": "#/$defs/segments" },
+              "sourceRole": { "const": "utterance" }
+            }
+          }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "not": { "required": ["directingBeat"] } },
+              {
+                "properties": { "directingBeat": { "const": false } },
+                "required": ["directingBeat"]
+              }
+            ]
+          },
+          "then": {
+            "properties": { "segments": false }
+          }
+        }
+      ]
+    }
+  }
+}

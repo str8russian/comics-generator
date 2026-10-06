@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://comics-pipeline.local/storyboard-web/interpret-response.json",
+  "title": "In-session interpretation response",
+  "description": "Source-item references to server-created segments. This object contains no numeric offsets. The server slices the draft.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sourceItems"],
+  "properties": {
+    "sourceItems": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/sourceItem" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "speakerLabel": { "type": "string", "minLength": 1 },
+    "utteranceQuote": { "type": "string", "minLength": 1 },
+    "sourceItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "segmentIds", "speakerStatus"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["utterance", "action", "context", "note"] },
+        "segmentIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^seg-[0-9]+$"
+          }
+        },
+        "speakerStatus": { "enum": ["explicit", "inferred", "unresolved", "none"] },
+        "speakerLabel": { "$ref": "#/$defs/speakerLabel" },
+        "utteranceQuote": { "$ref": "#/$defs/utteranceQuote" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "utterance" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["utteranceQuote"],
+            "properties": {
+              "speakerStatus": { "enum": ["explicit", "inferred", "unresolved"] },
+              "utteranceQuote": { "$ref": "#/$defs/utteranceQuote" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "enum": ["action", "context", "note"] } },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "speakerStatus": { "const": "none" },
+              "speakerLabel": false,
+              "utteranceQuote": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "speakerStatus": { "enum": ["explicit", "inferred"] } },
+            "required": ["speakerStatus"]
+          },
+          "then": {
+            "required": ["speakerLabel"],
+            "properties": {
+              "speakerLabel": { "$ref": "#/$defs/speakerLabel" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "speakerStatus": { "enum": ["unresolved", "none"] } },
+            "required": ["speakerStatus"]
+          },
+          "then": {
+            "properties": { "speakerLabel": false }
+          }
+        }
+      ]
+    }
+  }
+}
