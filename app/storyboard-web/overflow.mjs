@@ -208,17 +208,21 @@ function diagnoseDialogue(text, blocks) {
 export function assessDialogue(sourceItems, frames) {
   const failures = [];
   const spoken = new Map(sourceItems.filter((item) => item.kind === "utterance").map((item) => [item.id, item.text]));
-  const knownIds = new Set(sourceItems.map((item) => item.id));
   const groups = new Map();
   for (const frame of frames) {
-    const blockId = frame?.displayBlock?.sourceItemId;
-    if (frame?.displayBlock && blockId && frame.sourceItemId && blockId !== frame.sourceItemId) {
-      failures.push({ code: "invalid-display-block", sourceItemId: frame.sourceItemId });
-    } else if (frame?.displayBlock && blockId && !knownIds.has(blockId)) {
-      failures.push({ code: "invalid-display-block", sourceItemId: blockId });
+    if (frame?.displayBlock && frame.sourceRole !== "action") {
+      const frameId = frame.sourceItemId;
+      const blockId = frame.displayBlock.sourceItemId;
+      const sameUtterance = typeof frameId === "string"
+        && frameId === blockId
+        && spoken.has(frameId);
+      if (!sameUtterance) {
+        failures.push({ code: "invalid-display-block", sourceItemId: frameId || blockId });
+      }
     }
-    const sourceItemId = frame?.sourceItemId || blockId;
-    if (!sourceItemId || !spoken.has(sourceItemId)) continue;
+    const blockId = frame?.displayBlock?.sourceItemId;
+    const sourceItemId = spoken.has(frame?.sourceItemId) ? frame.sourceItemId : (spoken.has(blockId) ? blockId : null);
+    if (!sourceItemId) continue;
     if (frame.sourceRole && frame.sourceRole !== "utterance") continue;
     if (!groups.has(sourceItemId)) groups.set(sourceItemId, []);
     if (frame.directingBeat === true && Array.isArray(frame.segments) && frame.segments.every((segment) => Number.isInteger(segment.start))) {

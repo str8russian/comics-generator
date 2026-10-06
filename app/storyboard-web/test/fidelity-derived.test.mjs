@@ -91,6 +91,67 @@ test("blocks ordinary source frames emitted in reverse source order", () => {
   assert.deepEqual(codes(result), ["reordered-dialogue"]);
 });
 
+test("blocks derived frames that step backward across context and notes", () => {
+  const ordered = anchored("Аня: да\n[утро]\nзаметка\nБорис: нет", [
+    {
+      id: "anya",
+      kind: "utterance",
+      segmentIds: ["seg-0"],
+      speakerStatus: "explicit",
+      speakerLabel: "Аня",
+      sourceQuote: "Аня: да",
+    },
+    {
+      id: "morning",
+      kind: "context",
+      segmentIds: ["seg-1"],
+      speakerStatus: "none",
+      sourceQuote: "[утро]",
+    },
+    {
+      id: "note",
+      kind: "note",
+      segmentIds: ["seg-2"],
+      speakerStatus: "none",
+      sourceQuote: "заметка",
+    },
+    {
+      id: "boris",
+      kind: "utterance",
+      segmentIds: ["seg-3"],
+      speakerStatus: "explicit",
+      speakerLabel: "Борис",
+      sourceQuote: "Борис: нет",
+    },
+  ]);
+  const result = assessStage(ordered, {
+    frames: [
+      {
+        id: "fAnya",
+        layout: "single",
+        origin: "source",
+        panels: [{ description: "Аня" }],
+        sourceItemId: "anya",
+        sourceRole: "utterance",
+        speakerPanel: 0,
+      },
+      derived({ afterSourceItemId: "note", beforeSourceItemId: "boris" }, "fLater"),
+      derived({ afterSourceItemId: "anya", beforeSourceItemId: "morning" }, "fEarlier"),
+      {
+        id: "fBoris",
+        layout: "single",
+        origin: "source",
+        panels: [{ description: "Борис" }],
+        sourceItemId: "boris",
+        sourceRole: "utterance",
+        speakerPanel: 0,
+      },
+    ],
+    review: ["morning", "note"],
+  });
+  assert.deepEqual(codes(result), ["invalid-derived-beat"]);
+});
+
 test("allows several derived frames in one gap", () => {
   const result = assessStage(items(), {
     frames: [

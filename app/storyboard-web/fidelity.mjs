@@ -345,18 +345,18 @@ export function assessStage(sourceItems, stage) {
 
   const accounts = new Map();
   let lastSourceIndex = -1;
+  let lastDerivedKey = null;
   const pendingDerived = [];
   for (const frame of frames) {
     if (frame.origin === "derived") {
       const placed = placementKey(frame.placement, sourceItems);
       if (placed.unknown) {
         for (const id of placed.unknown) failures.push({ code: "unknown-source-item", sourceItemId: id });
-      } else if (!placed.valid) {
-        failures.push({ code: "invalid-derived-beat" });
-      } else if (lastSourceIndex >= placed.key) {
+      } else if (!placed.valid || lastSourceIndex >= placed.key || (lastDerivedKey != null && placed.key < lastDerivedKey)) {
         failures.push({ code: "invalid-derived-beat" });
       } else {
         pendingDerived.push(placed.key);
+        lastDerivedKey = placed.key;
       }
       continue;
     }

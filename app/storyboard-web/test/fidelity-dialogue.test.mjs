@@ -53,12 +53,26 @@ test("blocks an empty or reversed display range", () => {
   assert.deepEqual(codes(assessDialogue(sourceItems, [piece(5, 2)])), ["invalid-display-block"]);
 });
 
+test("blocks a display block with no block source id", () => {
+  const block = piece(0, 7, "Привет.");
+  delete block.displayBlock.sourceItemId;
+  assert.deepEqual(codes(assessDialogue(sourceItems, [block])), ["invalid-display-block"]);
+});
+
+test("blocks a dialogue frame with no source id", () => {
+  const block = piece(0, 7, "Привет.");
+  delete block.sourceItemId;
+  assert.deepEqual(codes(assessDialogue(sourceItems, [block])), ["invalid-display-block"]);
+});
+
 test("blocks a display block whose source id does not match the frame", () => {
   const mismatched = piece(0, 7, "Привет.");
   mismatched.displayBlock.sourceItemId = "boris";
   const known = [{ ...sourceItems[0] }, { id: "boris", kind: "action", text: "(пауза)" }];
   assert.deepEqual(codes(assessDialogue(known, [mismatched])), ["invalid-display-block"]);
+});
 
+test("blocks a display block whose source id is unknown", () => {
   const unknown = piece(0, 7, "Привет.");
   unknown.displayBlock.sourceItemId = "ghost";
   assert.deepEqual(codes(assessDialogue(sourceItems, [unknown])), ["invalid-display-block"]);
