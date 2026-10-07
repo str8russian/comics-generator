@@ -205,3 +205,144 @@ test("material-state logs and the HTTP body omit the draft, names, and aliases",
     await close(server);
   }
 });
+
+const providerRaw = "PROVIDER-RAW-7781";
+const providerHost = "provider.example.test";
+const apiToken = "test-token";
+
+function storyboardEnv(timeout) {
+  return {
+    BASE_URL: `https://${providerHost}`,
+    CONTEST_API_TOKEN: apiToken,
+    CONTEST_MODEL: "test-model",
+    ...(timeout ? { CONTEST_TIMEOUT_MS: timeout } : {}),
+  };
+}
+
+function assertPersistRedaction(logs, body) {
+  const captured = [...logs, body].join("\n");
+  for (const secret of [sentinel, providerRaw, "Bearer", "super-secret", apiToken, providerHost, databaseUrl, "DATABASE_URL"]) {
+    assert.equal(captured.includes(secret), false, secret);
+  }
+  const line = logs.find((entry) => entry.includes("event=storyboard-persist"));
+  assert.equal(typeof line, "string");
+  const keys = line.slice("storyboard ".length).split(" ").map((part) => part.split("=")[0]);
+  for (const key of keys) {
+    assert.equal(["request", "event", "status", "kind", "http", "codes", "providerStatus", "finishReason", "schema"].includes(key), true, key);
+  }
+}
+
+test("storyboard-persist logs and the 502 body omit dialogue, provider text, and credentials", async () => {
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = databaseUrl;
+  const logs = [];
+  const server = createServer({
+    migrate: false,
+    env: storyboardEnv(),
+    logger: { log(line) { logs.push(String(line)); } },
+    fetchImpl: async () => ({
+      status: 502,
+      async text() {
+        return json({ error: sentinel, body: providerRaw, token: apiToken });
+      },
+    }),
+    projectStore: {
+      async stageActiveMaterial({ stage }) {
+        const staged = await stage({
+          draftText: sentinel,
+          sourceItems: [{
+            id: "u1",
+            kind: "utterance",
+            segmentIds: ["seg-0"],
+            speakerStatus: "explicit",
+            speakerLabel: "Путин",
+            sourceQuote: sentinel,
+            text: sentinel,
+          }],
+          cast: {
+            characters: [{ id: "11111111-1111-4111-8111-111111111111", name: "Песков" }],
+            aliases: [{ surface: "Дмитрий Сергеевич", characterId: "11111111-1111-4111-8111-111111111111" }],
+            speakers: [{ sourceItemId: "u1", characterId: "11111111-1111-4111-8111-111111111111" }],
+          },
+        });
+        return { ...staged, dialogue: sentinel, providerBody: providerRaw };
+      },
+    },
+  });
+  try {
+    const port = await listen(server);
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/storyboard-results",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer super-secret",
+      },
+      body: json({ draft: sentinel, note: providerRaw }),
+    });
+    assert.equal(response.status, 502);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "provider" });
+    assertPersistRedaction(logs, response.body);
+  } finally {
+    if (previous === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous;
+    await close(server);
+  }
+});
+
+test("storyboard-persist logs and the 504 body omit dialogue, exception text, and credentials", async () => {
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = databaseUrl;
+  const logs = [];
+  const server = createServer({
+    migrate: false,
+    env: storyboardEnv("30"),
+    logger: { log(line) { logs.push(String(line)); } },
+    fetchImpl: (_url, init) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`hung ${sentinel} ${providerRaw}`)), 2000);
+      init.signal?.addEventListener("abort", () => {
+        clearTimeout(timer);
+        const error = new Error(`aborted ${sentinel} ${providerRaw}`);
+        error.name = "AbortError";
+        reject(error);
+      });
+    }),
+    projectStore: {
+      async stageActiveMaterial({ stage }) {
+        const staged = await stage({
+          draftText: sentinel,
+          sourceItems: [{
+            id: "u1",
+            kind: "utterance",
+            segmentIds: ["seg-0"],
+            speakerStatus: "explicit",
+            speakerLabel: "Путин",
+            sourceQuote: sentinel,
+            text: sentinel,
+          }],
+          cast: null,
+        });
+        return { ...staged, dialogue: sentinel, exceptionText: `aborted ${sentinel}` };
+      },
+    },
+  });
+  try {
+    const port = await listen(server);
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/storyboard-results",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer super-secret",
+      },
+      body: json({ draft: sentinel }),
+    });
+    assert.equal(response.status, 504);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "timeout" });
+    assertPersistRedaction(logs, response.body);
+  } finally {
+    if (previous === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous;
+    await close(server);
+  }
+});

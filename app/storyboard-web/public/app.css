@@ -41,6 +41,7 @@ h1 {
 }
 
 .paste-form button,
+#stage-material,
 #open-last,
 #close-detail {
   justify-self: start;

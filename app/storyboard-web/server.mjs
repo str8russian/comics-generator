@@ -616,6 +616,103 @@ async function handleDraft(req, res, { maxBodyBytes, logger, nextRequest, runtim
   }
 }
 
+function publicFailures(failures) {
+  if (!Array.isArray(failures)) return [];
+  const clean = [];
+  for (const failure of failures) {
+    if (!failure || typeof failure.code !== "string" || !/^[a-z]+(?:-[a-z]+)*$/.test(failure.code)) continue;
+    const entry = { code: failure.code };
+    if (typeof failure.sourceItemId === "string") entry.sourceItemId = failure.sourceItemId;
+    clean.push(entry);
+  }
+  return clean;
+}
+
+async function handleStoryboardResults(req, res, { maxBodyBytes, env, fetchImpl, logger, nextRequest, runtime }) {
+  const request = nextRequest();
+  if ((req.method || "GET") !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const declared = req.headers["content-length"];
+  if (declared != null && declared !== "" && Number(declared) > maxBodyBytes) {
+    closeEmpty(res, 413);
+    return;
+  }
+  const read = await readLimited(req, maxBodyBytes);
+  if (read.tooBig) {
+    if (!res.headersSent) closeEmpty(res, 413);
+    return;
+  }
+  if (read.body.length > 0) {
+    if (!isJsonContentType(req.headers["content-type"])) {
+      sendEmpty(res, 415);
+      return;
+    }
+    try {
+      JSON.parse(read.body.toString("utf8"));
+    } catch {
+      const failed = { ok: false, httpStatus: 400, status: "failed", kind: "invalid-request" };
+      logAllowlisted(logger, request, "storyboard-persist", failed);
+      sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+      return;
+    }
+  }
+  if (typeof runtime.projectStore?.stageActiveMaterial !== "function") {
+    const failed = { ok: false, httpStatus: 503, status: "failed", kind: "database" };
+    logAllowlisted(logger, request, "storyboard-persist", failed);
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  const providerEnv = env ?? process.env;
+  let result;
+  try {
+    result = await runtime.projectStore.stageActiveMaterial({
+      stage(input) {
+        if (!loadConfig(providerEnv).ok) {
+          return { ok: false, httpStatus: 500, status: "failed", kind: "configuration" };
+        }
+        return stageStoryboard({
+          draft: input?.draftText,
+          sourceItems: input?.sourceItems,
+          cast: input?.cast,
+          env: providerEnv,
+          fetchImpl,
+        });
+      },
+    });
+  } catch {
+    result = { ok: false, httpStatus: 503, status: "failed", kind: "database" };
+  }
+  logAllowlisted(logger, request, "storyboard-persist", result);
+  if (result?.status === "blocked") {
+    sendJson(res, 200, {
+      status: "blocked",
+      failures: publicFailures(result.failures),
+      materialStateId: result.materialStateId,
+      readyEligible: false,
+    });
+    return;
+  }
+  if (result?.status === "checked") {
+    sendJson(res, 200, {
+      status: "checked",
+      materialStateId: result.materialStateId,
+      sourceRevisionId: result.sourceRevisionId,
+      readyEligible: result.readyEligible === true,
+      sourceItems: result.sourceItems,
+      frames: result.frames,
+      review: result.review,
+    });
+    return;
+  }
+  sendJson(res, result?.httpStatus || 500, {
+    status: "failed",
+    kind: safeKind(result?.kind) || "database",
+  });
+}
+
 async function handle(req, res, {
   load,
   maxBodyBytes,
@@ -668,6 +765,10 @@ async function handle(req, res, {
   }
   if (pathname === "/api/material-states") {
     await handleMaterialStates(req, res, { maxBodyBytes, logger, nextRequest, runtime });
+    return;
+  }
+  if (pathname === "/api/storyboard-results") {
+    await handleStoryboardResults(req, res, { maxBodyBytes, env, fetchImpl, logger, nextRequest, runtime });
     return;
   }
   const route = routesByPath.get(pathname);

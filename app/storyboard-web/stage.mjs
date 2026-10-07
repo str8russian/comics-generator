@@ -146,11 +146,13 @@ function buildChecked(draft, sourceItems, stage) {
   };
 }
 
-export function requestStageCandidate({ sourceItems, env, fetchImpl }) {
+export function requestStageCandidate({ sourceItems, cast, env, fetchImpl }) {
+  const payload = { sourceItems: sourceItems.map(modelItem) };
+  if (cast != null) payload.cast = cast;
   return completeStage({
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: JSON.stringify({ sourceItems: sourceItems.map(modelItem) }) },
+      { role: "user", content: JSON.stringify(payload) },
     ],
     schema: stageSchema,
     env,
@@ -158,8 +160,8 @@ export function requestStageCandidate({ sourceItems, env, fetchImpl }) {
   });
 }
 
-export async function stageStoryboard({ draft, sourceItems, env, fetchImpl }) {
-  const result = await requestStageCandidate({ sourceItems, env, fetchImpl });
+export async function stageStoryboard({ draft, sourceItems, cast, env, fetchImpl }) {
+  const result = await requestStageCandidate({ sourceItems, cast, env, fetchImpl });
   if (!result.ok) return { ...failure(result.httpStatus, result.kind), diagnostics: result.diagnostics };
   return { ...buildChecked(draft, sourceItems, result.value), diagnostics: result.diagnostics };
 }

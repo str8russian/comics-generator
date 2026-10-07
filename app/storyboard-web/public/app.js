@@ -23,6 +23,7 @@ const materialSpeakers = document.querySelector("#material-speakers");
 const materialFindings = document.querySelector("#material-findings");
 const materialMismatch = document.querySelector("#material-mismatch");
 const confirmMaterial = document.querySelector("#confirm-material");
+const stageMaterial = document.querySelector("#stage-material");
 
 let readyFrames = [];
 let draftSync = { state: "boot", savedText: null };
@@ -123,15 +124,16 @@ async function presentCheckedStoryboard(payload) {
     showTerminal(view);
     return;
   }
-  showReady(fitted.frames);
+  showReady(fitted.frames, payload.readyEligible === true ? "ready" : "checked");
 }
 
-function showReady(frames) {
+function showReady(frames, state = "ready") {
   loading.hidden = true;
-  notice.hidden = true;
   hideFailure();
   readyFrames = frames;
-  document.body.dataset.state = "ready";
+  document.body.dataset.state = state;
+  notice.hidden = state === "ready";
+  notice.textContent = state === "ready" ? "" : state;
   grid.replaceChildren();
   frames.forEach((frame, index) => {
     const card = document.createElement("button");
@@ -175,6 +177,7 @@ function refreshConfirmation() {
   if (!confirmMaterial || !materialMismatch) return;
   const readingMode = review?.mode === "reading";
   confirmMaterial.hidden = !readingMode;
+  if (stageMaterial) stageMaterial.hidden = review?.mode !== "material";
   const matched = readingMode && textsMatch(review.text);
   confirmMaterial.disabled = !matched;
   materialMismatch.hidden = !readingMode || matched;
@@ -433,11 +436,59 @@ confirmMaterial?.addEventListener("click", async () => {
   refreshConfirmation();
 });
 
+function restoreStoryboard(project) {
+  const board = (project?.storyboards || []).find((item) => item?.materialStateId === project?.activeMaterialStateId);
+  if (!board) return null;
+  if (board.status === "blocked" || board.status === "failed") {
+    showTerminal(pageState({ http: board }));
+    return null;
+  }
+  if (board.status === "checked" && Array.isArray(board.frames) && board.frames.length > 0) {
+    return presentCheckedStoryboard(board);
+  }
+  return null;
+}
+
+stageMaterial?.addEventListener("click", async () => {
+  if (!review || review.mode !== "material") return;
+  showLoading();
+  loading.textContent = "Сборка раскадровки…";
+  let response;
+  try {
+    response = await fetch("/api/storyboard-results", { method: "POST" });
+  } catch {
+    showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
+    return;
+  }
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
+    return;
+  }
+  if (!response.ok || !payload || payload.status === "failed") {
+    showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
+    return;
+  }
+  if (payload.status === "blocked") {
+    showTerminal(pageState({ http: payload }));
+    return;
+  }
+  if (payload.status !== "checked") {
+    showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
+    return;
+  }
+  await presentCheckedStoryboard(payload);
+});
+
 draftAutosave.ready.then(async () => {
   try {
     const response = await fetch("/api/project");
     if (!response.ok) return;
-    restoreReview(await response.json());
+    const project = await response.json();
+    restoreReview(project);
+    await restoreStoryboard(project);
   } catch {
     hideReview();
   }

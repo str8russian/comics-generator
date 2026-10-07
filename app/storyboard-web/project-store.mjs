@@ -407,11 +407,10 @@ export async function loadProject(pool) {
               storyboard_result.material_state_id,
               material_state.source_revision_id,
               storyboard_result.status,
-              (storyboard_result.status = 'checked'
-               AND storyboard_result.material_state_id IS NOT DISTINCT FROM project.active_material_state_id) AS ready_eligible
+              storyboard_result.failures,
+              storyboard_result.stage_payload
        FROM storyboard_result
        JOIN material_state ON material_state.id = storyboard_result.material_state_id
-       JOIN project ON project.singleton = true
        ORDER BY storyboard_result.material_state_id, storyboard_result.created_at DESC, storyboard_result.id DESC`,
     );
     const reading = await presentReading(pool, row.current_reading_id);
@@ -427,12 +426,7 @@ export async function loadProject(pool) {
         parentSourceRevisionId: revision.parent_source_revision_id,
         createdAt: revision.created_at instanceof Date ? revision.created_at.toISOString() : revision.created_at,
       })),
-      storyboards: storyboards.rows.map((storyboard) => ({
-        materialStateId: storyboard.material_state_id,
-        sourceRevisionId: storyboard.source_revision_id,
-        status: storyboard.status,
-        readyEligible: storyboard.ready_eligible === true,
-      })),
+      storyboards: await presentStoryboards(pool, storyboards.rows, row.active_material_state_id),
     };
   } catch {
     return null;
@@ -846,6 +840,365 @@ export async function reviseMaterialState(pool, cast) {
   });
 }
 
+function spokenFromRevision(text, item) {
+  const slice = text.slice(item.draftStart, item.draftEnd);
+  if (item.speakerStatus === "explicit" && item.speakerLabel) {
+    const spaced = `${item.speakerLabel}: `;
+    if (slice.startsWith(spaced)) return slice.slice(spaced.length);
+    const bare = `${item.speakerLabel}:`;
+    if (slice.startsWith(bare)) return slice.slice(bare.length);
+  }
+  return slice;
+}
+
+function copyPanelDescriptions(panels) {
+  if (!Array.isArray(panels)) return [];
+  const copies = [];
+  for (const panel of panels) {
+    if (panel && typeof panel.description === "string") copies.push({ description: panel.description });
+  }
+  return copies;
+}
+
+function rebuildFrame(frame, revisionText, byId) {
+  const next = {
+    id: frame?.id,
+    layout: frame?.layout,
+    origin: frame?.origin,
+    panels: copyPanelDescriptions(frame?.panels),
+    dialogue: "",
+  };
+  if (frame?.placement) next.placement = frame.placement;
+  if (frame?.sourceItemId) next.sourceItemId = frame.sourceItemId;
+  if (frame?.sourceRole) next.sourceRole = frame.sourceRole;
+  if (frame?.speakerPanel != null) next.speakerPanel = frame.speakerPanel;
+  const item = byId.get(frame?.sourceItemId);
+  if (!item || frame?.origin === "derived") return next;
+  const spoken = spokenFromRevision(revisionText, item);
+  if (frame.sourceRole === "action" || item.kind === "action") {
+    next.outsideFrameText = revisionText.slice(item.draftStart, item.draftEnd);
+    return next;
+  }
+  if (frame.directingBeat === true && Array.isArray(frame.segments)) {
+    next.directingBeat = true;
+    next.dialogue = spoken;
+    next.segments = frame.segments.map((segment) => ({
+      quote: spoken.slice(segment?.start ?? 0, segment?.end ?? 0),
+      layout: segment?.layout,
+      speakerPanel: segment?.speakerPanel,
+      panels: copyPanelDescriptions(segment?.panels),
+      start: segment?.start,
+      end: segment?.end,
+    }));
+    return next;
+  }
+  const start = Number.isInteger(frame.displayBlock?.start) ? frame.displayBlock.start : 0;
+  const end = Number.isInteger(frame.displayBlock?.end) ? frame.displayBlock.end : spoken.length;
+  next.displayBlock = {
+    sourceItemId: frame.displayBlock?.sourceItemId || frame.sourceItemId,
+    start,
+    end,
+  };
+  next.dialogue = spoken.slice(start, end);
+  return next;
+}
+
+function presentSourceItems(revisionText, items) {
+  return items.map((item) => {
+    const next = {
+      id: item.id,
+      kind: item.kind,
+      speakerStatus: item.speakerStatus,
+      sourceQuote: revisionText.slice(item.draftStart, item.draftEnd),
+      draftStart: item.draftStart,
+      draftEnd: item.draftEnd,
+      text: spokenFromRevision(revisionText, item),
+    };
+    if (item.speakerLabel) next.speakerLabel = item.speakerLabel;
+    return next;
+  });
+}
+
+function rebuildReview(review, revisionText, byId) {
+  if (!Array.isArray(review)) return [];
+  const rebuilt = [];
+  for (const entry of review) {
+    const item = byId.get(entry?.sourceItemId);
+    if (!item) continue;
+    rebuilt.push({
+      sourceItemId: item.id,
+      kind: item.kind,
+      text: spokenFromRevision(revisionText, item),
+    });
+  }
+  return rebuilt;
+}
+
+function presentStored(row, context, activeMaterialStateId) {
+  const readyEligible = row.status === "checked" && row.material_state_id === activeMaterialStateId;
+  const base = {
+    materialStateId: row.material_state_id,
+    sourceRevisionId: context?.sourceRevisionId ?? row.source_revision_id,
+    status: row.status,
+    readyEligible,
+  };
+  if (row.status === "blocked") {
+    return { ...base, failures: Array.isArray(row.failures) ? row.failures : [] };
+  }
+  if (row.status !== "checked") {
+    const kind = Array.isArray(row.failures) ? row.failures.find((entry) => typeof entry?.kind === "string")?.kind : undefined;
+    return kind ? { ...base, kind } : base;
+  }
+  const items = context?.sourceItems || [];
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const payload = row.stage_payload && typeof row.stage_payload === "object" ? row.stage_payload : {};
+  const frames = Array.isArray(payload.frames)
+    ? payload.frames.map((frame) => rebuildFrame(frame, context?.revisionText || "", byId))
+    : [];
+  return {
+    ...base,
+    sourceItems: context ? presentSourceItems(context.revisionText, items) : [],
+    frames,
+    review: rebuildReview(payload.review, context?.revisionText || "", byId),
+  };
+}
+
+async function loadMaterialContext(queryable, materialStateId) {
+  const state = await queryable.query(`
+    SELECT material_state.id,
+           material_state.source_revision_id,
+           material_state.interpretation_id,
+           source_revision.text AS revision_text,
+           reading.snapshot
+    FROM material_state
+    JOIN source_revision ON source_revision.id = material_state.source_revision_id
+    JOIN interpretation ON interpretation.id = material_state.interpretation_id
+    JOIN reading ON reading.id = interpretation.reading_id
+    WHERE material_state.id = $1
+  `, [materialStateId]);
+  if (state.rowCount !== 1) return null;
+  const row = state.rows[0];
+  const items = await queryable.query(`
+    SELECT model_id, kind, speaker_status, speaker_label, draft_start, draft_end
+    FROM source_item
+    WHERE interpretation_id = $1
+    ORDER BY ordinal
+  `, [row.interpretation_id]);
+  const sourceItems = items.rows.map((item) => ({
+    id: item.model_id,
+    kind: item.kind,
+    speakerStatus: item.speaker_status,
+    speakerLabel: item.speaker_label,
+    draftStart: item.draft_start,
+    draftEnd: item.draft_end,
+  }));
+  const characters = await queryable.query(`
+    SELECT id, name FROM canonical_character
+    WHERE material_state_id = $1
+    ORDER BY ordinal, id
+  `, [materialStateId]);
+  const aliases = await queryable.query(`
+    SELECT surface_text, character_id FROM alias
+    WHERE material_state_id = $1
+    ORDER BY surface_text, character_id
+  `, [materialStateId]);
+  const speakers = await queryable.query(`
+    SELECT source_item_model_id, character_id FROM speaker_assignment
+    WHERE material_state_id = $1
+    ORDER BY source_item_model_id
+  `, [materialStateId]);
+  const snapshot = row.snapshot && typeof row.snapshot === "object" ? row.snapshot : {};
+  const snapshotItems = Array.isArray(snapshot.sourceItems) ? snapshot.sourceItems : [];
+  const snapshotById = new Map(snapshotItems.map((item) => [item.id, item]));
+  const stageItems = sourceItems.map((item) => {
+    const snapshotItem = snapshotById.get(item.id) || {};
+    const stageItem = {
+      id: item.id,
+      kind: item.kind,
+      segmentIds: snapshotItem.segmentIds,
+      speakerStatus: item.speakerStatus,
+      sourceQuote: row.revision_text.slice(item.draftStart, item.draftEnd),
+      text: spokenFromRevision(row.revision_text, item),
+    };
+    if (item.speakerLabel) stageItem.speakerLabel = item.speakerLabel;
+    return stageItem;
+  });
+  const cast = {
+    characters: characters.rows.map((character) => ({ id: character.id, name: character.name })),
+    aliases: aliases.rows.map((alias) => ({ surface: alias.surface_text, characterId: alias.character_id })),
+    speakers: speakers.rows.map((speaker) => ({
+      sourceItemId: speaker.source_item_model_id,
+      characterId: speaker.character_id,
+    })),
+  };
+  const assigned = new Set(cast.speakers.map((speaker) => speaker.sourceItemId));
+  return {
+    materialStateId: row.id,
+    sourceRevisionId: row.source_revision_id,
+    interpretationId: row.interpretation_id,
+    revisionText: row.revision_text,
+    sourceItems,
+    stageItems,
+    cast,
+    unassigned: sourceItems.filter((item) => item.kind === "utterance" && !assigned.has(item.id)),
+  };
+}
+
+async function presentStoryboards(pool, rows, activeMaterialStateId) {
+  const presented = [];
+  for (const row of rows) {
+    const context = await loadMaterialContext(pool, row.material_state_id);
+    presented.push(presentStored(row, context, activeMaterialStateId));
+  }
+  return presented;
+}
+
+function cleanFailures(failures) {
+  if (!Array.isArray(failures)) return [];
+  const clean = [];
+  for (const failure of failures) {
+    if (!failure || typeof failure.code !== "string" || !SAFE_CODE.test(failure.code)) continue;
+    const entry = { code: failure.code };
+    if (typeof failure.sourceItemId === "string" && ID_PATTERN.test(failure.sourceItemId)) {
+      entry.sourceItemId = failure.sourceItemId;
+    }
+    clean.push(entry);
+  }
+  return clean;
+}
+
+async function insertStoryboard(client, materialStateId, { status, failures, stagePayload }) {
+  if (status !== "checked" && status !== "blocked" && status !== "failed") {
+    throw new Error("storyboard status is not persistable");
+  }
+  await client.query(
+    `INSERT INTO storyboard_result (id, material_state_id, status, failures, stage_payload, created_at)
+     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, clock_timestamp())`,
+    [
+      randomUUID(),
+      materialStateId,
+      status,
+      failures == null ? null : JSON.stringify(failures),
+      stagePayload == null ? null : JSON.stringify(stagePayload),
+    ],
+  );
+}
+
+export async function stageActiveMaterial(pool, options = {}) {
+  const stage = options.stage;
+  const captured = await withClient(pool, async (client) => {
+    await client.query("BEGIN");
+    const locked = await lockDraft(client);
+    if (!locked?.active_material_state_id) {
+      await rollback(client);
+      return notFound();
+    }
+    const context = await loadMaterialContext(client, locked.active_material_state_id);
+    if (!context) {
+      await rollback(client);
+      return notFound();
+    }
+    if (context.unassigned.length > 0) {
+      const failures = context.unassigned.map((item) => ({
+        code: "unresolved-speaker",
+        sourceItemId: item.id,
+      }));
+      await insertStoryboard(client, context.materialStateId, {
+        status: "blocked",
+        failures,
+        stagePayload: null,
+      });
+      await client.query("COMMIT");
+      return {
+        ok: false,
+        httpStatus: 200,
+        status: "blocked",
+        failures,
+        materialStateId: context.materialStateId,
+        sourceRevisionId: context.sourceRevisionId,
+        readyEligible: false,
+      };
+    }
+    await client.query("COMMIT");
+    return { pending: true, context };
+  });
+  if (!captured || captured.pending !== true) return captured;
+  if (typeof stage !== "function") {
+    return { ok: false, httpStatus: 500, status: "failed", kind: "configuration" };
+  }
+
+  let staged;
+  try {
+    staged = await stage({
+      draftText: captured.context.revisionText,
+      sourceItems: captured.context.stageItems,
+      cast: captured.context.cast,
+    });
+  } catch {
+    staged = { ok: false, httpStatus: 502, status: "failed", kind: "provider" };
+  }
+  if (staged?.kind === "configuration") {
+    return {
+      ok: false,
+      httpStatus: staged.httpStatus || 500,
+      status: "failed",
+      kind: "configuration",
+      diagnostics: staged.diagnostics,
+    };
+  }
+
+  return withClient(pool, async (client) => {
+    await client.query("BEGIN");
+    const active = await client.query("SELECT active_material_state_id FROM project WHERE singleton = true");
+    const activeId = active.rows[0]?.active_material_state_id ?? null;
+    let status = "failed";
+    let failures = [{ kind: "invalid-output" }];
+    let stagePayload = null;
+    if (staged?.status === "blocked") {
+      status = "blocked";
+      failures = cleanFailures(staged.failures);
+    } else if (staged?.ok && staged?.body?.status === "checked") {
+      status = "checked";
+      failures = null;
+      stagePayload = {
+        frames: Array.isArray(staged.body.frames) ? staged.body.frames : [],
+        review: Array.isArray(staged.body.review)
+          ? staged.body.review.map((entry) => ({ sourceItemId: entry.sourceItemId }))
+          : [],
+      };
+    } else if (staged?.status === "failed") {
+      const kind = typeof staged.kind === "string" && SAFE_CODE.test(staged.kind) ? staged.kind : "invalid-output";
+      failures = [{ kind }];
+    }
+    await insertStoryboard(client, captured.context.materialStateId, { status, failures, stagePayload });
+    await client.query("COMMIT");
+    const latest = await client.query(
+      `SELECT material_state_id, status, failures, stage_payload
+       FROM storyboard_result
+       WHERE material_state_id = $1
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [captured.context.materialStateId],
+    );
+    const presented = presentStored(latest.rows[0], captured.context, activeId);
+    if (status === "failed") {
+      return {
+        ok: false,
+        httpStatus: staged?.httpStatus || 502,
+        status: "failed",
+        kind: failures[0].kind,
+        diagnostics: staged?.diagnostics,
+        materialStateId: captured.context.materialStateId,
+        readyEligible: false,
+      };
+    }
+    if (status === "blocked") {
+      return { ok: false, httpStatus: 200, ...presented, diagnostics: staged?.diagnostics };
+    }
+    return { ok: true, httpStatus: 200, ...presented, diagnostics: staged?.diagnostics };
+  });
+}
+
 export function createProjectStore(pool) {
   return {
     loadProject: () => loadProject(pool),
@@ -855,5 +1208,6 @@ export function createProjectStore(pool) {
     replacePendingCast: (readingId, cast) => replacePendingCast(pool, readingId, cast),
     confirmReading: (input) => confirmReading(pool, input),
     reviseMaterialState: (cast) => reviseMaterialState(pool, cast),
+    stageActiveMaterial: (options) => stageActiveMaterial(pool, options),
   };
 }
