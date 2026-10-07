@@ -146,8 +146,8 @@ function buildChecked(draft, sourceItems, stage) {
   };
 }
 
-export async function stageStoryboard({ draft, sourceItems, env, fetchImpl }) {
-  const result = await completeStage({
+export function requestStageCandidate({ sourceItems, env, fetchImpl }) {
+  return completeStage({
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: JSON.stringify({ sourceItems: sourceItems.map(modelItem) }) },
@@ -156,6 +156,10 @@ export async function stageStoryboard({ draft, sourceItems, env, fetchImpl }) {
     env,
     fetchImpl,
   });
+}
+
+export async function stageStoryboard({ draft, sourceItems, env, fetchImpl }) {
+  const result = await requestStageCandidate({ sourceItems, env, fetchImpl });
   if (!result.ok) return { ...failure(result.httpStatus, result.kind), diagnostics: result.diagnostics };
   return { ...buildChecked(draft, sourceItems, result.value), diagnostics: result.diagnostics };
 }

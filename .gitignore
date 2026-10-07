@@ -3,5 +3,8 @@ node_modules/
 .env.local
 spikes/contest-chat-completions/results/
 
+# One approved Stage artistic baseline. Do not commit the saved candidate.
+app/storyboard-web/eval/stage-artistic/results/
+
 # Run artefacts are the record of what happened. Keep them.
 # Nothing under evals/runs/ is ignored on purpose.

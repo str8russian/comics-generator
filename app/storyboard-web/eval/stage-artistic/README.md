@@ -55,9 +55,21 @@ Panel descriptions, `speakerPanel`, participant choice, performance, and focus a
 
 Exact agreement with this target is evidence about one dialogue. A uniform split can be schema-valid and source-faithful while scoring 0/7 on deliberate singles. A different board can be artistically strong when its reasons are as clear as the target's. Do not tune the Stage prompt from this comparison alone.
 
+## One Stage request
+
+The runner calls the same `requestStageCandidate` function as the application. It sends one Stage completion for `fixture.json` and does not call Interpret. A second `fetch` throws before it is sent. An invalid completion is not retried.
+
+From the repository root, after offline tests pass:
+
+```sh
+node --env-file=.env.local app/storyboard-web/eval/stage-artistic/run-stage.mjs
+```
+
+The command refuses to start when any file already exists in `app/storyboard-web/eval/stage-artistic/results/`. That directory is gitignored. A schema-valid completion writes `current-stage.candidate.json`, `current-stage.score.json`, and `current-stage-summary.md`. Any other completion writes only `current-stage.attempt.json` with the request count, failure kind, HTTP status, finish reason, and schema paths when those values exist.
+
 ## Tests
 
 ```sh
-node --test app/storyboard-web/test/**/*.test.mjs
-node --test app/storyboard-web/eval/stage-artistic/test/score.test.mjs
+node --test app/storyboard-web/test/*.test.mjs
+node --test app/storyboard-web/eval/stage-artistic/test/*.test.mjs
 ```
