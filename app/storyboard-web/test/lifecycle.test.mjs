@@ -221,3 +221,44 @@ test("logs a checked storyboard without source text or secrets", async () => {
     await close(server);
   }
 });
+
+test("logs one configuration terminal when the handler rejects after interpret-start", async () => {
+  const secret = "UNEXPECTED-HANDLER-SECRET-4f91c2";
+  const logger = capturingLogger();
+  let calls = 0;
+  const env = new Proxy({
+    BASE_URL: `https://${hostName}`,
+    CONTEST_API_TOKEN: token,
+    CONTEST_MODEL: "gpt-5.5",
+  }, {
+    get(target, prop, receiver) {
+      if (prop === "CONTEST_MODEL") throw new Error(`configuration exploded ${secret}`);
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  const server = createServer({
+    logger,
+    env,
+    fetchImpl: async () => {
+      calls += 1;
+      throw new Error(`provider should not be called ${secret}`);
+    },
+  });
+  const port = await listen(server);
+  try {
+    const response = await postDraft(port, `Аня: ${draftMarker}`);
+    assert.equal(response.status, 500);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "configuration" });
+    assert.equal(calls, 0);
+    assert.deepEqual(logger.lines, [
+      "storyboard request=1 event=interpret-start",
+      "storyboard request=1 event=terminal status=failed kind=configuration http=500",
+    ]);
+    const captured = logger.lines.join("\n");
+    for (const hidden of [secret, "exploded", token, hostName, draftMarker, "Bearer"]) {
+      assert.equal(captured.includes(hidden), false, hidden);
+    }
+  } finally {
+    await close(server);
+  }
+});
