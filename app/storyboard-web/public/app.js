@@ -1,3 +1,4 @@
+import { bindDraftAutosave } from "/draft-autosave.mjs";
 import { assessDialogue, compileOverflow, pageState } from "/overflow.mjs";
 import * as FrameRenderer from "/frame-renderer.mjs";
 
@@ -15,6 +16,13 @@ const detailOutside = document.querySelector("#detail-outside");
 const closeDetail = document.querySelector("#close-detail");
 
 let readyFrames = [];
+
+export const draftAutosave = bindDraftAutosave({
+  textarea: draftField,
+  conflict: document.querySelector("#draft-conflict"),
+  reloadButton: document.querySelector("#reload-draft"),
+  keepButton: document.querySelector("#keep-draft"),
+});
 
 function clearBoard() {
   readyFrames = [];

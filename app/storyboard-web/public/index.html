@@ -13,6 +13,9 @@
     <form id="draft-form" class="paste-form">
       <label for="draft">Черновик диалога</label>
       <textarea id="draft" name="draft"></textarea>
+      <p id="draft-conflict" class="draft-conflict" hidden>Есть более новый сохранённый черновик.</p>
+      <button id="reload-draft" type="button" hidden>Загрузить сохранённый черновик</button>
+      <button id="keep-draft" type="button" hidden>Оставить этот текст</button>
       <button type="submit">Показать раскадровку</button>
     </form>
     <p id="loading" class="loading" hidden>Сборка раскадровки…</p>

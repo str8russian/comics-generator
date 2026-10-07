@@ -35,6 +35,11 @@ h1 {
   font: 16px/1.45 Arial, Helvetica, sans-serif;
 }
 
+.draft-conflict {
+  margin: 0;
+  font-size: 16px;
+}
+
 .paste-form button,
 #open-last,
 #close-detail {

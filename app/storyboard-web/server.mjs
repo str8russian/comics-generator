@@ -2,8 +2,10 @@ import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createPool } from "./db/pool.mjs";
 import { migrate as migrateDatabase } from "./db/migrate.mjs";
 import { interpretDraft } from "./interpret.mjs";
+import { draftInputError, createProjectStore } from "./project-store.mjs";
 import { stageStoryboard } from "./stage.mjs";
 
 export const DEFAULT_MAX_BODY_BYTES = 262144;
@@ -12,6 +14,7 @@ export const routes = [
   { method: "GET", path: "/", file: "app/storyboard-web/public/index.html" },
   { method: "GET", path: "/app.js", file: "app/storyboard-web/public/app.js" },
   { method: "GET", path: "/app.css", file: "app/storyboard-web/public/app.css" },
+  { method: "GET", path: "/draft-autosave.mjs", file: "app/storyboard-web/public/draft-autosave.mjs" },
   { method: "GET", path: "/overflow.mjs", file: "app/storyboard-web/overflow.mjs" },
   { method: "GET", path: "/frame-renderer.mjs", file: "prototypes/storyboard-viewer/frame-renderer.mjs" },
   { method: "GET", path: "/viewer.css", file: "prototypes/storyboard-viewer/viewer.css" },
@@ -241,6 +244,110 @@ async function handleStoryboard(req, res, { maxBodyBytes, env, fetchImpl, logger
   }
 }
 
+function logDraft(logger, request, result) {
+  logLine(logger, {
+    request,
+    event: "draft-save",
+    status: result.ok ? "ok" : "failed",
+    kind: result.ok ? undefined : result.kind,
+    http: result.httpStatus,
+  });
+}
+
+async function handleProject(req, res, { logger, nextRequest, runtime }) {
+  const request = nextRequest();
+  if ((req.method || "GET") !== "GET") {
+    sendEmpty(res, 405, { Allow: "GET" });
+    return;
+  }
+  if (!runtime.projectStore) {
+    logLine(logger, { request, status: "failed", kind: "database", http: 503 });
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  try {
+    const project = await runtime.projectStore.loadProject();
+    if (!project) {
+      logLine(logger, { request, status: "failed", kind: "database", http: 503 });
+      sendJson(res, 503, { status: "failed", kind: "database" });
+      return;
+    }
+    sendJson(res, 200, project);
+  } catch {
+    logLine(logger, { request, status: "failed", kind: "database", http: 503 });
+    if (!res.headersSent) sendJson(res, 503, { status: "failed", kind: "database" });
+  }
+}
+
+async function handleDraft(req, res, { maxBodyBytes, logger, nextRequest, runtime }) {
+  const request = nextRequest();
+  if ((req.method || "GET") !== "PUT") {
+    sendEmpty(res, 405, { Allow: "PUT" });
+    req.resume();
+    return;
+  }
+  const declared = req.headers["content-length"];
+  if (declared != null && declared !== "") {
+    const size = Number(declared);
+    if (Number.isFinite(size) && size > maxBodyBytes) {
+      logDraft(logger, request, { ok: false, httpStatus: 413 });
+      closeEmpty(res, 413);
+      return;
+    }
+  }
+  if (!isJsonContentType(req.headers["content-type"])) {
+    logDraft(logger, request, { ok: false, kind: "invalid-request", httpStatus: 415 });
+    sendEmpty(res, 415);
+    req.resume();
+    return;
+  }
+  const read = await readLimited(req, maxBodyBytes);
+  if (read.tooBig) {
+    if (!res.headersSent) {
+      logDraft(logger, request, { ok: false, httpStatus: 413 });
+      closeEmpty(res, 413);
+    }
+    return;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(read.body.toString("utf8"));
+  } catch {
+    logDraft(logger, request, { ok: false, kind: "invalid-request", httpStatus: 400 });
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const inputError = draftInputError({
+    text: payload && typeof payload === "object" && !Array.isArray(payload) ? payload.text : undefined,
+    revisionToken: payload && typeof payload === "object" && !Array.isArray(payload) ? payload.revisionToken : undefined,
+  });
+  if (inputError) {
+    logDraft(logger, request, { ok: false, kind: inputError, httpStatus: 400 });
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  if (!runtime.projectStore) {
+    logDraft(logger, request, { ok: false, kind: "database", httpStatus: 503 });
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  try {
+    const result = await runtime.projectStore.saveDraft({
+      text: payload.text,
+      revisionToken: payload.revisionToken,
+    });
+    logDraft(logger, request, result);
+    if (!result.ok) {
+      sendJson(res, result.httpStatus, { status: "failed", kind: result.kind });
+      return;
+    }
+    sendJson(res, 200, { revisionToken: result.revisionToken });
+  } catch {
+    logDraft(logger, request, { ok: false, kind: "database", httpStatus: 503 });
+    if (!res.headersSent) sendJson(res, 503, { status: "failed", kind: "database" });
+  }
+}
+
 async function handle(req, res, {
   load,
   maxBodyBytes,
@@ -249,6 +356,7 @@ async function handle(req, res, {
   logger,
   nextRequest,
   enableLegacyStoryboardRoute,
+  runtime,
 }) {
   const pathname = pathnameOf(req.url);
   const method = req.method || "GET";
@@ -267,6 +375,14 @@ async function handle(req, res, {
       return;
     }
     await handleStoryboard(req, res, { maxBodyBytes, env, fetchImpl, logger, request: nextRequest() });
+    return;
+  }
+  if (pathname === "/api/project") {
+    await handleProject(req, res, { logger, nextRequest, runtime });
+    return;
+  }
+  if (pathname === "/api/draft") {
+    await handleDraft(req, res, { maxBodyBytes, logger, nextRequest, runtime });
     return;
   }
   const route = routesByPath.get(pathname);
@@ -309,9 +425,11 @@ export function createServer({
   fetchImpl,
   logger,
   migrate,
+  projectStore,
   enableLegacyStoryboardRoute = false,
 } = {}) {
   const load = readFile ?? defaultRead;
+  const runtime = { projectStore: projectStore ?? null, pool: null };
   let requestSerial = 0;
   const nextRequest = () => {
     requestSerial += 1;
@@ -326,6 +444,7 @@ export function createServer({
       logger,
       nextRequest,
       enableLegacyStoryboardRoute,
+      runtime,
     }).catch(() => {
       if (!res.headersSent) sendJson(res, 500, { status: "failed", kind: "configuration" });
     });
@@ -334,6 +453,11 @@ export function createServer({
     socket.destroy();
   });
   const runMigration = migrationRunner({ migrate, logger });
+  const attachStore = () => {
+    if (runtime.projectStore) return;
+    runtime.pool = createPool();
+    runtime.projectStore = createProjectStore(runtime.pool);
+  };
   if (runMigration) {
     const listen = server.listen.bind(server);
     let started = false;
@@ -342,12 +466,18 @@ export function createServer({
       const open = () => listen(...args, ...(callback ? [callback] : []));
       if (started) return open();
       started = true;
-      runMigration().then(open, (error) => {
+      runMigration().then(() => {
+        attachStore();
+        open();
+      }, (error) => {
         server.emit("error", error);
       });
       return server;
     };
   }
+  server.on("close", () => {
+    runtime.pool?.end().catch(() => {});
+  });
   return server;
 }
 
