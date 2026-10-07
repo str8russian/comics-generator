@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createServer as createHttpServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { migrate as migrateDatabase } from "./db/migrate.mjs";
 import { interpretDraft } from "./interpret.mjs";
 import { stageStoryboard } from "./stage.mjs";
 
@@ -240,7 +241,15 @@ async function handleStoryboard(req, res, { maxBodyBytes, env, fetchImpl, logger
   }
 }
 
-async function handle(req, res, { load, maxBodyBytes, env, fetchImpl, logger, nextRequest }) {
+async function handle(req, res, {
+  load,
+  maxBodyBytes,
+  env,
+  fetchImpl,
+  logger,
+  nextRequest,
+  enableLegacyStoryboardRoute,
+}) {
   const pathname = pathnameOf(req.url);
   const method = req.method || "GET";
   if (pathname == null) {
@@ -248,6 +257,11 @@ async function handle(req, res, { load, maxBodyBytes, env, fetchImpl, logger, ne
     return;
   }
   if (pathname === "/api/storyboard") {
+    if (!enableLegacyStoryboardRoute) {
+      sendEmpty(res, 404);
+      req.resume();
+      return;
+    }
     if (method !== "POST") {
       sendEmpty(res, 405, { Allow: "POST" });
       return;
@@ -281,7 +295,22 @@ async function handle(req, res, { load, maxBodyBytes, env, fetchImpl, logger, ne
   res.end(body);
 }
 
-export function createServer({ readFile, maxBodyBytes = DEFAULT_MAX_BODY_BYTES, env, fetchImpl, logger } = {}) {
+function migrationRunner({ migrate, logger }) {
+  if (migrate === false) return null;
+  if (typeof migrate === "function") return migrate;
+  const migrationLogger = logger ?? console;
+  return () => migrateDatabase({ logger: migrationLogger });
+}
+
+export function createServer({
+  readFile,
+  maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
+  env,
+  fetchImpl,
+  logger,
+  migrate,
+  enableLegacyStoryboardRoute = false,
+} = {}) {
   const load = readFile ?? defaultRead;
   let requestSerial = 0;
   const nextRequest = () => {
@@ -289,13 +318,36 @@ export function createServer({ readFile, maxBodyBytes = DEFAULT_MAX_BODY_BYTES, 
     return String(requestSerial);
   };
   const server = createHttpServer((req, res) => {
-    handle(req, res, { load, maxBodyBytes, env, fetchImpl, logger, nextRequest }).catch(() => {
+    handle(req, res, {
+      load,
+      maxBodyBytes,
+      env,
+      fetchImpl,
+      logger,
+      nextRequest,
+      enableLegacyStoryboardRoute,
+    }).catch(() => {
       if (!res.headersSent) sendJson(res, 500, { status: "failed", kind: "configuration" });
     });
   });
   server.on("clientError", (_error, socket) => {
     socket.destroy();
   });
+  const runMigration = migrationRunner({ migrate, logger });
+  if (runMigration) {
+    const listen = server.listen.bind(server);
+    let started = false;
+    server.listen = (...args) => {
+      const callback = typeof args.at(-1) === "function" ? args.pop() : undefined;
+      const open = () => listen(...args, ...(callback ? [callback] : []));
+      if (started) return open();
+      started = true;
+      runMigration().then(open, (error) => {
+        server.emit("error", error);
+      });
+      return server;
+    };
+  }
   return server;
 }
 
@@ -325,7 +377,8 @@ export function startServer({
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.STORYBOARD_PORT || 4173);
-  startServer({ port }).catch((error) => {
+  const host = process.env.STORYBOARD_HOST || "127.0.0.1";
+  startServer({ port, host }).catch((error) => {
     const code = typeof error?.code === "string" && /^[A-Z0-9_]+$/.test(error.code) ? ` code=${error.code}` : "";
     console.error(`Storyboard server failed to start${code}`);
     process.exitCode = 1;

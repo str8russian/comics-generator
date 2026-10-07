@@ -30,7 +30,10 @@ function get(port, path) {
 }
 
 test("serves the real static assets byte for byte", async () => {
-  const server = createServer();
+  const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
+  });
   const port = await listen(server);
   try {
     for (const route of routes) {

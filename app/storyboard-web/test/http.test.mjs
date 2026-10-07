@@ -72,6 +72,8 @@ test("names the static allowlist from the storyboard contract", () => {
 test("serves injected bytes for allowlisted paths only", async () => {
   const seen = [];
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     readFile(filePath) {
       seen.push(filePath);
       return readFile(filePath);
@@ -98,7 +100,12 @@ test("serves injected bytes for allowlisted paths only", async () => {
 });
 
 test("rejects the wrong method with Allow and no storyboard body", async () => {
-  const server = createServer({ readFile, maxBodyBytes: DEFAULT_MAX_BODY_BYTES });
+  const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
+    readFile,
+    maxBodyBytes: DEFAULT_MAX_BODY_BYTES,
+  });
   const port = await listen(server);
   try {
     const file = await send(port, { method: "POST", path: "/app.js", body: "{}" });
@@ -115,7 +122,12 @@ test("rejects the wrong method with Allow and no storyboard body", async () => {
 });
 
 test("rejects a non-JSON content type, malformed JSON, and a body above the ceiling", async () => {
-  const server = createServer({ readFile, maxBodyBytes: DEFAULT_MAX_BODY_BYTES });
+  const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
+    readFile,
+    maxBodyBytes: DEFAULT_MAX_BODY_BYTES,
+  });
   const port = await listen(server);
   try {
     const text = await send(port, {

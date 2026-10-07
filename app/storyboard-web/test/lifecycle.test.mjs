@@ -116,7 +116,12 @@ test("prints the bound URL after listen, including a non-default port", async ()
   const port = await reservePort();
   assert.notEqual(port, 4173);
   const logger = capturingLogger();
-  const server = await startServer({ port, logger });
+  const server = await startServer({
+    port,
+    logger,
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
+  });
   try {
     assert.equal(server.address().port, port);
     assert.deepEqual(logger.lines, [`Storyboard server listening at http://127.0.0.1:${port}/`]);
@@ -129,6 +134,8 @@ test("logs Interpret invalid-output without starting Stage", async () => {
   const logger = capturingLogger();
   let calls = 0;
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     logger,
     env: {
       BASE_URL: `https://${hostName}`,
@@ -160,6 +167,8 @@ test("logs Stage invalid-output after Interpret succeeds", async () => {
   const bodies = [completion(interpretBody("Аня: да")), completion({ frames: [], review: [] })];
   let calls = 0;
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     logger,
     env: {
       BASE_URL: `https://${hostName}`,
@@ -192,6 +201,8 @@ test("logs a checked storyboard without source text or secrets", async () => {
   ];
   let calls = 0;
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     logger,
     env: {
       BASE_URL: `https://${hostName}/v1`,
@@ -237,6 +248,8 @@ test("logs one configuration terminal when the handler rejects after interpret-s
     },
   });
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     logger,
     env,
     fetchImpl: async () => {

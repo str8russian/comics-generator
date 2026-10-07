@@ -145,6 +145,8 @@ test("returns checked dialogue slices and a last frame after synchronous fitting
     };
   };
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     env: {
       BASE_URL: "https://provider.example.test",
       CONTEST_API_TOKEN: "test-token",
@@ -197,6 +199,8 @@ test("does not call Stage when Interpret output is invalid", async () => {
     };
   };
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     env: {
       BASE_URL: "https://provider.example.test",
       CONTEST_API_TOKEN: "test-token",
@@ -238,6 +242,8 @@ test("does not call Stage when the anchor pass fails", async () => {
     };
   };
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     env: {
       BASE_URL: "https://provider.example.test",
       CONTEST_API_TOKEN: "test-token",

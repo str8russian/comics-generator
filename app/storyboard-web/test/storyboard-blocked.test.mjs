@@ -55,7 +55,12 @@ function post(port, body, headers = { "content-type": "application/json" }) {
 }
 
 async function withServer(fetchImpl, envOverride = env) {
-  const server = createServer({ env: envOverride, fetchImpl });
+  const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
+    env: envOverride,
+    fetchImpl,
+  });
   const port = await listen(server);
   return { port, close: () => close(server) };
 }
@@ -139,6 +144,8 @@ test("configuration and invalid-request stay distinct failed kinds", async () =>
   assert.equal(request.state === "blocked", false);
 
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     env: {},
     fetchImpl: async () => {
       throw new Error("provider was called");

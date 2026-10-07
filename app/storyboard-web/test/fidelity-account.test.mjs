@@ -98,6 +98,8 @@ function postDraft(port, draft) {
 test("blocks an empty or whitespace-only draft before the provider", async () => {
   let calls = 0;
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     env,
     fetchImpl: async () => {
       calls += 1;
@@ -139,6 +141,8 @@ test("blocks a duplicated source id and a duplicated frame id", () => {
 test("blocks an unresolved speaker and does not call Stage", async () => {
   let calls = 0;
   const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
     env,
     fetchImpl: async () => {
       calls += 1;

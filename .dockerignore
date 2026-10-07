@@ -1,0 +1,9 @@
+.env.local
+.env*
+node_modules/
+.git/
+Dockerfile*
+.dockerignore
+*.log*
+coverage/
+app/storyboard-web/eval/stage-artistic/results/
