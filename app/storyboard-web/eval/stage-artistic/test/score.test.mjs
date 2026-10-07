@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -94,10 +94,14 @@ test("fixture has one context, fifteen utterances, two actions, and no offsets",
   const opening = fixture.sourceItems.find((item) => item.id === "D01");
   assert.match(opening.text, /телеграмм/);
   assert.equal(opening.text.includes("Telegram"), false);
-  assert.match(fixture.sourceItems[0].text, /Telegram/);
+  const context = fixture.sourceItems.find((item) => item.id === "C01");
+  const sleep = fixture.sourceItems.find((item) => item.id === "A01");
+  assert.equal(context.sourceQuote, "(Путин, Дуров и Песков встречаются для обсуждения отмены блокировки Telegram в России)");
+  assert.equal(context.text, context.sourceQuote);
+  assert.equal(sleep.sourceQuote, "(далее показывается спящий Песков).");
+  assert.equal(sleep.text, sleep.sourceQuote);
   assert.equal(fixture.sourceItems.find((item) => item.id === "D02").text, "Дмитрий Сергеевич ...");
   assert.equal(fixture.sourceItems.find((item) => item.id === "D03").text, "ДМИТРИЙ СЕРГЕЕВИЧ!!");
-  assert.match(fixture.sourceItems.find((item) => item.id === "A01").text, /спящий Песков/);
   assert.match(fixture.sourceItems.find((item) => item.id === "A02").text, /панике/);
 });
 
@@ -198,6 +202,21 @@ test("a derived frame is counted and is not an artistic failure", () => {
   assert.deepEqual(report.artistic.layoutAgreement, { matched: 17, expected: 17 });
 });
 
+test("swapped source frames fail source order without an artistic verdict", () => {
+  const candidate = structuredClone(targetLike);
+  const first = candidate.frames.findIndex((frame) => frame.sourceItemId === "D07");
+  const second = candidate.frames.findIndex((frame) => frame.sourceItemId === "D08");
+  [candidate.frames[first], candidate.frames[second]] = [candidate.frames[second], candidate.frames[first]];
+  const report = scoreStageArtistic(fixture, target, candidate);
+  assert.equal(report.sourceFidelity.ok, false);
+  assert.equal(report.sourceFidelity.sourceFrameOrder.ok, false);
+  assert.deepEqual(report.sourceFidelity.sourceFrameOrder.expected, target.frames.map((frame) => frame.sourceItemId));
+  assert.equal(report.sourceFidelity.sourceFrameOrder.actual[first], "D08");
+  assert.equal(report.sourceFidelity.sourceFrameOrder.actual[second], "D07");
+  assert.equal(report.artistic.verdict, "not-a-pass-fail");
+  assert.deepEqual(report.artistic.layoutAgreement, { matched: 17, expected: 17 });
+});
+
 test("a missing source frame is a reported fidelity gap", () => {
   const candidate = structuredClone(targetLike);
   candidate.frames = candidate.frames.filter((frame) => frame.sourceItemId !== "D15");
@@ -284,4 +303,34 @@ test("command scores a saved candidate and rejects an env file", () => {
     assert.match(error.message, /environment file/);
     return true;
   });
+});
+
+test("a candidate symlink to an env file is rejected before its contents are parsed", () => {
+  const sentinel = "STAGE_ARTISTIC_ENV_SENTINEL_do_not_parse";
+  const directory = mkdtempSync(join(tmpdir(), "stage-artistic-"));
+  const envPath = join(directory, ".env.local");
+  const linkPath = join(directory, "candidate.json");
+  const script = fileURLToPath(new URL("../score.mjs", import.meta.url));
+  try {
+    writeFileSync(envPath, sentinel);
+    symlinkSync(envPath, linkPath);
+    const result = spawnSync(process.execPath, [script, linkPath], {
+      encoding: "utf8",
+      env: {},
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /environment file/);
+    assert.equal(result.stderr.includes("not JSON"), false);
+    assert.equal(result.stderr.includes(sentinel), false);
+    assert.equal(result.stdout.includes(sentinel), false);
+    assert.throws(() => readCandidateJson(linkPath), (error) => {
+      assert.equal(error.code, "invalid-candidate");
+      assert.match(error.message, /environment file/);
+      assert.equal(error.message.includes(sentinel), false);
+      assert.equal(error.message.includes("not JSON"), false);
+      return true;
+    });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

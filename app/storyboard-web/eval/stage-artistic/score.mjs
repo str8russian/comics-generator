@@ -258,11 +258,18 @@ export function scoreStageArtistic(fixture, target, candidate) {
 
   const missingReview = target.contextReviewIds.filter((id) => !candidate.review.includes(id));
   const unexpectedReview = candidate.review.filter((id) => !target.contextReviewIds.includes(id));
+  const expectedSourceOrder = target.frames.map((frame) => frame.sourceItemId);
+  const actualSourceOrder = candidate.frames
+    .filter((frame) => frame.origin === "source")
+    .map((frame) => frame.sourceItemId);
+  const sourceFrameOrderOk = expectedSourceOrder.length === actualSourceOrder.length
+    && expectedSourceOrder.every((id, index) => actualSourceOrder[index] === id);
   const sourceFidelityOk = missingSourceFrames.length === 0
     && duplicateSourceFrames.length === 0
     && unexpectedSourceFrames.length === 0
     && missingReview.length === 0
-    && unexpectedReview.length === 0;
+    && unexpectedReview.length === 0
+    && sourceFrameOrderOk;
 
   return {
     schemaValid: true,
@@ -280,6 +287,11 @@ export function scoreStageArtistic(fixture, target, candidate) {
         expected: target.contextReviewIds.length,
         missing: missingReview,
         unexpected: unexpectedReview,
+      },
+      sourceFrameOrder: {
+        ok: sourceFrameOrderOk,
+        expected: expectedSourceOrder,
+        actual: actualSourceOrder,
       },
     },
     artistic: {
@@ -306,14 +318,26 @@ export function scoreStageArtistic(fixture, target, candidate) {
   };
 }
 
+function isEnvironmentBasename(name) {
+  return name === ".env" || name.startsWith(".env.");
+}
+
 export function readCandidateJson(candidatePath) {
-  const name = basename(candidatePath);
-  if (name === ".env" || name.startsWith(".env.")) {
+  if (isEnvironmentBasename(basename(candidatePath))) {
+    fail("invalid-candidate", "refusing to read an environment file");
+  }
+  let canonical;
+  try {
+    canonical = realpathSync(candidatePath);
+  } catch (error) {
+    fail("invalid-candidate", `could not read candidate: ${error.message}`);
+  }
+  if (isEnvironmentBasename(basename(canonical))) {
     fail("invalid-candidate", "refusing to read an environment file");
   }
   let text;
   try {
-    text = readFileSync(candidatePath, "utf8");
+    text = readFileSync(canonical, "utf8");
   } catch (error) {
     fail("invalid-candidate", `could not read candidate: ${error.message}`);
   }

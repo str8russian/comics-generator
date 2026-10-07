@@ -12,9 +12,16 @@ The historical harness under `evals/` is a different pipeline. Leave it untouche
 - `baseline-observation.md` — sanitized owner observation. No raw Stage JSON was retained, so none is stored here.
 - `score.mjs` — scores one saved, schema-valid Stage response.
 
-Dialogue wording comes from `evals/references/telegram-unblock-60s/human-reference.md`. The sealed draft leaves `Дмитрий Сергеевич ...` and `ДМИТРИЙ СЕРГЕЕВИЧ!!` unlabeled; this fixture gives both an explicit `Путин:` label because that is the submission that completed. `Подробности вам Дмитрий Сергеевич расскажет.` stays inside D01. D01 keeps the source spelling `телеграмм`. The storyboard display later uses `Telegram` for that sentence.
+`fixture.json` is the successful owner submission. `evals/references/telegram-unblock-60s/human-reference.md` remains provenance for that dialogue; it is not the exact fixture text. The sealed draft leaves `Дмитрий Сергеевич ...` and `ДМИТРИЙ СЕРГЕЕВИЧ!!` unlabeled. The completed submission, and therefore this fixture, gives both an explicit `Путин:` label. `Подробности вам Дмитрий Сергеевич расскажет.` stays inside D01. D01 keeps the submitted spelling `телеграмм`. The storyboard display later uses `Telegram` for that sentence.
 
-Joke-research parentheticals in the human reference are not source items here. A01 keeps the showing clause `(далее показывается спящий Песков.)`. A02 keeps its full parenthetical. The prototype viewer's `derived` flag on the shout is a staging note. D03 remains a source utterance.
+Context and the sleep action keep the submission's parentheses and punctuation exactly:
+
+```text
+(Путин, Дуров и Песков встречаются для обсуждения отмены блокировки Telegram в России)
+(далее показывается спящий Песков).
+```
+
+Joke-research parentheticals in the human reference are not source items here. A02 keeps its full parenthetical from the submission. The prototype viewer's `derived` flag on the shout is a staging note. D03 remains a source utterance.
 
 ## Score a saved candidate
 
@@ -26,13 +33,13 @@ node app/storyboard-web/eval/stage-artistic/score.mjs path/to/candidate.json
 
 The command prints a JSON report and exits 0 when the bundled fixture and the candidate are structurally usable. Exit 0 does not mean the directing matched the target. Artistic metrics use `"verdict": "not-a-pass-fail"`. A missing or duplicate source frame is reported under `sourceFidelity` and still exits 0.
 
-The process exits 1 when the fixture, the target manifest, or the candidate structure is invalid. That includes a candidate that fails `specs/001-structure-storyboard-tracer/contracts/stage-response.schema.json`. Paths named `.env` or `.env.*` are refused before they are read.
+The process exits 1 when the fixture, the target manifest, or the candidate structure is invalid. That includes a candidate that fails `specs/001-structure-storyboard-tracer/contracts/stage-response.schema.json`. The candidate path is resolved to its canonical path before its contents are read. A basename `.env` or `.env.*` on the requested path or the canonical path is refused before the file is parsed, including when the requested name is a symbolic link.
 
 ## What the report measures
 
 For each of the 17 semantic source frames, the scorer reads `origin`, `sourceItemId`, `sourceRole`, and `layout`. A directing beat still counts as one frame. Its `segments` are not extra semantic frames and are not the overflow display blocks.
 
-- Source-frame coverage, missing ids, duplicate ids, and unexpected source frames.
+- Source-frame coverage, missing ids, duplicate ids, unexpected source frames, and source-frame order. Derived frames are ignored in the order comparison.
 - Layout agreement out of 17.
 - Deliberate-single agreement for D02, D03, D04, D11, D13, D14, and D15.
 - Conversational-split agreement for D01, D05, D06, D07, D08, D09, D10, and D12.
@@ -40,7 +47,7 @@ For each of the 17 semantic source frames, the scorer reads `origin`, `sourceIte
 - Context review coverage for C01.
 - Derived-frame count.
 
-`sourceFidelity.ok` means those account checks passed for this fixture. It is not `assessStage`, and it is not an artistic verdict. Layout disagreement leaves `sourceFidelity.ok` true when every source item is still accounted for once.
+`sourceFidelity.ok` means those account checks passed for this fixture, including source-frame order. It is not `assessStage`, and it is not an artistic verdict. Layout disagreement leaves `sourceFidelity.ok` true when every source item is still accounted for once and the source frames stay in target order.
 
 Panel descriptions, `speakerPanel`, participant choice, performance, and focus are not scored. The human rubric covers them. Participant names in `target.json` document the intended focus; the scorer does not search candidate prose for them.
 
