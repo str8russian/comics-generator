@@ -146,15 +146,15 @@ description: "Implementation tasks for persistent source and cast confirmation"
 
 ### Tests
 
-- [ ] T042 Write `app/storyboard-web/test/persistent-fake-provider.test.mjs` before `app/storyboard-web/test/persistent-fake-provider.mjs` exists. The fake must bind only to `127.0.0.1`, must not read `.env.local`, and must count Interpret and Stage calls. Its draft must include an alias such as `Дмитрий Сергеевич` and one utterance with no speaker. The first completion returns `sourceItems`, `characters`, and `surfaceForms`. The second returns one schema-valid Stage object. A third call or a call to any other path must be rejected.
+- [x] T042 Write `app/storyboard-web/test/persistent-fake-provider.test.mjs` before `app/storyboard-web/test/persistent-fake-provider.mjs` exists. The fake must bind only to `127.0.0.1`, must not read `.env.local`, and must count Interpret and Stage calls. Its draft must include an alias such as `Дмитрий Сергеевич` and one utterance with no speaker. The first completion returns `sourceItems`, `characters`, and `surfaceForms`. The second returns one schema-valid Stage object. A third call or a call to any other path must be rejected.
 
 ### Implementation
 
-- [ ] T043 Implement `app/storyboard-web/test/persistent-fake-provider.mjs` for that contract. Do not import provider credentials and do not bind `0.0.0.0`.
+- [x] T043 Implement `app/storyboard-web/test/persistent-fake-provider.mjs` for that contract. Do not import provider credentials and do not bind `0.0.0.0`.
 
 ### Verification
 
-- [ ] T044 [P] Run `node --test app/storyboard-web/test/**/*.test.mjs` from the repository root. PostgreSQL files may skip only because `STORYBOARD_TEST_DATABASE_URL` is unset. Do not pass `--env-file` and do not call the live provider.
+- [x] T044 [P] Run `node --test app/storyboard-web/test/**/*.test.mjs` from the repository root. PostgreSQL files may skip only because `STORYBOARD_TEST_DATABASE_URL` is unset. Do not pass `--env-file` and do not call the live provider.
 - [ ] T045 [P] Run `STORYBOARD_TEST_DATABASE_URL=postgres://comics:comics@127.0.0.1:5432/comics_test node app/storyboard-web/test/postgres/verify.mjs` after `docker compose up -d db`. The command must fail if it skips tests. It must not open database `comics`.
 - [ ] T046 Perform the offline Manual P1 checkpoint. Start only the database with `docker compose up -d db`. Start `app/storyboard-web/test/persistent-fake-provider.mjs` on `127.0.0.1`. Start `app/storyboard-web/server.mjs` with explicit `DATABASE_URL`, `BASE_URL` pointing at that fake, a placeholder `CONTEST_API_TOKEN`, and a placeholder `CONTEST_MODEL`. Do not use `--env-file` or `--env-file-if-exists`, and do not load `.env.local`. In the browser, check draft resume across refresh and application restart, coalesced autosave, the visible `stale-draft` conflict, Material review, `Дмитрий Сергеевич` → `Песков`, atomic confirmation, a mapping-only new material state, `unresolved-speaker` without a Stage call, one Stage call that receives the confirmed cast, dialogue rebuilt from offsets, the result tied to the captured material state, and resume of the eligible storyboard. The fake provider’s final counts must be one Interpret request and one Stage request. Stop the Node application and the fake provider afterward. Do not check Phase 7 or Phase 8.
 - [ ] T047 Start the application with `docker compose up`, restart it, and confirm the named volume still has the project. Do not request a reading or a storyboard during this check, including when `.env.local` is absent. Do not use `docker compose down -v`.
