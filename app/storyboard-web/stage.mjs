@@ -156,6 +156,6 @@ export async function stageStoryboard({ draft, sourceItems, env, fetchImpl }) {
     env,
     fetchImpl,
   });
-  if (!result.ok) return failure(result.httpStatus, result.kind);
-  return buildChecked(draft, sourceItems, result.value);
+  if (!result.ok) return { ...failure(result.httpStatus, result.kind), diagnostics: result.diagnostics };
+  return { ...buildChecked(draft, sourceItems, result.value), diagnostics: result.diagnostics };
 }

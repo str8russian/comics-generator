@@ -5,6 +5,34 @@ function failed(httpStatus, kind) {
   return { ok: false, httpStatus, status: "failed", kind };
 }
 
+function schemaIssues(errors) {
+  if (!Array.isArray(errors)) return [];
+  const issues = [];
+  for (const error of errors) {
+    if (!error || typeof error.keyword !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(error.keyword)) continue;
+    const rawPath = typeof error.instancePath === "string" ? error.instancePath : "";
+    if (rawPath !== "" && !/^\/[A-Za-z0-9/_-]*$/.test(rawPath)) continue;
+    issues.push({ instancePath: rawPath || "/", keyword: error.keyword });
+    if (issues.length === 8) break;
+  }
+  return issues;
+}
+
+function withDiagnostics(result, diagnostics = {}) {
+  const clean = {};
+  if (Number.isInteger(diagnostics.providerStatus) && diagnostics.providerStatus >= 100 && diagnostics.providerStatus <= 599) {
+    clean.providerStatus = diagnostics.providerStatus;
+  }
+  if (typeof diagnostics.finishReason === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(diagnostics.finishReason)) {
+    clean.finishReason = diagnostics.finishReason;
+  }
+  if (Array.isArray(diagnostics.schemaIssues) && diagnostics.schemaIssues.length > 0) {
+    clean.schemaIssues = diagnostics.schemaIssues;
+  }
+  if (Object.keys(clean).length === 0) return result;
+  return { ...result, diagnostics: clean };
+}
+
 function completionsUrl(baseUrl) {
   const url = new URL(baseUrl);
   const path = url.pathname.replace(/\/+$/, "");
@@ -21,35 +49,40 @@ function completionsUrl(baseUrl) {
 }
 
 async function classifyCompletion(response, schema) {
-  if (response.status < 200 || response.status > 299) return failed(502, "provider");
+  const observed = { providerStatus: response.status };
+  if (response.status < 200 || response.status > 299) return withDiagnostics(failed(502, "provider"), observed);
 
   let payload;
   try {
     payload = JSON.parse(await response.text());
   } catch {
-    return failed(502, "invalid-output");
+    return withDiagnostics(failed(502, "invalid-output"), observed);
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return failed(502, "invalid-output");
+    return withDiagnostics(failed(502, "invalid-output"), observed);
   }
 
   const choice = Array.isArray(payload.choices) ? payload.choices[0] : undefined;
-  if (!choice || typeof choice !== "object") return failed(502, "invalid-output");
-  if (choice.finish_reason !== "stop") return failed(502, "invalid-output");
+  if (!choice || typeof choice !== "object") return withDiagnostics(failed(502, "invalid-output"), observed);
+  observed.finishReason = choice.finish_reason;
+  if (choice.finish_reason !== "stop") return withDiagnostics(failed(502, "invalid-output"), observed);
 
   let value;
   try {
     value = JSON.parse(choice.message?.content);
   } catch {
-    return failed(502, "invalid-output");
+    return withDiagnostics(failed(502, "invalid-output"), observed);
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return failed(502, "invalid-output");
+    return withDiagnostics(failed(502, "invalid-output"), observed);
   }
 
   const validate = new Ajv({ allErrors: true, strict: true }).compile(structuredClone(schema));
-  if (!validate(value)) return failed(502, "invalid-output");
-  return { ok: true, httpStatus: response.status, value };
+  if (!validate(value)) {
+    observed.schemaIssues = schemaIssues(validate.errors);
+    return withDiagnostics(failed(502, "invalid-output"), observed);
+  }
+  return withDiagnostics({ ok: true, httpStatus: response.status, value }, observed);
 }
 
 async function complete(settings, config, { messages, schema, fetchImpl }) {

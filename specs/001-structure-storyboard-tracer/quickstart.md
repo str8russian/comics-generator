@@ -47,7 +47,9 @@ Expected:
 node --env-file-if-exists=.env.local app/storyboard-web/server.mjs
 ```
 
-Open the printed local URL. Paste a synthetic Russian dialogue. The page stays in loading through HTTP `checked` until fitting finishes. A ready result shows a grid and a detail view, and the detail control can open the last frame. A blocked result shows the failure codes and does not label the frames ready. A provider or schema failure shows `failed` and no ready storyboard. The provider token never appears in the page or the response JSON.
+After the process is listening, it prints the actual local URL, for example `Storyboard server listening at http://127.0.0.1:4173/`. The port is the bound port: the default is 4173, and `STORYBOARD_PORT` selects another one. Open that URL. Paste a synthetic Russian dialogue. The page stays in loading through HTTP `checked` until fitting finishes. A ready result shows a grid and a detail view, and the detail control can open the last frame. A blocked result shows the failure codes and does not label the frames ready. A provider or schema failure shows `failed` and no ready storyboard. The provider token never appears in the page or the response JSON.
+
+Each `POST /api/storyboard` also prints sanitized lifecycle lines. A line names a request id and one event: `interpret-start`, `interpret-outcome`, `stage-start`, `stage-outcome`, or `terminal`. Stage lines appear only when Stage is called. The terminal line is `checked`, `blocked`, or `failed`. When the failure kind is `invalid-output`, that terminal line includes `during=interpret` or `during=stage`. Outcome lines include `providerStatus`, `finishReason`, and `schema` as `instancePath:keyword` only when those values are already known. These lines do not include the draft, dialogue, prompts, model messages, raw provider responses, storyboard content, or any environment value.
 
 Use a non-sensitive synthetic dialogue for the scripted demo. The owner's reference dialogue may be pasted by hand afterward; it is not copied into the repository fixtures.
 

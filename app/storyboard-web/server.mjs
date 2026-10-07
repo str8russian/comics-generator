@@ -109,55 +109,127 @@ function sendOutcome(res, outcome) {
   sendJson(res, 200, outcome.body);
 }
 
-async function handleStoryboard(req, res, { maxBodyBytes, env, fetchImpl }) {
+const FAILURE_KINDS = new Set(["provider", "invalid-output", "timeout", "configuration", "invalid-request"]);
+
+function logLine(logger, fields) {
+  if (!logger || typeof logger.log !== "function") return;
+  const parts = ["storyboard"];
+  for (const [key, value] of Object.entries(fields)) {
+    if (value == null || value === "") continue;
+    parts.push(`${key}=${value}`);
+  }
+  logger.log(parts.join(" "));
+}
+
+function formatCodes(failures) {
+  if (!Array.isArray(failures)) return undefined;
+  const codes = [];
+  for (const failure of failures) {
+    if (typeof failure?.code === "string" && /^[a-z]+(?:-[a-z]+)*$/.test(failure.code)) codes.push(failure.code);
+  }
+  return codes.length > 0 ? codes.join(",") : undefined;
+}
+
+function formatSchema(issues) {
+  if (!Array.isArray(issues) || issues.length === 0) return undefined;
+  return issues.map((issue) => `${issue.instancePath}:${issue.keyword}`).join(",");
+}
+
+function outcomeFields(result) {
+  const fields = {};
+  if (result?.ok) {
+    fields.status = "ok";
+  } else if (result?.status === "blocked") {
+    fields.status = "blocked";
+    fields.codes = formatCodes(result.failures);
+  } else {
+    fields.status = "failed";
+    if (FAILURE_KINDS.has(result?.kind)) fields.kind = result.kind;
+    if (Number.isInteger(result?.httpStatus)) fields.http = result.httpStatus;
+  }
+  const diagnostics = result?.diagnostics;
+  if (diagnostics && Number.isInteger(diagnostics.providerStatus)) fields.providerStatus = diagnostics.providerStatus;
+  if (diagnostics && typeof diagnostics.finishReason === "string") fields.finishReason = diagnostics.finishReason;
+  fields.schema = formatSchema(diagnostics?.schemaIssues);
+  return fields;
+}
+
+async function handleStoryboard(req, res, { maxBodyBytes, env, fetchImpl, logger, request }) {
+  const terminal = (fields) => logLine(logger, { request, event: "terminal", ...fields });
   const declared = req.headers["content-length"];
   if (declared != null && declared !== "") {
     const size = Number(declared);
     if (Number.isFinite(size) && size > maxBodyBytes) {
+      terminal({ status: "failed", http: 413 });
       closeEmpty(res, 413);
       return;
     }
   }
   if (!isJsonContentType(req.headers["content-type"])) {
+    terminal({ status: "failed", http: 415 });
     sendEmpty(res, 415);
     req.resume();
     return;
   }
   const read = await readLimited(req, maxBodyBytes);
   if (read.tooBig) {
-    if (!res.headersSent) closeEmpty(res, 413);
+    if (!res.headersSent) {
+      terminal({ status: "failed", http: 413 });
+      closeEmpty(res, 413);
+    }
     return;
   }
   let payload;
   try {
     payload = JSON.parse(read.body.toString("utf8"));
   } catch {
+    terminal({ status: "failed", kind: "invalid-request", http: 400 });
     sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || typeof payload.draft !== "string") {
+    terminal({ status: "failed", kind: "invalid-request", http: 400 });
     sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
+  logLine(logger, { request, event: "interpret-start" });
   const interpreted = await interpretDraft({ draft: payload.draft, env, fetchImpl });
+  logLine(logger, { request, event: "interpret-outcome", ...outcomeFields(interpreted) });
   if (!interpreted.ok) {
+    terminal({
+      status: interpreted.status === "blocked" ? "blocked" : "failed",
+      kind: interpreted.status === "blocked" ? undefined : (FAILURE_KINDS.has(interpreted.kind) ? interpreted.kind : undefined),
+      during: interpreted.kind === "invalid-output" ? "interpret" : undefined,
+      http: interpreted.httpStatus,
+      codes: interpreted.status === "blocked" ? formatCodes(interpreted.failures) : undefined,
+    });
     sendOutcome(res, interpreted);
     return;
   }
+  logLine(logger, { request, event: "stage-start" });
   const staged = await stageStoryboard({
     draft: payload.draft,
     sourceItems: interpreted.sourceItems,
     env,
     fetchImpl,
   });
+  logLine(logger, { request, event: "stage-outcome", ...outcomeFields(staged) });
   if (!staged.ok) {
+    terminal({
+      status: staged.status === "blocked" ? "blocked" : "failed",
+      kind: staged.status === "blocked" ? undefined : (FAILURE_KINDS.has(staged.kind) ? staged.kind : undefined),
+      during: staged.kind === "invalid-output" ? "stage" : undefined,
+      http: staged.httpStatus,
+      codes: staged.status === "blocked" ? formatCodes(staged.failures) : undefined,
+    });
     sendOutcome(res, staged);
     return;
   }
+  terminal({ status: "checked", http: 200 });
   sendOutcome(res, staged);
 }
 
-async function handle(req, res, { load, maxBodyBytes, env, fetchImpl }) {
+async function handle(req, res, { load, maxBodyBytes, env, fetchImpl, logger, nextRequest }) {
   const pathname = pathnameOf(req.url);
   const method = req.method || "GET";
   if (pathname == null) {
@@ -169,7 +241,7 @@ async function handle(req, res, { load, maxBodyBytes, env, fetchImpl }) {
       sendEmpty(res, 405, { Allow: "POST" });
       return;
     }
-    await handleStoryboard(req, res, { maxBodyBytes, env, fetchImpl });
+    await handleStoryboard(req, res, { maxBodyBytes, env, fetchImpl, logger, request: nextRequest() });
     return;
   }
   const route = routesByPath.get(pathname);
@@ -198,10 +270,15 @@ async function handle(req, res, { load, maxBodyBytes, env, fetchImpl }) {
   res.end(body);
 }
 
-export function createServer({ readFile, maxBodyBytes = DEFAULT_MAX_BODY_BYTES, env, fetchImpl } = {}) {
+export function createServer({ readFile, maxBodyBytes = DEFAULT_MAX_BODY_BYTES, env, fetchImpl, logger } = {}) {
   const load = readFile ?? defaultRead;
+  let requestSerial = 0;
+  const nextRequest = () => {
+    requestSerial += 1;
+    return String(requestSerial);
+  };
   const server = createHttpServer((req, res) => {
-    handle(req, res, { load, maxBodyBytes, env, fetchImpl }).catch(() => {
+    handle(req, res, { load, maxBodyBytes, env, fetchImpl, logger, nextRequest }).catch(() => {
       if (!res.headersSent) sendJson(res, 500, { status: "failed", kind: "configuration" });
     });
   });
@@ -211,8 +288,35 @@ export function createServer({ readFile, maxBodyBytes = DEFAULT_MAX_BODY_BYTES, 
   return server;
 }
 
+export function startServer({
+  port = 4173,
+  host = "127.0.0.1",
+  logger = console,
+  ...options
+} = {}) {
+  const server = createServer({ ...options, logger });
+  return new Promise((resolve, reject) => {
+    const fail = (error) => {
+      reject(error);
+    };
+    const ready = () => {
+      server.removeListener("error", fail);
+      const address = server.address();
+      const actualPort = address && typeof address === "object" ? address.port : port;
+      const actualHost = address && typeof address === "object" && address.address ? address.address : host;
+      logger.log(`Storyboard server listening at http://${actualHost}:${actualPort}/`);
+      resolve(server);
+    };
+    server.once("error", fail);
+    server.listen(port, host, ready);
+  });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.STORYBOARD_PORT || 4173);
-  const server = createServer();
-  server.listen(port, "127.0.0.1");
+  startServer({ port }).catch((error) => {
+    const code = typeof error?.code === "string" && /^[A-Z0-9_]+$/.test(error.code) ? ` code=${error.code}` : "";
+    console.error(`Storyboard server failed to start${code}`);
+    process.exitCode = 1;
+  });
 }

@@ -26,11 +26,17 @@ export async function interpretDraft({ draft, env, fetchImpl }) {
     fetchImpl,
   });
   if (!result.ok) {
-    return { ok: false, httpStatus: result.httpStatus, status: "failed", kind: result.kind };
+    return { ok: false, httpStatus: result.httpStatus, status: "failed", kind: result.kind, diagnostics: result.diagnostics };
   }
   const anchored = anchorDraft(draft, result.value.sourceItems);
   if (!anchored.ok) {
-    return { ok: false, httpStatus: 200, status: "blocked", failures: anchored.failures };
+    return {
+      ok: false,
+      httpStatus: 200,
+      status: "blocked",
+      failures: anchored.failures,
+      diagnostics: result.diagnostics,
+    };
   }
-  return { ok: true, sourceItems: anchored.sourceItems };
+  return { ok: true, sourceItems: anchored.sourceItems, diagnostics: result.diagnostics };
 }
