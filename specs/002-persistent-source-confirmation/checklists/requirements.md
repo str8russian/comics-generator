@@ -32,6 +32,7 @@
 ## Notes
 
 - Validation iteration 1 passed after separating viewing a previous revision from making it active, making a stale reading visible before confirmation, and keeping a mapping-only storyboard visible but not labeled ready.
+- Validation iteration 2 passed after requiring an explicit warning before an uncommitted draft is replaced, and after moving confirmed cast changes into a new immutable material state instead of updating a Source Revision in place. Success criteria SC-010 and SC-011 cover those corrections. A material-state browser stays out of scope.
 - No `[NEEDS CLARIFICATION]` markers were used. One local project, confirm-before-revision, and speaker-only blocking findings are recorded as assumptions and scope boundaries.
 - PostgreSQL and Docker Compose appear only in Assumptions, as the accepted local-first means of surviving an application restart. Requirements and success criteria stay on the observable resume behavior.
 - The preserved provider path, frame presentation, overflow handling, and artistic-evaluation baseline are named only as unchanged boundaries in Out of Scope and Assumptions. This feature does not redesign them.
