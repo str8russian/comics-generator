@@ -20,6 +20,35 @@ export function bindDraftAutosave({
     keepButton.hidden = !visible;
   }
 
+  function setBusy(busy) {
+    textarea.disabled = busy;
+    reloadButton.disabled = busy;
+    keepButton.disabled = busy;
+  }
+
+  function beginResolve() {
+    if (state === "resolving") return false;
+    if (timer != null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    state = "resolving";
+    setBusy(true);
+    return true;
+  }
+
+  function finishConflict() {
+    state = "conflict";
+    showConflict(true);
+    setBusy(false);
+  }
+
+  function finishIdle() {
+    state = "idle";
+    showConflict(false);
+    setBusy(false);
+  }
+
   async function readProject() {
     const response = await fetchImpl("/api/project");
     return response.json();
@@ -41,29 +70,32 @@ export function bindDraftAutosave({
   }
 
   function enterConflict() {
-    state = "conflict";
-    showConflict(true);
+    finishConflict();
   }
 
   async function saveLoop() {
     state = "saving";
-    while (state === "saving") {
-      const text = textarea.value;
-      sent = text;
-      const result = await putDraft(text);
-      if (state !== "saving") return;
-      if (result.status === 409 && result.payload?.kind === "stale-draft") {
-        enterConflict();
+    try {
+      while (state === "saving") {
+        const text = textarea.value;
+        sent = text;
+        const result = await putDraft(text);
+        if (state !== "saving") return;
+        if (result.status === 409 && result.payload?.kind === "stale-draft") {
+          enterConflict();
+          return;
+        }
+        if (result.status !== 200 || typeof result.payload?.revisionToken !== "string") {
+          finishIdle();
+          return;
+        }
+        token = result.payload.revisionToken;
+        if (textarea.value !== sent) continue;
+        finishIdle();
         return;
       }
-      if (result.status !== 200 || typeof result.payload?.revisionToken !== "string") {
-        state = "idle";
-        return;
-      }
-      token = result.payload.revisionToken;
-      if (textarea.value !== sent) continue;
-      state = "idle";
-      return;
+    } catch {
+      if (state === "saving") finishIdle();
     }
   }
 
@@ -81,27 +113,51 @@ export function bindDraftAutosave({
     scheduleSave();
   });
 
+  function acceptedToken(payload) {
+    return typeof payload?.revisionToken === "string" ? payload.revisionToken : null;
+  }
+
   async function reloadStored() {
-    const project = await readProject();
-    textarea.value = project.draft.text;
-    token = project.draft.revisionToken;
-    state = "idle";
-    showConflict(false);
+    if (!beginResolve()) return;
+    try {
+      const response = await fetchImpl("/api/project");
+      const project = await response.json();
+      const text = project?.draft?.text;
+      const nextToken = project?.draft?.revisionToken;
+      if (response.status !== 200 || typeof text !== "string" || typeof nextToken !== "string") {
+        finishConflict();
+        return;
+      }
+      textarea.value = text;
+      token = nextToken;
+      finishIdle();
+    } catch {
+      finishConflict();
+    }
   }
 
   async function keepLocal() {
+    if (!beginResolve()) return;
     const visible = textarea.value;
-    const project = await readProject();
-    token = project.draft.revisionToken;
-    const result = await putDraft(visible);
-    if (result.status === 409 && result.payload?.kind === "stale-draft") {
-      enterConflict();
-      return;
-    }
-    if (result.status === 200 && typeof result.payload?.revisionToken === "string") {
-      token = result.payload.revisionToken;
-      state = "idle";
-      showConflict(false);
+    try {
+      const response = await fetchImpl("/api/project");
+      const project = await response.json();
+      const nextToken = project?.draft?.revisionToken;
+      if (response.status !== 200 || typeof nextToken !== "string") {
+        finishConflict();
+        return;
+      }
+      token = nextToken;
+      const result = await putDraft(visible);
+      const savedToken = acceptedToken(result.payload);
+      if (result.status === 200 && savedToken) {
+        token = savedToken;
+        finishIdle();
+        return;
+      }
+      finishConflict();
+    } catch {
+      finishConflict();
     }
   }
 
@@ -113,11 +169,14 @@ export function bindDraftAutosave({
   });
 
   const ready = (async () => {
-    const project = await readProject();
-    textarea.value = project.draft.text;
-    token = project.draft.revisionToken;
-    state = "idle";
-    showConflict(false);
+    try {
+      const project = await readProject();
+      textarea.value = project.draft.text;
+      token = project.draft.revisionToken;
+      finishIdle();
+    } catch {
+      finishConflict();
+    }
   })();
 
   return { ready };

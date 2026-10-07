@@ -5,6 +5,7 @@ import { register } from "node:module";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { createServer } from "../server.mjs";
+import { bindDraftAutosave } from "../public/draft-autosave.mjs";
 
 const startText = "ЧЕРНОВИК-СТАРТ-550";
 const debouncedAway = "ЧЕРНОВИК-РАННИЙ-551";
@@ -25,6 +26,7 @@ function createElement() {
     dataset: {},
     style: {},
     className: "",
+    disabled: false,
     children: [],
     addEventListener(type, listener) {
       const list = listeners.get(type) ?? [];
@@ -284,5 +286,261 @@ test("page textarea coalesces one save and keeps local text through a stale conf
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
     if (port != null) await close(server);
+  }
+});
+
+const tokenReady = "22222222-2222-4222-8222-222222222222";
+const tokenFromGet = "33333333-3333-4333-8333-333333333333";
+const tokenSaved = "44444444-4444-4444-8444-444444444444";
+
+function projectDocument(text, revisionToken) {
+  return {
+    draft: { text, revisionToken },
+    activeSourceRevisionId: null,
+    activeMaterialStateId: null,
+    reading: null,
+    sourceRevisions: [],
+    storyboards: [],
+  };
+}
+
+function jsonResponse(status, payload) {
+  return {
+    status,
+    async json() {
+      return payload;
+    },
+  };
+}
+
+function fakeTimers() {
+  const pending = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = (fn, ms) => {
+    const handle = { fn, ms };
+    pending.push(handle);
+    return handle;
+  };
+  globalThis.clearTimeout = (handle) => {
+    const index = pending.indexOf(handle);
+    if (index >= 0) pending.splice(index, 1);
+  };
+  return {
+    flush() {
+      const batch = pending.splice(0);
+      for (const handle of batch) handle.fn();
+    },
+    restore() {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    },
+    delay: originalSetTimeout,
+  };
+}
+
+function resolutionControls() {
+  const textarea = createElement();
+  const conflict = createElement();
+  const reloadButton = createElement();
+  const keepButton = createElement();
+  return { textarea, conflict, reloadButton, keepButton };
+}
+
+function assertLocked(controls) {
+  assert.equal(controls.textarea.disabled, true);
+  assert.equal(controls.reloadButton.disabled, true);
+  assert.equal(controls.keepButton.disabled, true);
+}
+
+function assertUnlockedConflict(controls, text) {
+  assert.equal(controls.textarea.disabled, false);
+  assert.equal(controls.reloadButton.disabled, false);
+  assert.equal(controls.keepButton.disabled, false);
+  assert.equal(controls.conflict.hidden, false);
+  assert.equal(controls.textarea.value, text);
+}
+
+async function trackRejections(run) {
+  const rejections = [];
+  const onRejection = (error) => rejections.push(error);
+  process.on("unhandledRejection", onRejection);
+  try {
+    await run();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(rejections, []);
+  } finally {
+    process.off("unhandledRejection", onRejection);
+  }
+}
+
+test("keep local locks resolution and saves the text visible at the click", async () => {
+  const timers = fakeTimers();
+  const calls = [];
+  let releaseGet;
+  const heldGet = new Promise((resolve) => {
+    releaseGet = resolve;
+  });
+  let phase = "boot";
+  const controls = resolutionControls();
+  const startedText = "ТЕКСТ-В-МОМЕНТ-НАЖАТИЯ";
+  const editedDuring = "ТЕКСТ-ВО-ВРЕМЯ-ЗАПРОСА";
+  try {
+    const autosave = bindDraftAutosave({
+      ...controls,
+      fetchImpl: async (_url, init = {}) => {
+        const method = init.method ?? "GET";
+        const body = init.body == null ? null : JSON.parse(String(init.body));
+        calls.push({ method, body });
+        if (phase === "boot") return jsonResponse(200, projectDocument("сервер", tokenReady));
+        if (phase === "conflict-save") return jsonResponse(409, { status: "failed", kind: "stale-draft" });
+        if (phase === "hold-get") return heldGet;
+        if (phase === "keep-put") {
+          return jsonResponse(200, { revisionToken: tokenSaved });
+        }
+        if (phase === "after") return jsonResponse(200, { revisionToken: "55555555-5555-4555-8555-555555555555" });
+        throw new Error(`unexpected ${method}`);
+      },
+    });
+    await autosave.ready;
+    phase = "conflict-save";
+    controls.textarea.value = "вызовет-конфликт";
+    controls.textarea.dispatchEvent({ type: "input" });
+    timers.flush();
+    await waitFor(() => controls.conflict.hidden === false, timers.delay);
+    controls.textarea.value = startedText;
+    phase = "hold-get";
+    const callsBefore = calls.length;
+    controls.keepButton.dispatchEvent({ type: "click" });
+    assertLocked(controls);
+    controls.textarea.value = editedDuring;
+    controls.keepButton.dispatchEvent({ type: "click" });
+    controls.reloadButton.dispatchEvent({ type: "click" });
+    assert.equal(calls.length, callsBefore + 1);
+    assert.equal(calls.at(-1).method, "GET");
+    phase = "keep-put";
+    releaseGet(jsonResponse(200, projectDocument("ЧУЖОЙ-ЧЕРНОВИК", tokenFromGet)));
+    await waitFor(() => calls.some((call) => call.method === "PUT" && call.body?.text === startedText), timers.delay);
+    const keepPut = calls.find((call) => call.method === "PUT" && call.body?.text === startedText);
+    assert.equal(keepPut.body.revisionToken, tokenFromGet);
+    assert.equal(calls.filter((call) => call.method === "PUT" && call.body?.text === editedDuring).length, 0);
+    await waitFor(() => controls.conflict.hidden === true && controls.textarea.disabled === false, timers.delay);
+    assert.equal(controls.reloadButton.disabled, false);
+    assert.equal(controls.keepButton.disabled, false);
+    phase = "after";
+    controls.textarea.value = "ПОСЛЕ-УСПЕХА";
+    controls.textarea.dispatchEvent({ type: "input" });
+    timers.flush();
+    await waitFor(() => calls.some((call) => call.body?.text === "ПОСЛЕ-УСПЕХА"), timers.delay);
+    const followUp = calls.find((call) => call.body?.text === "ПОСЛЕ-УСПЕХА");
+    assert.equal(followUp.body.revisionToken, tokenSaved);
+  } finally {
+    timers.restore();
+  }
+});
+
+test("reload replaces the textarea only after its GET succeeds", async () => {
+  const timers = fakeTimers();
+  const calls = [];
+  let releaseGet;
+  const heldGet = new Promise((resolve) => {
+    releaseGet = resolve;
+  });
+  let phase = "boot";
+  const controls = resolutionControls();
+  const localText = "ЛОКАЛЬНЫЙ-ДО-ЗАГРУЗКИ";
+  const storedText = "СОХРАНЁННЫЙ-ПОСЛЕ-GET";
+  try {
+    const autosave = bindDraftAutosave({
+      ...controls,
+      fetchImpl: async (_url, init = {}) => {
+        const method = init.method ?? "GET";
+        const body = init.body == null ? null : JSON.parse(String(init.body));
+        calls.push({ method, body });
+        if (phase === "boot") return jsonResponse(200, projectDocument("сервер", tokenReady));
+        if (phase === "conflict-save") return jsonResponse(409, { status: "failed", kind: "stale-draft" });
+        if (phase === "hold-get") return heldGet;
+        if (phase === "after") return jsonResponse(200, { revisionToken: tokenSaved });
+        throw new Error(`unexpected ${method}`);
+      },
+    });
+    await autosave.ready;
+    phase = "conflict-save";
+    controls.textarea.value = localText;
+    controls.textarea.dispatchEvent({ type: "input" });
+    timers.flush();
+    await waitFor(() => controls.conflict.hidden === false, timers.delay);
+    phase = "hold-get";
+    const callsBefore = calls.length;
+    controls.reloadButton.dispatchEvent({ type: "click" });
+    assertLocked(controls);
+    assert.equal(controls.textarea.value, localText);
+    controls.reloadButton.dispatchEvent({ type: "click" });
+    controls.keepButton.dispatchEvent({ type: "click" });
+    assert.equal(calls.length, callsBefore + 1);
+    assert.equal(calls.filter((call) => call.method === "PUT").length, 1);
+    releaseGet(jsonResponse(200, projectDocument(storedText, tokenFromGet)));
+    await waitFor(() => controls.textarea.value === storedText, timers.delay);
+    assert.equal(controls.conflict.hidden, true);
+    assert.equal(controls.textarea.disabled, false);
+    assert.equal(controls.reloadButton.disabled, false);
+    assert.equal(controls.keepButton.disabled, false);
+    phase = "after";
+    controls.textarea.value = "ПОСЛЕ-ЗАГРУЗКИ";
+    controls.textarea.dispatchEvent({ type: "input" });
+    timers.flush();
+    await waitFor(() => calls.some((call) => call.body?.text === "ПОСЛЕ-ЗАГРУЗКИ"), timers.delay);
+    assert.equal(calls.find((call) => call.body?.text === "ПОСЛЕ-ЗАГРУЗКИ").body.revisionToken, tokenFromGet);
+  } finally {
+    timers.restore();
+  }
+});
+
+test("a failed resolution preserves local text and does not reject", async () => {
+  const timers = fakeTimers();
+  try {
+    await trackRejections(async () => {
+      let resolutionCalls = 0;
+      const failing = resolutionControls();
+      let mode = "boot";
+      const autosave = bindDraftAutosave({
+        ...failing,
+        fetchImpl: async (_url, init = {}) => {
+          const method = init.method ?? "GET";
+          const body = init.body == null ? null : JSON.parse(String(init.body));
+          if (mode === "boot") return jsonResponse(200, projectDocument("сервер", tokenReady));
+          if (mode === "conflict-save") return jsonResponse(409, { status: "failed", kind: "stale-draft" });
+          resolutionCalls += 1;
+          if (mode === "throw-get") throw new Error("socket closed");
+          if (mode === "bad-get") return jsonResponse(200, { draft: { text: 5, revisionToken: tokenFromGet } });
+          if (mode === "bad-put" && method === "GET") return jsonResponse(200, projectDocument("сервер", tokenFromGet));
+          if (mode === "bad-put") return jsonResponse(500, { status: "failed", kind: "database" });
+          throw new Error(`unexpected ${method} ${body?.text}`);
+        },
+      });
+      await autosave.ready;
+      mode = "conflict-save";
+      failing.textarea.value = "ЛОКАЛЬНЫЙ-СБОЙ";
+      failing.textarea.dispatchEvent({ type: "input" });
+      timers.flush();
+      await waitFor(() => failing.conflict.hidden === false, timers.delay);
+
+      mode = "throw-get";
+      failing.keepButton.dispatchEvent({ type: "click" });
+      await waitFor(() => failing.textarea.disabled === false && resolutionCalls >= 1, timers.delay);
+      assertUnlockedConflict(failing, "ЛОКАЛЬНЫЙ-СБОЙ");
+
+      mode = "bad-get";
+      failing.reloadButton.dispatchEvent({ type: "click" });
+      await waitFor(() => failing.textarea.disabled === false && resolutionCalls >= 2, timers.delay);
+      assertUnlockedConflict(failing, "ЛОКАЛЬНЫЙ-СБОЙ");
+
+      mode = "bad-put";
+      failing.keepButton.dispatchEvent({ type: "click" });
+      await waitFor(() => failing.textarea.disabled === false && resolutionCalls >= 3, timers.delay);
+      assertUnlockedConflict(failing, "ЛОКАЛЬНЫЙ-СБОЙ");
+    });
+  } finally {
+    timers.restore();
   }
 });
