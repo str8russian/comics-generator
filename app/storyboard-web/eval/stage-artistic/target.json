@@ -1,0 +1,166 @@
+{
+  "fixtureId": "telegram-unblock-60s",
+  "authority": "Authoritative for this fixture's directing intent. Not a universal frame quota.",
+  "semanticSourceFrames": 17,
+  "renderedFrames": 19,
+  "renderedDialogueDisplayBlocks": 17,
+  "renderedActions": 2,
+  "renderedCountNote": "D01 and D06 each become two deterministic display blocks. Stage is not required to emit 19 semantic frames.",
+  "contextReviewIds": ["C01"],
+  "sourceOrder": ["C01", "D01", "D02", "A01", "D03", "A02", "D04", "D05", "D06", "D07", "D08", "D09", "D10", "D11", "D12", "D13", "D14", "D15"],
+  "frames": [
+    {
+      "sourceItemId": "D01",
+      "sourceRole": "utterance",
+      "layout": "split2",
+      "agreementGroup": "conversational-split",
+      "participants": ["Путин", "Дуров"],
+      "intent": "Opening utterance. Stable Putin/Durov split.",
+      "expectedRenderedBlocks": 2
+    },
+    {
+      "sourceItemId": "D02",
+      "sourceRole": "utterance",
+      "layout": "single",
+      "agreementGroup": "deliberate-single",
+      "participants": ["Путин"],
+      "intent": "Address redirects attention to Peskov.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "A01",
+      "sourceRole": "action",
+      "layout": "single",
+      "agreementGroup": "action-single",
+      "participants": ["Песков"],
+      "intent": "Sleeping action.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D03",
+      "sourceRole": "utterance",
+      "layout": "single",
+      "agreementGroup": "deliberate-single",
+      "participants": ["Путин"],
+      "intent": "Shouted interruption.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "A02",
+      "sourceRole": "action",
+      "layout": "single",
+      "agreementGroup": "action-single",
+      "participants": ["Песков"],
+      "intent": "Waking reaction.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D04",
+      "sourceRole": "utterance",
+      "layout": "single",
+      "agreementGroup": "deliberate-single",
+      "participants": ["Песков"],
+      "intent": "WhatsApp line retains the revealed reaction.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D05",
+      "sourceRole": "utterance",
+      "layout": "split2",
+      "agreementGroup": "conversational-split",
+      "participants": ["Путин", "Песков"],
+      "intent": "Reaction continuity.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D06",
+      "sourceRole": "utterance",
+      "layout": "split2",
+      "agreementGroup": "conversational-split",
+      "participants": ["Путин", "Дуров"],
+      "intent": "Two-part question stays one split utterance.",
+      "expectedRenderedBlocks": 2
+    },
+    {
+      "sourceItemId": "D07",
+      "sourceRole": "utterance",
+      "layout": "split2",
+      "agreementGroup": "conversational-split",
+      "participants": ["Путин", "Дуров"],
+      "intent": "Conversational continuity.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D08",
+      "sourceRole": "utterance",
+      "layout": "split2",
+      "agreementGroup": "conversational-split",
+      "participants": ["Путин", "Дуров"],
+      "intent": "Conversational continuity.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D09",
+      "sourceRole": "utterance",
+      "layout": "split2",
+      "agreementGroup": "conversational-split",
+      "participants": ["Путин", "Дуров"],
+      "intent": "Conversational continuity.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D10",
+      "sourceRole": "utterance",
+      "layout": "split2",
+      "agreementGroup": "conversational-split",
+      "participants": ["Путин", "Дуров"],
+      "intent": "Conversational continuity.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D11",
+      "sourceRole": "utterance",
+      "layout": "single",
+      "agreementGroup": "deliberate-single",
+      "participants": ["Путин"],
+      "intent": "Bare-torso emphasis.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D12",
+      "sourceRole": "utterance",
+      "layout": "split2",
+      "agreementGroup": "conversational-split",
+      "participants": ["Путин", "Дуров"],
+      "intent": "Reaction.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D13",
+      "sourceRole": "utterance",
+      "layout": "single",
+      "agreementGroup": "deliberate-single",
+      "participants": ["Путин"],
+      "intent": "Wall setup.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D14",
+      "sourceRole": "utterance",
+      "layout": "single",
+      "agreementGroup": "deliberate-single",
+      "participants": ["Дуров"],
+      "intent": "Clarification.",
+      "expectedRenderedBlocks": 1
+    },
+    {
+      "sourceItemId": "D15",
+      "sourceRole": "utterance",
+      "layout": "single",
+      "agreementGroup": "deliberate-single",
+      "participants": ["Путин"],
+      "intent": "Final punchline.",
+      "expectedRenderedBlocks": 1
+    }
+  ]
+}

@@ -1,0 +1,163 @@
+{
+  "sourceItems": [
+    {
+      "id": "C01",
+      "kind": "context",
+      "segmentIds": ["seg-0"],
+      "speakerStatus": "none",
+      "sourceQuote": "Путин, Дуров и Песков встречаются для обсуждения отмены блокировки Telegram в России.",
+      "text": "Путин, Дуров и Песков встречаются для обсуждения отмены блокировки Telegram в России."
+    },
+    {
+      "id": "D01",
+      "kind": "utterance",
+      "segmentIds": ["seg-1", "seg-2"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Путин",
+      "sourceQuote": "Путин: Значит, Павел Валерьевич, мы решили разблокировать телеграмм на территории России.\nПодробности вам Дмитрий Сергеевич расскажет.",
+      "text": "Значит, Павел Валерьевич, мы решили разблокировать телеграмм на территории России.\nПодробности вам Дмитрий Сергеевич расскажет."
+    },
+    {
+      "id": "D02",
+      "kind": "utterance",
+      "segmentIds": ["seg-3"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Путин",
+      "sourceQuote": "Путин: Дмитрий Сергеевич ...",
+      "text": "Дмитрий Сергеевич ..."
+    },
+    {
+      "id": "A01",
+      "kind": "action",
+      "segmentIds": ["seg-4"],
+      "speakerStatus": "none",
+      "sourceQuote": "(далее показывается спящий Песков.)",
+      "text": "(далее показывается спящий Песков.)"
+    },
+    {
+      "id": "D03",
+      "kind": "utterance",
+      "segmentIds": ["seg-5"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Путин",
+      "sourceQuote": "Путин: ДМИТРИЙ СЕРГЕЕВИЧ!!",
+      "text": "ДМИТРИЙ СЕРГЕЕВИЧ!!"
+    },
+    {
+      "id": "A02",
+      "kind": "action",
+      "segmentIds": ["seg-6"],
+      "speakerStatus": "none",
+      "sourceQuote": "(Далее показывают проснувшегося Пескова в панике с широко раскрытыми глазами).",
+      "text": "(Далее показывают проснувшегося Пескова в панике с широко раскрытыми глазами)."
+    },
+    {
+      "id": "D04",
+      "kind": "utterance",
+      "segmentIds": ["seg-7"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Песков",
+      "sourceQuote": "Песков: Всем привет! Я использую WhatsApp!",
+      "text": "Всем привет! Я использую WhatsApp!"
+    },
+    {
+      "id": "D05",
+      "kind": "utterance",
+      "segmentIds": ["seg-8"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Путин",
+      "sourceQuote": "Путин: Опять пургу несёт.",
+      "text": "Опять пургу несёт."
+    },
+    {
+      "id": "D06",
+      "kind": "utterance",
+      "segmentIds": ["seg-9"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Дуров",
+      "sourceQuote": "Дуров: И что вы хотите от меня взамен? Передать ключи шифрования?",
+      "text": "И что вы хотите от меня взамен? Передать ключи шифрования?"
+    },
+    {
+      "id": "D07",
+      "kind": "utterance",
+      "segmentIds": ["seg-10"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Путин",
+      "sourceQuote": "Путин: Нет.",
+      "text": "Нет."
+    },
+    {
+      "id": "D08",
+      "kind": "utterance",
+      "segmentIds": ["seg-11"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Дуров",
+      "sourceQuote": "Дуров: Заблокировать каналы неугодных деятелей?",
+      "text": "Заблокировать каналы неугодных деятелей?"
+    },
+    {
+      "id": "D09",
+      "kind": "utterance",
+      "segmentIds": ["seg-12"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Путин",
+      "sourceQuote": "Путин: Нет.",
+      "text": "Нет."
+    },
+    {
+      "id": "D10",
+      "kind": "utterance",
+      "segmentIds": ["seg-13"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Дуров",
+      "sourceQuote": "Дуров: Что тогда?",
+      "text": "Что тогда?"
+    },
+    {
+      "id": "D11",
+      "kind": "utterance",
+      "segmentIds": ["seg-14"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Путин",
+      "sourceQuote": "Путин: Пожалуйста, не выкладывайте фотографии с голым торсом.",
+      "text": "Пожалуйста, не выкладывайте фотографии с голым торсом."
+    },
+    {
+      "id": "D12",
+      "kind": "utterance",
+      "segmentIds": ["seg-15"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Дуров",
+      "sourceQuote": "Дуров: И всё?",
+      "text": "И всё?"
+    },
+    {
+      "id": "D13",
+      "kind": "utterance",
+      "segmentIds": ["seg-16"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Путин",
+      "sourceQuote": "Путин: И верните стену.",
+      "text": "И верните стену."
+    },
+    {
+      "id": "D14",
+      "kind": "utterance",
+      "segmentIds": ["seg-17"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Дуров",
+      "sourceQuote": "Дуров: Во «ВКонтакте»?",
+      "text": "Во «ВКонтакте»?"
+    },
+    {
+      "id": "D15",
+      "kind": "utterance",
+      "segmentIds": ["seg-18"],
+      "speakerStatus": "explicit",
+      "speakerLabel": "Путин",
+      "sourceQuote": "Путин: Берлинскую.",
+      "text": "Берлинскую."
+    }
+  ]
+}
