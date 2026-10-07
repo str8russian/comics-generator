@@ -29,7 +29,7 @@ The persistent path sends:
 
 `sourceItems` keeps the tracer’s model fields: `id`, `kind`, `segmentIds`, `speakerStatus`, `sourceQuote`, `text`, and `speakerLabel` when present. `text` is the spoken text derived on the server. It is not a license to rewrite the line.
 
-`cast` is added only by the persistent path. `requestStageCandidate` omits `cast` when the caller does not pass one. The one-shot tracer and the artistic runner therefore keep the user message `{ "sourceItems": [...] }`.
+`cast` is added only by the persistent path. `requestStageCandidate` omits `cast` when the caller does not pass one. The legacy tracer, when a test enables its route, and the artistic runner therefore keep the user message `{ "sourceItems": [...] }`. The product server does not register that legacy route.
 
 `aliases[].surface` is the confirmed surface text. For the acceptance example it is `Дмитрий Сергеевич` and `characterId` refers to the character named `Песков`. The server copies those values from the material state. Stage is not asked to discover the link.
 

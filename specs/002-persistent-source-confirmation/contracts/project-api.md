@@ -6,7 +6,7 @@ One local project. Routes do not take a project id. The browser never receives t
 
 Lifecycle logs stay on the tracer allowlist and add only: `request`, `event`, `status`, `kind`, `http`, `codes`, `during`, `providerStatus`, `finishReason`, `schema`, and `migration`. New events are `draft-save`, `reading-start`, `reading-outcome`, `confirm`, `cast-edit`, `material-state`, `activate`, and `storyboard-persist`. A log line does not include the draft, a source quote, a character name, a revision token, or a connection string.
 
-The existing `POST /api/storyboard` route remains the session tracer. It does not read or write these tables. The product page does not call it.
+`POST /api/storyboard` is not registered on the product server. `createServer` and `startServer` take `enableLegacyStoryboardRoute`, which defaults to `false`. The module entrypoint and Compose do not set it. With the default, that path is `404` and has no `Allow` header advertising it. Tracer tests pass `true` and receive the existing one-shot handler, which still does not read or write these tables and is not the persistent staging flow. The only normal staging route is `POST /api/storyboard-results`.
 
 ## Shared failures
 
@@ -53,7 +53,14 @@ Request: `{ "text": "string", "revisionToken": "uuid" }`
 
 Success 200: `{ "revisionToken": "new uuid" }`
 
-The update is one statement conditioned on the current token. Autosave sends the token from the last `GET` or the last successful `PUT`. On `409` `stale-draft`, the client loads `GET /api/project` and does not send the rejected text again.
+The update is one statement conditioned on the current token. The page sends at most one autosave at a time, using the token from the last `GET` or the last successful `PUT`. Text typed while that request is in flight replaces one dirty value. After `200`, the page sends that newest dirty value with the returned token. It does not send an older body afterward.
+
+On `409` `stale-draft`, the page does not change the textarea and does not send another save. It shows a conflict state whose text does not include either draft. Two later actions are explicit:
+
+- Reload loads `GET /api/project` and replaces the textarea with `draft.text`.
+- Keep local text loads `GET /api/project`, ignores that response’s `draft.text`, and sends one `PUT` of the visible textarea with the new `revisionToken`.
+
+Neither action runs automatically after `409`. The `409` body is `{ "status": "failed", "kind": "stale-draft" }` only.
 
 This route never inserts a Source Revision.
 

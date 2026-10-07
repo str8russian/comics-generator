@@ -10,9 +10,15 @@ Decisions for [plan.md](./plan.md). The specification is accepted. This file res
 
 ## Decision: Docker Compose starts PostgreSQL and the application
 
-- **Decision**: Repository-root `docker-compose.yml` runs `postgres:16` and a `node:24` application image. A named volume holds the database files. The application container waits until PostgreSQL is healthy, applies migrations, then listens. `docker compose up` is the local startup. No `psql` step is required.
-- **Rationale**: Restarting the application container must not drop the project. The user should not create roles, databases, or extensions by hand.
-- **Alternatives considered**: A host-installed PostgreSQL service makes setup depend on the machine. Running only the database in Compose and starting Node on the host is a useful developer shortcut, but the documented path is one Compose project so the database is not an extra product the user operates.
+- **Decision**: Repository-root `docker-compose.yml` runs `postgres:16` and a `node:24` application image. A named volume holds the database files. The application container waits until PostgreSQL is healthy, applies migrations, then listens. `docker compose up` is the local startup. No `psql` step is required. The database service does not receive `.env.local`. The app service uses Compose `env_file` with `path: .env.local` and `required: false`, and its `environment` block sets `DATABASE_URL` to the Compose database. Compose injects the file into the app process only when the file exists. `DATABASE_URL` in the compose `environment` attribute wins over a same-named key in the file. `.dockerignore` excludes `.env.local`, and the Dockerfile does not copy that file into an image layer. The file stays gitignored.
+- **Rationale**: Restarting the application container must not drop the project. The user should not create roles, databases, or extensions by hand. Provider settings must reach a normal `docker compose up` without a second command, and persistence must still start when `.env.local` is absent. A service `env_file` is read at container creation, not baked into `docker build`.
+- **Alternatives considered**: A host-installed PostgreSQL service makes setup depend on the machine. `docker compose --env-file .env.local up` fails when the file is missing, so it cannot be the only documented startup. Copying `.env.local` into the image would persist the token in a layer. Giving the file to the database service would expose the provider token to PostgreSQL.
+
+## Decision: Resume does not require provider settings
+
+- **Decision**: With `DATABASE_URL` set and `BASE_URL`, `CONTEST_API_TOKEN`, and `CONTEST_MODEL` unset, `GET /api/project`, `PUT /api/draft`, cast edits that do not call a model, confirmation of an already stored reading, and Source Revision reads succeed. `POST /api/readings` and `POST /api/storyboard-results` return the existing `500` `{ "status": "failed", "kind": "configuration" }` and do not call `fetch`. `CONTEST_TIMEOUT_MS` stays optional. Per-function model variables remain optional and still fall back to `CONTEST_MODEL` inside the unchanged config module.
+- **Rationale**: A saved project must be readable when the provider file is absent. A model call without a host or token must fail in the same sanitized way the tracer already uses.
+- **Alternatives considered**: Refusing to listen without provider credentials would make persistence-only startup impossible. Inventing a new failure kind would diverge from the tracer’s `configuration` response.
 
 ## Decision: One singleton project row
 
@@ -20,11 +26,11 @@ Decisions for [plan.md](./plan.md). The specification is accepted. This file res
 - **Rationale**: The specification is one resumable local project. A project list, accounts, and private links are out of scope.
 - **Alternatives considered**: A project id in the URL implies a list and selection UI. Creating a project on first paste makes startup and tests race on “does the row exist?”. Seeding it in the migration makes resume deterministic.
 
-## Decision: Draft autosave uses a revision token
+## Decision: Draft autosave uses a revision token and one in-flight save
 
-- **Decision**: `working_draft.revision_token` is a UUID. Every successful save replaces the text and the token in one `UPDATE ... WHERE revision_token = $expected`. Zero updated rows is `409` `stale-draft`. The rejected body is not written. The conflict response contains no draft text. The client reloads `GET /api/project`.
-- **Rationale**: Two overlapping saves, including two browser tabs, must not let an older textarea replace a newer saved draft. A token identifies the version the client thought it was editing. Comparing the full text in the `WHERE` clause would treat “my old text still matches” as success and would not detect that a newer different edit already landed and was then changed back by a third write; the token catches every successful save.
-- **Alternatives considered**: Last-write-wins silently drops a tab. `ETag` on a hash of the text misses the case where two different saves are in flight and the client retries the older body after the newer one commits. A monotonic integer also works; a UUID avoids implying that clients may invent the next number.
+- **Decision**: `working_draft.revision_token` is a UUID. Every successful save replaces the text and the token in one `UPDATE ... WHERE revision_token = $expected`. Zero updated rows is `409` `stale-draft`. The rejected body is not written. The conflict response and the log contain neither draft. The page keeps at most one save request in flight. Typing during that request stores only the latest textarea value as dirty state. When the in-flight save succeeds, the page sends that newest dirty value with the new token. Intermediate values are not queued. A `409` leaves the textarea untouched, stops automatic saving, and shows a conflict state. Loading the stored draft into the textarea, or saving the visible local text over the stored draft, happens only after a separate explicit action.
+- **Rationale**: The token stops an older request from replacing a newer saved draft. Automatically reloading after `409` would then destroy characters the user typed in this tab while the save was in flight or while another tab saved. Coalescing to the latest dirty value avoids sending a stale queued body after a newer local edit.
+- **Alternatives considered**: Last-write-wins silently drops a tab. Reloading the stored draft on every `409` protects the database and discards the visible textarea. Retrying the rejected body with a freshly fetched token, without a click, is a hidden overwrite of the other tab. A monotonic integer also works; a UUID avoids implying that clients may invent the next number.
 
 ## Decision: Confirmation compares exact draft text, and the reading stores that text
 
@@ -64,21 +70,21 @@ Decisions for [plan.md](./plan.md). The specification is accepted. This file res
 
 ## Decision: Stage prompt file stays byte-identical; the user payload gains `cast`
 
-- **Decision**: `app/storyboard-web/prompts/stage.md` is not edited. `eval/stage-artistic/` is not edited and is not run. The persistent staging path adds a `cast` object to the Stage user message. `requestStageCandidate` adds that object only when the caller passes a cast. The existing one-shot and the artistic runner omit it, so their user message remains `{ "sourceItems": [...] }`.
+- **Decision**: `app/storyboard-web/prompts/stage.md` is not edited. `eval/stage-artistic/` is not edited and is not run. The persistent staging path adds a `cast` object to the Stage user message. `requestStageCandidate` adds that object only when the caller passes a cast. The legacy route, when a test enables it, and the artistic runner omit it, so their user message remains `{ "sourceItems": [...] }`.
 - **Rationale**: The acceptance example requires Stage to receive the confirmed mapping. The specification also says the artistic instructions and the saved baseline stay put. Receiving the cast is contract plumbing. It is not a directing change, and it does not need a new sentence in the artistic prompt.
 - **Alternatives considered**: Adding a sentence to `stage.md` would change the bytes a future baseline run would send. Re-scoring the baseline would be prompt evaluation, which this feature excludes.
 
 ## Decision: Interpret schema and prompt gain characters and surface forms
 
 - **Decision**: The persistent reading path validates an extended Interpret object: existing `sourceItems` plus required `characters` and `surfaceForms`. `app/storyboard-web/prompts/interpret.md` is extended to ask for those arrays and for nothing else. Speaker ownership stays on each utterance as `explicit`, `inferred`, or `unresolved`. The provider adapter in `provider.mjs` is unchanged.
-- **Rationale**: Material review needs provisional people and aliases. The current schema forbids any property beyond `sourceItems`, so the extension has to be explicit. Existing one-shot fixtures that return only `sourceItems` must be updated when the shared prompt and schema change; fidelity rules for anchors and dialogue do not change.
+- **Rationale**: Material review needs provisional people and aliases. The current schema forbids any property beyond `sourceItems`, so the extension has to be explicit. Legacy fixtures that return only `sourceItems` must be updated when the shared prompt and schema change; fidelity rules for anchors and dialogue do not change. The product server still does not mount the legacy route.
 - **Alternatives considered**: A second model call only for cast would add a provider request and a merge problem. Inferring aliases only with regular expressions would miss the Peskov case the specification wants the reading to propose and the user to correct.
 
-## Decision: The one-shot `POST /api/storyboard` stays, and the page stops using it
+## Decision: The one-shot route is off unless a test injects it
 
-- **Decision**: The existing tracer route remains for the current offline suite. It does not open a database transaction and does not insert a Source Revision. The product page uses the project routes. Staging from the page runs only from the active material state.
-- **Rationale**: Rewriting every tracer test is not required to prove persistence. Leaving the route on the page would bypass confirmation.
-- **Alternatives considered**: Deleting the route in this feature would mix a large test migration into the persistence work. Making the route write a revision would confirm material the user had not reviewed.
+- **Decision**: `createServer` and `startServer` accept `enableLegacyStoryboardRoute`, default `false`. The process entrypoint and Compose call `startServer` without that option, so a normal or Compose startup does not register `POST /api/storyboard`. A request for that path is `404`. Existing tracer tests pass `enableLegacyStoryboardRoute: true` and keep using the route. That injected route still does not write the database and is not rewritten into the persistent flow. The only staging route on the product server is `POST /api/storyboard-results`.
+- **Rationale**: A route that stages from a raw paste bypasses confirmed material even when the page never calls it. Tests can keep the old handler without publishing it.
+- **Alternatives considered**: Leaving the route mounted and relying on the page not to call it still exposes a confirmation bypass. Deleting the handler would rewrite the tracer suite. An environment variable that defaults to enabled would turn the bypass back on whenever the variable is copied into Compose.
 
 ## Decision: Provider work happens outside the draft lock
 
@@ -92,11 +98,11 @@ Decisions for [plan.md](./plan.md). The specification is accepted. This file res
 - **Rationale**: A half-migrated listener would persist some routes and fail others. Driver messages can echo statements and values.
 - **Alternatives considered**: Starting anyway and failing on the first save looks like a lost draft. Returning `error.message` to the browser leaks database internals.
 
-## Decision: Tests split offline from PostgreSQL
+## Decision: Tests split offline from an authoritative PostgreSQL command
 
-- **Decision**: The default `node --test` command does not read `.env.local`, does not call the live provider, and skips PostgreSQL files when `STORYBOARD_TEST_DATABASE_URL` is unset. A separate quickstart command exports that URL on the command line for a `comics_test` database created by Compose, then runs the PostgreSQL files. Those tests truncate application tables between cases. They never open the `comics` database used by the running app.
-- **Rationale**: Anchor, fidelity, overflow, renderer, and log tests must stay runnable without Docker. Lost-update, rollback, and exact-text tests must hit real PostgreSQL because an in-memory substitute can pass while the SQL is wrong.
-- **Alternatives considered**: Requiring Compose for every `node --test` run makes the existing suite depend on a database. Pointing tests at the app database would wipe the user’s project.
+- **Decision**: The default `node --test` command does not read `.env.local`, does not call the live provider, and skips files under `app/storyboard-web/test/postgres/` when `STORYBOARD_TEST_DATABASE_URL` is unset. Final verification also runs `node app/storyboard-web/test/postgres/verify.mjs`. That file is not named `*.test.mjs`. If the URL is absent, it exits immediately with status 1. It rejects any URL whose database name is not `comics_test`, including the application database `comics`, and it does not print the URL. It then runs every PostgreSQL integration test with skipping disabled. The command fails when the child status is non-zero, when zero tests ran, or when any test was skipped. Those tests truncate only `comics_test`.
+- **Rationale**: Anchor, fidelity, overflow, renderer, and log tests must stay runnable without Docker. Lost-update, rollback, and exact-text tests must hit real PostgreSQL. A skip-on-missing-URL inside the authoritative command would report success without checking the database.
+- **Alternatives considered**: Requiring Compose for every `node --test` run makes the existing suite depend on a database. Pointing tests at the app database would wipe the user’s project. Treating a green skip as verification would hide a missing database.
 
 ## Decision: Implementation phases inside one feature
 

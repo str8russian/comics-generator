@@ -18,7 +18,7 @@ The existing Interpret and Stage engine stays in `app/storyboard-web/`. Interpre
 
 **Storage**: PostgreSQL 16. One singleton project. SQL migration `app/storyboard-web/db/migrations/001_init.sql` applied at startup. Named volume `storyboard-pg`.
 
-**Testing**: `node:test`. Default command has no network, no `.env.local`, and skips PostgreSQL when `STORYBOARD_TEST_DATABASE_URL` is unset. A separate command runs PostgreSQL tests against `comics_test`.
+**Testing**: `node:test`. Default command has no network, no `.env.local`, and skips PostgreSQL files when `STORYBOARD_TEST_DATABASE_URL` is unset. Final verification also runs `node app/storyboard-web/test/postgres/verify.mjs`, which fails immediately without that URL and runs every PostgreSQL test against `comics_test` only.
 
 **Target Platform**: Local Docker Compose web application. A developer may also run the Node process against `DATABASE_URL`, but the documented startup is Compose.
 
@@ -61,7 +61,8 @@ specs/002-persistent-source-confirmation/
 
 ```text
 docker-compose.yml           # postgres:16 and the Node 24 app; named volume
-Dockerfile                   # node:24-bookworm-slim; no .env.local copied in
+Dockerfile                   # node:24-bookworm-slim; does not copy .env.local
+.dockerignore                # excludes .env.local from the build context
 app/storyboard-web/
 ├── server.mjs               # existing HTTP server plus project routes
 ├── provider.mjs             # unchanged chat-completions adapter
@@ -84,13 +85,13 @@ prototypes/storyboard-viewer/
 
 Historical `prompts/`, `tools/`, `schema/`, `evals/`, and `spikes/` stay outside the application. `eval/stage-artistic/` is not modified and is not run.
 
-**Structure Decision**: Persistence extends `app/storyboard-web/` rather than a second application. Compose files live at the repository root so `docker compose up` is the local entry. The tracer’s one-shot route remains in `server.mjs` for existing tests and is not the page’s path.
+**Structure Decision**: Persistence extends `app/storyboard-web/` rather than a second application. Compose files live at the repository root so `docker compose up` is the local entry. `POST /api/storyboard` is registered only when `enableLegacyStoryboardRoute` is true. Normal startup and Compose leave that option off.
 
 ## Architecture and data flow
 
 1. Compose starts PostgreSQL, then the application. The application migrates and seeds one project with an empty working draft and a revision token. It listens only after that commit.
 2. The page loads `GET /api/project` and fills the textarea with `draft.text`.
-3. Edits debounce to `PUT /api/draft` with the last revision token. The save is one conditional update. A lost race returns `409` `stale-draft` and the page reloads the stored draft instead of writing the older text.
+3. Edits debounce to `PUT /api/draft` with the last acknowledged revision token. Only one save is in flight. Text typed during that save is kept as the latest dirty value and is sent, after success, with the new token. A `409` `stale-draft` does not change the textarea, does not start another save, and shows a conflict state. The user explicitly reloads the stored draft or explicitly saves the visible text with a newly loaded token.
 4. `POST /api/readings` copies the current draft into a reading row, then calls Interpret. The extended object becomes source items, provisional characters, and surface forms. The server anchors quotes and builds a pending cast. Material review shows that cast and unresolved-speaker findings only.
 5. Alias and speaker edits before confirmation call `PUT /api/readings/:id/cast`. They do not insert a material state. `Дмитрий Сергеевич` → `Песков` is one of those edits. The draft text is not changed.
 6. The page enables confirmation only when the textarea and the stored draft both equal the reading’s snapshotted text. A newer autosave token with the same characters does not by itself make the reading stale. `POST /api/confirmations` commits one transaction: Source Revision, Interpretation, and the first material state. A different text rolls back.
@@ -108,7 +109,7 @@ The provider adapter, Stage prompt bytes, frame geometry, and overflow splits ar
 | Boundary | Where it is enforced |
 |---|---|
 | Draft survives refresh and restart character for character | `working_draft.text` in PostgreSQL; `GET /api/project` returns that string; UTF-16 round-trip tests |
-| Autosave does not overwrite a newer draft | `UPDATE ... WHERE revision_token = $expected`; `409` `stale-draft` writes nothing |
+| Autosave does not overwrite a newer draft, and a conflict does not overwrite newer local text | conditional `UPDATE`; one in-flight save; coalesced dirty value; `409` leaves the textarea in place until an explicit action |
 | A reading is tied to the exact draft it read | `reading.draft_text` snapshot; confirm compares it to the locked working draft |
 | Confirmation creates revision, interpretation, and first material state together | one transaction in `POST /api/confirmations`; rollback inserts none |
 | Cast correction creates a new material state, not a new source | `POST /api/material-states` inserts a child state with the same revision and interpretation ids |
@@ -143,23 +144,57 @@ Normative routes are [contracts/project-api.md](./contracts/project-api.md). The
 
 ## Interpret and Stage contracts
 
-`interpret.mjs` validates the extended schema for every Interpret call, including the existing one-shot route, because both paths read `prompts/interpret.md`. That prompt is updated to require `sourceItems`, `characters`, and `surfaceForms` and to forbid offsets. The schema is [contracts/interpret-response.schema.json](./contracts/interpret-response.schema.json). Speaker status on each utterance stays the tracer’s enum. The server still computes offsets and spoken text. One-shot fixtures gain the two arrays and still do not write the database.
+`interpret.mjs` validates the extended schema for every Interpret call, including the legacy route when a test enables it, because both paths read `prompts/interpret.md`. That prompt is updated to require `sourceItems`, `characters`, and `surfaceForms` and to forbid offsets. The schema is [contracts/interpret-response.schema.json](./contracts/interpret-response.schema.json). Speaker status on each utterance stays the tracer’s enum. The server still computes offsets and spoken text. Legacy fixtures gain the two arrays and still do not write the database. The product server does not mount that route.
 
-Stage response validation stays on `specs/001-structure-storyboard-tracer/contracts/stage-response.schema.json`. The persistent user message adds `cast` as in [contracts/stage-input.md](./contracts/stage-input.md). That addition is input plumbing. `prompts/stage.md` is not edited, and the saved artistic baseline is not re-run. When `cast` is omitted, the user message shape is unchanged so the one-shot tests and the artistic runner keep their current payload.
+Stage response validation stays on `specs/001-structure-storyboard-tracer/contracts/stage-response.schema.json`. The persistent user message adds `cast` as in [contracts/stage-input.md](./contracts/stage-input.md). That addition is input plumbing. `prompts/stage.md` is not edited, and the saved artistic baseline is not re-run. When `cast` is omitted, the user message shape is unchanged so the legacy tests and the artistic runner keep their current payload.
 
 ## Persistence and concurrency
 
-The revision token stops a slower autosave from replacing a newer draft. Confirmation does not trust the browser’s draft body; it locks the stored draft and compares it to the reading snapshot. Identical text with a newer token may still confirm. Different text cannot.
+The revision token stops a slower autosave from replacing a newer saved draft. The page also refuses to replace newer local text after `409`: one save is in flight, dirty keystrokes collapse to the latest value, and conflict resolution waits for an explicit reload or replace. Confirmation does not trust the browser’s draft body; it locks the stored draft and compares it to the reading snapshot. Identical text with a newer token may still confirm. Different text cannot.
 
 Immutable tables are insert-only, as listed in [data-model.md](./data-model.md). Active revision and active material state are pointers on the singleton project. The current material state of a historical revision is the latest row for that revision. The page does not browse material states.
 
 `GET /api/project` after restart returns the same draft characters. Storyboard dialogue is derived again from the Source Revision, so a stored copy of the words cannot drift.
 
+## Autosave state machine
+
+The page controller owns the textarea. It is the only automatic writer.
+
+- `idle`: no save is in flight. The last acknowledged token is the one returned by `GET /api/project` or by the last `200` save.
+- On input, if idle, send one `PUT /api/draft` with the current textarea value and that token, then enter `saving`. Remember the exact body that was sent.
+- On input while `saving`, replace the single dirty value with the current textarea value. Do not start a second request and do not keep earlier dirty values.
+- On `200`, store the new token. If the dirty value differs from the body that was just saved, send that newest value with the new token and stay in `saving`. Otherwise return to `idle`.
+- On `409` `stale-draft`, enter `conflict`. Do not change `textarea.value`. Do not send another `PUT`. Show that a newer saved draft exists. The conflict text does not contain either draft.
+- `Reload stored draft` is a separate action. It calls `GET /api/project`, then replaces the textarea and the token, clears `conflict`, and allows autosave again.
+- `Keep this text` is a separate action. It calls `GET /api/project`, discards that response’s draft text, and sends one `PUT` of the visible textarea with the returned token. It does not run by itself after `409`. A further `409` stays in `conflict` with the textarea unchanged.
+
+Browser tests drive this controller through the page textarea. One test types while the first save is still in flight and asserts that the following request body is the newest value with the token from the first success, and that no request sends an intermediate value. Another test returns `409` and asserts that the textarea still shows the local text, that no automatic `PUT` follows, and that the conflict response and logs contain neither the local text nor a stored draft.
+
+## Compose environment
+
+`docker compose up` is valid when `.env.local` is absent. The app service declares:
+
+```yaml
+env_file:
+  - path: .env.local
+    required: false
+environment:
+  DATABASE_URL: postgres://comics:comics@db:5432/comics
+```
+
+Compose’s `environment` value wins over `env_file`, so the file cannot retarget the app at another database. The database service has no `env_file`. When the file exists, Compose supplies its provider variables to the app container at start, including `BASE_URL`, `CONTEST_API_TOKEN`, `CONTEST_MODEL`, and optional `CONTEST_TIMEOUT_MS`. Those variables are not required for `GET /api/project`, draft saves, confirmation of a stored reading, or revision reads. A reading or staging request without provider settings returns `500` `configuration` and does not call the provider.
+
+`.dockerignore` lists `.env.local`. The Dockerfile does not contain `COPY` for that path. A configuration test reads both files and fails if the build context can include `.env.local` or if the image instructions copy it. Another test starts the product server without provider variables and checks resume against the sanitized `configuration` failure for reading and staging.
+
+## Legacy route
+
+`createServer({ enableLegacyStoryboardRoute: false })` is the default. `startServer` forwards that option and the module entrypoint does not set it. Compose uses that entrypoint. With the option false, `POST /api/storyboard` is `404` and is not listed as an allowed method. Tracer tests that still post a raw draft construct the server with `enableLegacyStoryboardRoute: true`. A product-server test uses the default and proves the route is unavailable, while `POST /api/storyboard-results` remains registered. The legacy handler is not changed into the persistent staging flow.
+
 ## Test strategy
 
-Offline tests cover schema, the unchanged Stage prompt bytes, cast omitted versus cast included, log redaction, fidelity, overflow, and the renderer. They skip PostgreSQL when the test URL is absent.
+Offline tests cover schema, the unchanged Stage prompt bytes, cast omitted versus cast included, log redaction, fidelity, overflow, the renderer, the autosave textarea behavior, the disabled legacy route, and Compose file expectations. PostgreSQL files skip when `STORYBOARD_TEST_DATABASE_URL` is absent so this command can stay green without Docker.
 
-PostgreSQL tests use `comics_test` and the URL exported by the quickstart command. They cover lost autosave, confirmation rollback, cast copy, activation cancel, exact Unicode round trip, and dialogue rebuilt from offsets. They do not open `.env.local` or the live provider.
+`node app/storyboard-web/test/postgres/verify.mjs` is mandatory before this feature is called verified. It fails at once when the URL is missing, accepts only the `comics_test` database name, runs every PostgreSQL integration test, and fails if any are skipped or none ran. Those tests cover lost updates, confirmation rollback, cast copy, activation cancel, exact Unicode round trip, and dialogue rebuilt from offsets. They do not open `.env.local` or the live provider.
 
 Details and commands are in [quickstart.md](./quickstart.md). Decisions are in [research.md](./research.md).
 
@@ -170,7 +205,7 @@ Details and commands are in [quickstart.md](./quickstart.md). Decisions are in [
 Demonstrable without revision history UI:
 
 - Compose startup, migration, and the singleton project.
-- Draft autosave, revision token, refresh, and application restart.
+- Draft autosave, revision token, in-flight coalescing, explicit conflict actions, refresh, and application restart.
 - Material review from one reading, including the Peskov alias edit.
 - Atomic confirmation of Source Revision, Interpretation, and first material state.
 - Cast or speaker correction as a new material state.
@@ -192,18 +227,20 @@ No constitution violations.
 
 ## Consistency check
 
-Checked against `spec.md` at `4e01a21b353b301e442b887b9503efcae9059e27` after the design artifacts were written.
+Checked against `spec.md` at `4e01a21b353b301e442b887b9503efcae9059e27` after the autosave, legacy-route, Compose env, and PostgreSQL-command corrections.
 
-- FR-001 through FR-003 and SC-001, SC-006: one project, draft save, no revision before confirm, token prevents a silent overwrite.
+- FR-001 through FR-003 and SC-001, SC-006: one project, draft save, no revision before confirm. The token prevents a silent database overwrite. A `409` also preserves newer textarea text until the user chooses reload or replace.
 - FR-004 through FR-008 and SC-009: extended Interpret contract, Material review, pending cast, only unresolved speaker is a blocking finding.
 - FR-009 and the confirmation transaction: revision, interpretation, and first material state commit together or not at all. Stale text cannot confirm.
 - FR-010, FR-015, SC-004, and SC-011: cast and speaker changes insert a material state and leave the revision and interpretation counts unchanged.
 - FR-011, FR-012, and SC-005, SC-010: phase 2 text confirmation and activation. Cancel writes nothing. The warning string is fixed in the API contract.
-- FR-013, FR-014, FR-016, and SC-003, SC-007: Stage receives `cast`; dialogue and fidelity stay on source references; the stage response schema is unchanged.
+- FR-013, FR-014, FR-016, and SC-003, SC-007: the product server stages only through `POST /api/storyboard-results` and supplies `cast`. Dialogue and fidelity stay on source references. The stage response schema is unchanged. `POST /api/storyboard` is `404` unless a test injects the legacy option.
 - FR-017 and SC-008: no artistic gate and no prompt edit. An imperfect checked storyboard can be ready after fit.
 - FR-018: `readyEligible` follows the active material state. Older results remain visible.
 - FR-019: empty draft and failed readings leave the draft and insert no revision.
 - Out of scope: no frame editing, accounts, deployment, material-state browser, non-blocking preflight, or repair loop.
+- Compose: `.env.local` is an optional app-service `env_file`, `DATABASE_URL` stays on the compose `environment` entry, and `.dockerignore` keeps the file out of the image. Resume does not require provider credentials. Reading and staging without them return `configuration`.
+- PostgreSQL verification: `verify.mjs` fails closed when the URL is missing, when the database is not `comics_test`, or when tests are skipped. The default suite’s skip is not that verification.
 
 No unresolved `NEEDS CLARIFICATION` remains in this plan.
 
@@ -214,6 +251,6 @@ No unresolved `NEEDS CLARIFICATION` remains in this plan.
 - `docker compose down -v` deletes the volume. Ordinary restart does not.
 - Interpret quality for aliases is still a model result. The user can correct a missed or wrong surface before confirmation. This plan does not add a second model call when the first reading is schema-valid.
 - Rebuilding dialogue on read assumes stored offsets still match the revision text. Confirmation writes both in one transaction, and those rows are not updated afterward.
-- The one-shot `POST /api/storyboard` can still stage without a material state. The product page must not call it. Leaving it avoids rewriting the tracer suite.
+- Tracer tests still construct a server with `enableLegacyStoryboardRoute: true`. That option is not set by Compose or by the normal entrypoint. A product-server test covers the default `404`.
 - `reasoning_effort` stays configuration, as in the tracer. This feature does not test whether the provider applies it.
 - The external product input limit stays open. 262144 bytes remains the local body ceiling.

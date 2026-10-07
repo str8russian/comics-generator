@@ -21,16 +21,22 @@ node --test app/storyboard-web/test/**/*.test.mjs
 Expected:
 
 - Existing tracer suites still pass: fidelity, anchors, overflow, renderer structure, HTTP allowlist, and lifecycle log redaction.
-- PostgreSQL test files skip when `STORYBOARD_TEST_DATABASE_URL` is unset. They do not connect and do not read `.env.local`.
+- PostgreSQL files under `app/storyboard-web/test/postgres/*.test.mjs` skip when `STORYBOARD_TEST_DATABASE_URL` is unset. They do not connect and do not read `.env.local`. `verify.mjs` is not part of this glob.
+- Autosave tests drive the page textarea. Typing during an in-flight save produces one follow-up request whose body is the newest local text and whose token is the token from the first success. No request contains an intermediate value. A `409` leaves that textarea text in place, sends no further automatic `PUT`, and the conflict body and logs contain neither draft.
+- A product-server test starts `createServer` or `startServer` with the default options. `POST /api/storyboard` is `404`. `POST /api/storyboard-results` is the staging route. Tracer tests that still need the raw route pass `enableLegacyStoryboardRoute: true`.
+- A configuration test starts the server without `BASE_URL`, `CONTEST_API_TOKEN`, and `CONTEST_MODEL`. Project resume and draft save do not return `configuration`. `POST /api/readings` and `POST /api/storyboard-results` return `500` `configuration` and do not call the provider.
+- `.dockerignore` contains `.env.local`. The Dockerfile does not copy that file. `.env.local` remains gitignored.
 - Interpret schema tests compile `specs/002-persistent-source-confirmation/contracts/interpret-response.schema.json` with Ajv strict mode. `characters` and `surfaceForms` are required. A model offset, an unknown property, or a surface form without `quote` fails. The tracer stage response schema is unchanged.
 - A prompt test reads `app/storyboard-web/prompts/stage.md` and compares it to the bytes from before this feature. `app/storyboard-web/eval/stage-artistic/` is not executed.
-- The persistent Stage caller includes `cast` only when a material state is supplied. The one-shot caller’s user message is still `{ "sourceItems": [...] }`.
+- The persistent Stage caller includes `cast` only when a material state is supplied. The legacy caller, used only when the test enables it, still sends `{ "sourceItems": [...] }`.
 - Log tests post a draft containing a unique marker and assert that marker, `Bearer`, the provider host, and `DATABASE_URL` are absent from log lines and from `409`, `502`, `503`, and `504` bodies.
-- `POST /api/storyboard` still does not insert a Source Revision.
+- When a tracer test enables the legacy route, `POST /api/storyboard` still does not insert a Source Revision. The default server does not expose that route.
 
 `npm run check` remains the historical video-pipeline check. It does not start PostgreSQL or the provider.
 
 ## PostgreSQL checks
+
+These checks are mandatory for final verification. A skipped database suite is not a pass.
 
 Start only the database:
 
@@ -38,14 +44,16 @@ Start only the database:
 docker compose up -d db
 ```
 
-Compose creates `comics` for the application and `comics_test` for tests. Then, with the test URL on the command line and not in `.env.local`:
+Compose creates `comics` for the application and `comics_test` for tests. The authoritative command is:
 
 ```sh
 STORYBOARD_TEST_DATABASE_URL=postgres://comics:comics@127.0.0.1:5432/comics_test \
-  node --test app/storyboard-web/test/postgres/*.test.mjs
+  node app/storyboard-web/test/postgres/verify.mjs
 ```
 
-The port published for the database is `5432` unless Compose overrides it. The application database `comics` is not truncated.
+`verify.mjs` exits 1 immediately when `STORYBOARD_TEST_DATABASE_URL` is unset. It also exits 1 when the database name is not `comics_test`. It does not print the URL. It runs every test in `app/storyboard-web/test/postgres/*.test.mjs` with skipping disabled, and it exits 1 when that run fails, when no test ran, or when any test was skipped. The application database `comics` is not opened or truncated.
+
+Running `node --test app/storyboard-web/test/postgres/*.test.mjs` without the URL is not this command. Those files skip in that case so the default suite can stay offline. That skip must not be reported as PostgreSQL verification.
 
 Expected:
 
@@ -63,16 +71,19 @@ Expected:
 docker compose up
 ```
 
+This command stays valid when `.env.local` is missing. When the file is present, the app service’s optional `env_file` passes it into the app container only. `DATABASE_URL` still comes from the compose `environment` entry. The database service does not receive the file, and the image build does not copy it.
+
 Expected:
 
 - PostgreSQL becomes healthy, then the application applies `app/storyboard-web/db/migrations/001_init.sql` and listens.
+- `POST /api/storyboard` on that server is `404`. Staging is `POST /api/storyboard-results`.
 - The log line is the bound URL. It does not contain the database password or a draft.
 - Opening the URL loads the singleton project. Pasting, refreshing, and restarting the application container show the same draft text.
 - Stopping Compose without deleting the volume, then starting it again, shows the same project. `docker compose down -v` deletes that volume; the quickstart does not use `-v`.
 - If PostgreSQL is down, the application process exits before listening and logs `database-unavailable`.
 - A deliberately broken migration file, used only in a test image, exits with `migration-failed` and does not listen.
 
-Provider credentials stay in the untracked `.env.local` and are optional for resume. A reading or staging call without them returns `configuration` and does not contact a provider. The default test command does not use that file.
+Without provider variables, resume, draft edits, confirmation of a stored reading, and revision browsing still work. A reading or staging request then returns `configuration` and does not contact a provider. The default test command and `verify.mjs` do not read `.env.local`.
 
 ## Manual P1 checkpoint
 
