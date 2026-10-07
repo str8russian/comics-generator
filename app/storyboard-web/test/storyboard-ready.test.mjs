@@ -48,6 +48,8 @@ function interpretBody() {
         sourceQuote: "Борис: Пока.",
       },
     ],
+    characters: [],
+    surfaceForms: [],
   };
 }
 
@@ -194,7 +196,7 @@ test("does not call Stage when Interpret output is invalid", async () => {
       status: 200,
       headers: { get: () => "application/json" },
       async text() {
-        return completion({ sourceItems: [] });
+        return completion({ sourceItems: [], characters: [], surfaceForms: [] });
       },
     };
   };
@@ -237,6 +239,8 @@ test("does not call Stage when the anchor pass fails", async () => {
             speakerLabel: "Аня",
             sourceQuote: "нет такого",
           }],
+          characters: [],
+          surfaceForms: [],
         });
       },
     };
@@ -258,6 +262,101 @@ test("does not call Stage when the anchor pass fails", async () => {
     const payload = JSON.parse(response.body);
     assert.equal(payload.status, "blocked");
     assert.equal(Object.hasOwn(payload, "frames"), false);
+    assert.equal(calls, 1);
+  } finally {
+    await close(server);
+  }
+});
+
+test("rejects a surface quote that is absent from the draft and does not call Stage", async () => {
+  const absent = "НЕТ-ТАКОЙ-ЦИТАТЫ-7781";
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls > 1) throw new Error("Stage was called");
+    return {
+      status: 200,
+      headers: { get: () => "application/json" },
+      async text() {
+        return completion({
+          sourceItems: [{
+            id: "anya",
+            kind: "utterance",
+            segmentIds: ["seg-0"],
+            speakerStatus: "explicit",
+            speakerLabel: "Аня",
+            sourceQuote: "Аня: да",
+          }],
+          characters: [{ id: "anya", name: "Аня" }],
+          surfaceForms: [{ id: "missing", quote: absent, role: "mention", characterId: "anya" }],
+        });
+      },
+    };
+  };
+  const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
+    env: {
+      BASE_URL: "https://provider.example.test",
+      CONTEST_API_TOKEN: "test-token",
+      CONTEST_MODEL: "test-model",
+    },
+    fetchImpl,
+  });
+  const port = await listen(server);
+  try {
+    const response = await postDraft(port, "Аня: да");
+    assert.equal(response.status, 502);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "invalid-output" });
+    assert.equal(response.body.includes(absent), false);
+    assert.equal(calls, 1);
+  } finally {
+    await close(server);
+  }
+});
+
+test("rejects a surface form that names an unknown character", async () => {
+  const unknownId = "missing-person";
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    if (calls > 1) throw new Error("Stage was called");
+    return {
+      status: 200,
+      headers: { get: () => "application/json" },
+      async text() {
+        return completion({
+          sourceItems: [{
+            id: "anya",
+            kind: "utterance",
+            segmentIds: ["seg-0"],
+            speakerStatus: "explicit",
+            speakerLabel: "Аня",
+            sourceQuote: "Аня: да",
+          }],
+          characters: [{ id: "anya", name: "Аня" }],
+          surfaceForms: [{ id: "label", quote: "Аня", role: "speaker-label", characterId: unknownId }],
+        });
+      },
+    };
+  };
+  const server = createServer({
+    enableLegacyStoryboardRoute: true,
+    migrate: false,
+    env: {
+      BASE_URL: "https://provider.example.test",
+      CONTEST_API_TOKEN: "test-token",
+      CONTEST_MODEL: "test-model",
+    },
+    fetchImpl,
+  });
+  const port = await listen(server);
+  try {
+    const response = await postDraft(port, "Аня: да");
+    assert.equal(response.status, 502);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "invalid-output" });
+    assert.equal(response.body.includes(unknownId), false);
+    assert.equal(response.body.includes("Аня"), false);
     assert.equal(calls, 1);
   } finally {
     await close(server);

@@ -41,6 +41,8 @@ function interpretBody(sourceQuote) {
       speakerLabel: "Аня",
       sourceQuote,
     }],
+    characters: [],
+    surfaceForms: [],
   };
 }
 
@@ -144,7 +146,7 @@ test("logs Interpret invalid-output without starting Stage", async () => {
     },
     fetchImpl: async () => {
       calls += 1;
-      return jsonResponse(completion({ sourceItems: [] }));
+      return jsonResponse(completion({ sourceItems: [], characters: [], surfaceForms: [] }));
     },
   });
   const port = await listen(server);

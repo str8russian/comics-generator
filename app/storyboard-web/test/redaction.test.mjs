@@ -151,3 +151,57 @@ test("draft writes reject the wrong shape, NUL, an unpaired surrogate, and an ov
     await close(server);
   }
 });
+
+test("material-state logs and the HTTP body omit the draft, names, and aliases", async () => {
+  const characterName = "Имя-Персонажа-7781";
+  const aliasText = "Обращение-7781";
+  const previous = process.env.DATABASE_URL;
+  process.env.DATABASE_URL = databaseUrl;
+  const logs = [];
+  const server = createServer({
+    migrate: false,
+    logger: { log(line) { logs.push(String(line)); } },
+    projectStore: {
+      async reviseMaterialState() {
+        return {
+          ok: true,
+          httpStatus: 200,
+          materialStateId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          sourceRevisionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          interpretationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        };
+      },
+    },
+  });
+  try {
+    const port = await listen(server);
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/material-states",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer super-secret",
+      },
+      body: json({
+        characters: [{ name: characterName }],
+        aliases: [{ surface: `${sentinel} ${aliasText}`, characterName }],
+        speakers: [{ sourceItemId: "u1", characterName }],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const captured = [...logs, response.body].join("\n");
+    for (const secret of [sentinel, characterName, aliasText, "Bearer", "super-secret", databaseUrl, "DATABASE_URL"]) {
+      assert.equal(captured.includes(secret), false, secret);
+    }
+    const line = logs.find((entry) => entry.includes("event=material-state"));
+    assert.equal(typeof line, "string");
+    const keys = line.slice("storyboard ".length).split(" ").map((part) => part.split("=")[0]);
+    for (const key of keys) {
+      assert.equal(["request", "event", "status", "kind", "http", "codes"].includes(key), true, key);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previous;
+    await close(server);
+  }
+});

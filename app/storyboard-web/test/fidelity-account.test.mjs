@@ -159,6 +159,8 @@ test("blocks an unresolved speaker and does not call Stage", async () => {
               speakerStatus: "unresolved",
               sourceQuote: "кто говорит",
             }],
+            characters: [],
+            surfaceForms: [],
           });
         },
       };

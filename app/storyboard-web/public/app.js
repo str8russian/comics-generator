@@ -15,13 +15,29 @@ const detailHost = document.querySelector("#detail-frame");
 const detailOutside = document.querySelector("#detail-outside");
 const closeDetail = document.querySelector("#close-detail");
 
+const materialReview = document.querySelector("#material-review");
+const materialSources = document.querySelector("#material-sources");
+const materialCharacters = document.querySelector("#material-characters");
+const materialAliases = document.querySelector("#material-aliases");
+const materialSpeakers = document.querySelector("#material-speakers");
+const materialFindings = document.querySelector("#material-findings");
+const materialMismatch = document.querySelector("#material-mismatch");
+const confirmMaterial = document.querySelector("#confirm-material");
+
 let readyFrames = [];
+let draftSync = { state: "boot", savedText: null };
+let review = null;
+let castChain = Promise.resolve();
 
 export const draftAutosave = bindDraftAutosave({
   textarea: draftField,
   conflict: document.querySelector("#draft-conflict"),
   reloadButton: document.querySelector("#reload-draft"),
   keepButton: document.querySelector("#keep-draft"),
+  onActivity(activity) {
+    draftSync = activity;
+    refreshConfirmation();
+  },
 });
 
 function clearBoard() {
@@ -87,6 +103,29 @@ function mountFrame(host, frame, scale) {
   host.append(stage);
 }
 
+async function presentCheckedStoryboard(payload) {
+  if (document.fonts && document.fonts.ready) await document.fonts.ready;
+  let fitted;
+  try {
+    fitted = compileOverflow(payload.frames, (text, options) => FrameRenderer.measureDialogue(document, {
+      layout: options.layout,
+      speakerPanel: options.speakerPanel,
+      panels: options.panels,
+      dialogue: text,
+    }, options.fontSize));
+  } catch {
+    showTerminal(pageState({ measurementError: true, http: payload }));
+    return;
+  }
+  const dialogue = fitted.ok ? assessDialogue(payload.sourceItems || [], fitted.frames) : null;
+  const view = pageState({ http: payload, fitted, dialogue });
+  if (view.state !== "ready") {
+    showTerminal(view);
+    return;
+  }
+  showReady(fitted.frames);
+}
+
 function showReady(frames) {
   loading.hidden = true;
   notice.hidden = true;
@@ -125,16 +164,294 @@ function openDetail(index) {
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
 closeDetail.addEventListener("click", () => detail.close());
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  showLoading();
+function textsMatch(readingText) {
+  return draftSync.state === "idle"
+    && typeof draftSync.savedText === "string"
+    && draftField.value === draftSync.savedText
+    && draftField.value === readingText;
+}
+
+function refreshConfirmation() {
+  if (!confirmMaterial || !materialMismatch) return;
+  const readingMode = review?.mode === "reading";
+  confirmMaterial.hidden = !readingMode;
+  const matched = readingMode && textsMatch(review.text);
+  confirmMaterial.disabled = !matched;
+  materialMismatch.hidden = !readingMode || matched;
+}
+
+function hideReview() {
+  review = null;
+  if (materialReview) materialReview.hidden = true;
+  refreshConfirmation();
+}
+
+function characterNames() {
+  return [...materialCharacters.querySelectorAll("input")].map((input) => input.value);
+}
+
+function fillSelect(select, selected) {
+  select.replaceChildren();
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = "Не назначен";
+  select.append(empty);
+  for (const name of characterNames()) {
+    if (!name) continue;
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.append(option);
+  }
+  select.value = characterNames().includes(selected) ? selected : "";
+}
+
+function collectCast() {
+  const characters = [];
+  for (const input of materialCharacters.querySelectorAll("input")) {
+    if (!input.value) return null;
+    characters.push({ name: input.value });
+  }
+  const aliases = [];
+  for (const select of materialAliases.querySelectorAll("select")) {
+    if (!select.value) continue;
+    aliases.push({ surface: select.dataset.surface, characterName: select.value });
+  }
+  const speakers = [];
+  for (const select of materialSpeakers.querySelectorAll("select")) {
+    if (!select.value) continue;
+    speakers.push({ sourceItemId: select.dataset.sourceId, characterName: select.value });
+  }
+  return { characters, aliases, speakers };
+}
+
+function syncSelects() {
+  for (const select of materialAliases.querySelectorAll("select")) fillSelect(select, select.value);
+  for (const select of materialSpeakers.querySelectorAll("select")) fillSelect(select, select.value);
+}
+
+function scheduleCastSave() {
+  castChain = castChain.then(() => saveCast()).catch(() => {});
+}
+
+async function saveCast() {
+  if (!review) return { ok: false };
+  const cast = collectCast();
+  if (!cast) return { ok: false };
+  const path = review.mode === "reading"
+    ? `/api/readings/${review.id}/cast`
+    : "/api/material-states";
+  const method = review.mode === "reading" ? "PUT" : "POST";
   let response;
   try {
-    response = await fetch("/api/storyboard", {
+    response = await fetch(path, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cast),
+    });
+  } catch {
+    return { ok: false };
+  }
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (response.status === 409) {
+    refreshConfirmation();
+    return { ok: false, stale: true };
+  }
+  if (!response.ok) return { ok: false };
+  review.cast = cast;
+  if (review.mode === "material" && payload?.materialStateId) review.id = payload.materialStateId;
+  renderSources();
+  renderFindings();
+  return { ok: true };
+}
+
+function renderSources() {
+  materialSources.replaceChildren();
+  for (const item of review.sourceItems || []) {
+    const row = document.createElement("li");
+    row.dataset.sourceId = item.id;
+    const owner = (review.cast?.speakers || []).find((speaker) => speaker.sourceItemId === item.id);
+    row.textContent = owner ? `${item.sourceQuote} — ${owner.characterName}` : item.sourceQuote;
+    materialSources.append(row);
+  }
+}
+
+function renderFindings() {
+  const blocking = (review.findings || []).filter((finding) => finding.code === "unresolved-speaker");
+  if (review.cast) {
+    const assigned = new Set((review.cast.speakers || []).map((speaker) => speaker.sourceItemId));
+    const fromCast = (review.sourceItems || [])
+      .filter((item) => item.kind === "utterance" && !assigned.has(item.id))
+      .map((item) => ({ code: "unresolved-speaker", sourceItemId: item.id, sourceQuote: item.sourceQuote }));
+    materialFindings.replaceChildren();
+    materialFindings.hidden = fromCast.length === 0;
+    for (const finding of fromCast) {
+      const row = document.createElement("li");
+      row.dataset.code = finding.code;
+      row.dataset.sourceId = finding.sourceItemId;
+      row.textContent = `Нет говорящего: ${finding.sourceQuote}`;
+      materialFindings.append(row);
+    }
+    return;
+  }
+  materialFindings.replaceChildren();
+  materialFindings.hidden = blocking.length === 0;
+  for (const finding of blocking) {
+    const row = document.createElement("li");
+    row.dataset.code = finding.code;
+    row.textContent = `Нет говорящего: ${finding.sourceQuote}`;
+    materialFindings.append(row);
+  }
+}
+
+function renderReview() {
+  materialReview.hidden = false;
+  renderSources();
+  materialCharacters.replaceChildren();
+  for (const character of review.cast?.characters || []) {
+    const row = document.createElement("li");
+    row.className = "material-row";
+    const input = document.createElement("input");
+    input.value = character.name;
+    input.addEventListener("input", () => syncSelects());
+    input.addEventListener("blur", () => scheduleCastSave());
+    row.append(input);
+    materialCharacters.append(row);
+  }
+  const aliasSurfaces = [];
+  const seen = new Set();
+  for (const form of review.surfaceForms || []) {
+    if (seen.has(form.quote)) continue;
+    seen.add(form.quote);
+    aliasSurfaces.push(form.quote);
+  }
+  for (const alias of review.cast?.aliases || []) {
+    if (seen.has(alias.surface)) continue;
+    seen.add(alias.surface);
+    aliasSurfaces.push(alias.surface);
+  }
+  materialAliases.replaceChildren();
+  for (const surface of aliasSurfaces) {
+    const row = document.createElement("li");
+    row.className = "material-row";
+    const label = document.createElement("span");
+    label.textContent = surface;
+    const select = document.createElement("select");
+    select.dataset.surface = surface;
+    const current = (review.cast?.aliases || []).find((alias) => alias.surface === surface);
+    fillSelect(select, current?.characterName || "");
+    select.addEventListener("change", () => scheduleCastSave());
+    row.append(label, select);
+    materialAliases.append(row);
+  }
+  materialSpeakers.replaceChildren();
+  for (const item of (review.sourceItems || []).filter((entry) => entry.kind === "utterance")) {
+    const row = document.createElement("li");
+    row.className = "material-row";
+    const label = document.createElement("span");
+    label.textContent = item.sourceQuote;
+    const select = document.createElement("select");
+    select.dataset.sourceId = item.id;
+    const current = (review.cast?.speakers || []).find((speaker) => speaker.sourceItemId === item.id);
+    fillSelect(select, current?.characterName || "");
+    select.addEventListener("change", () => scheduleCastSave());
+    row.append(label, select);
+    materialSpeakers.append(row);
+  }
+  renderFindings();
+  refreshConfirmation();
+}
+
+function showMaterial(documentState, mode) {
+  review = {
+    mode,
+    id: documentState.id,
+    text: documentState.text,
+    sourceItems: documentState.sourceItems || [],
+    characters: documentState.characters || [],
+    surfaceForms: documentState.surfaceForms || [],
+    cast: documentState.cast || { characters: [], aliases: [], speakers: [] },
+    findings: documentState.findings || [],
+  };
+  renderReview();
+}
+
+function restoreReview(project) {
+  if (project?.reading?.status === "ready") {
+    showMaterial(project.reading, "reading");
+    return;
+  }
+  if (project?.material) {
+    showMaterial(project.material, "material");
+    return;
+  }
+  hideReview();
+}
+
+draftField.addEventListener("input", () => refreshConfirmation());
+
+confirmMaterial?.addEventListener("click", async () => {
+  if (!review || review.mode !== "reading" || confirmMaterial.disabled) return;
+  const synced = await draftAutosave.flush();
+  refreshConfirmation();
+  if (!synced || !textsMatch(review.text)) return;
+  const saved = await saveCast();
+  if (!saved.ok) return;
+  let response;
+  try {
+    response = await fetch("/api/confirmations", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ draft: draftField.value }),
+      body: JSON.stringify({ readingId: review.id }),
     });
+  } catch {
+    showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
+    return;
+  }
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (response.status === 409) {
+    refreshConfirmation();
+    return;
+  }
+  if (!response.ok || !payload?.materialStateId) {
+    showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
+    return;
+  }
+  review.mode = "material";
+  review.id = payload.materialStateId;
+  renderFindings();
+  refreshConfirmation();
+});
+
+draftAutosave.ready.then(async () => {
+  try {
+    const response = await fetch("/api/project");
+    if (!response.ok) return;
+    restoreReview(await response.json());
+  } catch {
+    hideReview();
+  }
+});
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const synced = await draftAutosave.flush();
+  if (!synced) return;
+  showLoading();
+  loading.textContent = "Разбор черновика…";
+  let response;
+  try {
+    response = await fetch("/api/readings", { method: "POST" });
   } catch {
     showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
     return;
@@ -146,28 +463,17 @@ form.addEventListener("submit", async (event) => {
     showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
     return;
   }
-  if (!payload || payload.status !== "checked" || !Array.isArray(payload.frames)) {
+  loading.hidden = true;
+  if (response.status === 409 || payload?.kind === "stale-reading") {
+    materialMismatch.hidden = false;
+    return;
+  }
+  if (!payload || payload.status !== "ready") {
+    hideReview();
     showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
     return;
   }
-  if (document.fonts && document.fonts.ready) await document.fonts.ready;
-  let fitted;
-  try {
-    fitted = compileOverflow(payload.frames, (text, options) => FrameRenderer.measureDialogue(document, {
-      layout: options.layout,
-      speakerPanel: options.speakerPanel,
-      panels: options.panels,
-      dialogue: text,
-    }, options.fontSize));
-  } catch {
-    showTerminal(pageState({ measurementError: true, http: payload }));
-    return;
-  }
-  const dialogue = fitted.ok ? assessDialogue(payload.sourceItems || [], fitted.frames) : null;
-  const view = pageState({ http: payload, fitted, dialogue });
-  if (view.state !== "ready") {
-    showTerminal(view);
-    return;
-  }
-  showReady(fitted.frames);
+  hideFailure();
+  notice.hidden = true;
+  showMaterial(payload, "reading");
 });

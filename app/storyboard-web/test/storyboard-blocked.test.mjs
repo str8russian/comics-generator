@@ -114,7 +114,7 @@ test("provider, timeout, and invalid-output are failed rather than blocked", asy
     status: 200,
     headers: { get: () => "application/json" },
     async text() {
-      return completion({ sourceItems: [] });
+      return completion({ sourceItems: [], characters: [], surfaceForms: [] });
     },
   }));
   try {

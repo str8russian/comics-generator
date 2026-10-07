@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createPool } from "./db/pool.mjs";
 import { migrate as migrateDatabase } from "./db/migrate.mjs";
+import { loadConfig } from "./config.mjs";
+import { isEmptyDraft } from "./fidelity.mjs";
 import { interpretDraft } from "./interpret.mjs";
 import { draftInputError, createProjectStore } from "./project-store.mjs";
 import { stageStoryboard } from "./stage.mjs";
@@ -254,6 +256,272 @@ function logDraft(logger, request, result) {
   });
 }
 
+function safeKind(kind) {
+  return typeof kind === "string" && /^[a-z]+(?:-[a-z]+)*$/.test(kind) ? kind : undefined;
+}
+
+function logAllowlisted(logger, request, event, result) {
+  const blocked = result?.status === "blocked";
+  logLine(logger, {
+    request,
+    event,
+    status: result?.ok ? "ok" : (blocked ? "blocked" : "failed"),
+    kind: result?.ok || blocked ? undefined : safeKind(result?.kind),
+    http: result?.httpStatus,
+    codes: blocked ? formatCodes(result.failures) : undefined,
+    providerStatus: Number.isInteger(result?.diagnostics?.providerStatus) ? result.diagnostics.providerStatus : undefined,
+    finishReason: typeof result?.diagnostics?.finishReason === "string"
+      && /^[A-Za-z0-9_-]{1,64}$/.test(result.diagnostics.finishReason)
+      ? result.diagnostics.finishReason
+      : undefined,
+    schema: formatSchema(result?.diagnostics?.schemaIssues),
+  });
+}
+
+function logMaterial(logger, request, result) {
+  logLine(logger, {
+    request,
+    event: "material-state",
+    status: result?.ok ? "ok" : "failed",
+    kind: result?.ok ? undefined : safeKind(result?.kind),
+    http: result?.httpStatus,
+    codes: result?.status === "blocked" ? formatCodes(result.failures) : undefined,
+  });
+}
+
+function sendFailure(res, result) {
+  sendJson(res, result.httpStatus || 500, {
+    status: "failed",
+    kind: safeKind(result.kind) || "database",
+  });
+}
+
+function readingCastPath(pathname) {
+  const match = pathname.match(/^\/api\/readings\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/cast$/i);
+  return match ? match[1] : null;
+}
+
+async function readJsonBody(req, res, maxBodyBytes) {
+  const declared = req.headers["content-length"];
+  if (declared != null && declared !== "") {
+    const size = Number(declared);
+    if (Number.isFinite(size) && size > maxBodyBytes) {
+      closeEmpty(res, 413);
+      return { done: true };
+    }
+  }
+  if (!isJsonContentType(req.headers["content-type"])) {
+    sendEmpty(res, 415);
+    req.resume();
+    return { done: true };
+  }
+  const read = await readLimited(req, maxBodyBytes);
+  if (read.tooBig) {
+    if (!res.headersSent) closeEmpty(res, 413);
+    return { done: true };
+  }
+  try {
+    return { done: false, payload: JSON.parse(read.body.toString("utf8")) };
+  } catch {
+    return { done: false, invalid: true };
+  }
+}
+
+async function handleReadings(req, res, { maxBodyBytes, env, fetchImpl, logger, nextRequest, runtime }) {
+  const request = nextRequest();
+  if ((req.method || "GET") !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const declared = req.headers["content-length"];
+  if (declared != null && declared !== "" && Number(declared) > maxBodyBytes) {
+    closeEmpty(res, 413);
+    return;
+  }
+  const read = await readLimited(req, maxBodyBytes);
+  if (read.tooBig) {
+    if (!res.headersSent) closeEmpty(res, 413);
+    return;
+  }
+  if (read.body.length > 0) {
+    if (!isJsonContentType(req.headers["content-type"])) {
+      sendEmpty(res, 415);
+      return;
+    }
+    try {
+      JSON.parse(read.body.toString("utf8"));
+    } catch {
+      sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+      return;
+    }
+  }
+  if (!runtime.projectStore) {
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  let project;
+  try {
+    project = await runtime.projectStore.loadProject();
+  } catch {
+    project = null;
+  }
+  if (!project) {
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  if (isEmptyDraft(project.draft?.text)) {
+    const blocked = { ok: true, httpStatus: 200, status: "blocked", failures: [{ code: "empty-draft" }] };
+    logAllowlisted(logger, request, "reading-outcome", blocked);
+    sendJson(res, 200, { status: "blocked", failures: blocked.failures });
+    return;
+  }
+  const providerEnv = env ?? process.env;
+  if (!loadConfig(providerEnv).ok) {
+    const failed = { ok: false, httpStatus: 500, status: "failed", kind: "configuration" };
+    logAllowlisted(logger, request, "reading-outcome", failed);
+    sendJson(res, 500, { status: "failed", kind: "configuration" });
+    return;
+  }
+  const started = await runtime.projectStore.beginReading();
+  if (started?.status === "blocked") {
+    logAllowlisted(logger, request, "reading-outcome", started);
+    sendJson(res, 200, { status: "blocked", failures: started.failures });
+    return;
+  }
+  if (!started?.ok) {
+    logAllowlisted(logger, request, "reading-outcome", started);
+    sendFailure(res, started || { httpStatus: 503, kind: "database" });
+    return;
+  }
+  logLine(logger, { request, event: "reading-start" });
+  const interpreted = await interpretDraft({
+    draft: started.draftText,
+    env: providerEnv,
+    fetchImpl,
+    acceptUnresolved: true,
+  });
+  let finished;
+  if (interpreted.ok) {
+    finished = await runtime.projectStore.finishReading({
+      readingId: started.readingId,
+      sourceItems: interpreted.sourceItems,
+      characters: interpreted.characters,
+      surfaceForms: interpreted.surfaceForms,
+    });
+  } else if (interpreted.status === "blocked") {
+    finished = await runtime.projectStore.finishReading({
+      readingId: started.readingId,
+      blocked: { failures: interpreted.failures },
+    });
+  } else {
+    finished = await runtime.projectStore.finishReading({
+      readingId: started.readingId,
+      failure: { kind: interpreted.kind, httpStatus: interpreted.httpStatus },
+    });
+  }
+  logAllowlisted(logger, request, "reading-outcome", { ...finished, diagnostics: interpreted.diagnostics });
+  if (finished?.status === "blocked") {
+    sendJson(res, 200, { status: "blocked", failures: finished.failures });
+    return;
+  }
+  if (!finished?.ok) {
+    sendFailure(res, finished || { httpStatus: 503, kind: "database" });
+    return;
+  }
+  sendJson(res, 200, { status: "ready", ...finished.reading });
+}
+
+async function handleReadingCast(req, res, { maxBodyBytes, logger, nextRequest, runtime, readingId }) {
+  const request = nextRequest();
+  if ((req.method || "GET") !== "PUT") {
+    sendEmpty(res, 405, { Allow: "PUT" });
+    req.resume();
+    return;
+  }
+  const body = await readJsonBody(req, res, maxBodyBytes);
+  if (body.done) return;
+  if (body.invalid || !runtime.projectStore) {
+    const failed = { ok: false, httpStatus: body.invalid ? 400 : 503, kind: body.invalid ? "invalid-request" : "database" };
+    logAllowlisted(logger, request, "cast-edit", failed);
+    sendFailure(res, failed);
+    return;
+  }
+  const result = await runtime.projectStore.replacePendingCast(readingId, body.payload);
+  logAllowlisted(logger, request, "cast-edit", result);
+  if (!result.ok) {
+    sendFailure(res, result);
+    return;
+  }
+  sendJson(res, 200, { status: "ok" });
+}
+
+async function handleConfirmations(req, res, { maxBodyBytes, logger, nextRequest, runtime }) {
+  const request = nextRequest();
+  if ((req.method || "GET") !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readJsonBody(req, res, maxBodyBytes);
+  if (body.done) return;
+  if (body.invalid || !body.payload || typeof body.payload.readingId !== "string" || !runtime.projectStore) {
+    const failed = {
+      ok: false,
+      httpStatus: runtime.projectStore && !body.invalid ? 400 : (body.invalid ? 400 : 503),
+      kind: runtime.projectStore && (body.invalid || body.payload) ? "invalid-request" : "database",
+    };
+    if (!runtime.projectStore && !body.invalid) failed.kind = "database";
+    logAllowlisted(logger, request, "confirm", failed);
+    sendFailure(res, failed);
+    return;
+  }
+  const result = await runtime.projectStore.confirmReading({ readingId: body.payload.readingId });
+  logAllowlisted(logger, request, "confirm", result);
+  if (!result.ok) {
+    sendFailure(res, result);
+    return;
+  }
+  sendJson(res, 200, {
+    sourceRevisionId: result.sourceRevisionId,
+    interpretationId: result.interpretationId,
+    materialStateId: result.materialStateId,
+  });
+}
+
+async function handleMaterialStates(req, res, { maxBodyBytes, logger, nextRequest, runtime }) {
+  const request = nextRequest();
+  if ((req.method || "GET") !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readJsonBody(req, res, maxBodyBytes);
+  if (body.done) return;
+  if (body.invalid || !runtime.projectStore) {
+    const failed = { ok: false, httpStatus: body.invalid ? 400 : 503, kind: body.invalid ? "invalid-request" : "database" };
+    logMaterial(logger, request, failed);
+    sendFailure(res, failed);
+    return;
+  }
+  let result;
+  try {
+    result = await runtime.projectStore.reviseMaterialState(body.payload);
+  } catch {
+    result = { ok: false, httpStatus: 503, kind: "database" };
+  }
+  logMaterial(logger, request, result);
+  if (!result?.ok) {
+    sendFailure(res, result || { httpStatus: 503, kind: "database" });
+    return;
+  }
+  sendJson(res, 200, {
+    materialStateId: result.materialStateId,
+    sourceRevisionId: result.sourceRevisionId,
+    interpretationId: result.interpretationId,
+  });
+}
+
 async function handleProject(req, res, { logger, nextRequest, runtime }) {
   const request = nextRequest();
   if ((req.method || "GET") !== "GET") {
@@ -383,6 +651,23 @@ async function handle(req, res, {
   }
   if (pathname === "/api/draft") {
     await handleDraft(req, res, { maxBodyBytes, logger, nextRequest, runtime });
+    return;
+  }
+  if (pathname === "/api/readings") {
+    await handleReadings(req, res, { maxBodyBytes, env, fetchImpl, logger, nextRequest, runtime });
+    return;
+  }
+  const readingId = readingCastPath(pathname);
+  if (readingId) {
+    await handleReadingCast(req, res, { maxBodyBytes, logger, nextRequest, runtime, readingId });
+    return;
+  }
+  if (pathname === "/api/confirmations") {
+    await handleConfirmations(req, res, { maxBodyBytes, logger, nextRequest, runtime });
+    return;
+  }
+  if (pathname === "/api/material-states") {
+    await handleMaterialStates(req, res, { maxBodyBytes, logger, nextRequest, runtime });
     return;
   }
   const route = routesByPath.get(pathname);

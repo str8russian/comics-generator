@@ -16,8 +16,21 @@
       <p id="draft-conflict" class="draft-conflict" hidden>Есть более новый сохранённый черновик.</p>
       <button id="reload-draft" type="button" hidden>Загрузить сохранённый черновик</button>
       <button id="keep-draft" type="button" hidden>Оставить этот текст</button>
-      <button type="submit">Показать раскадровку</button>
+      <button id="read-draft" type="submit">Разобрать черновик</button>
     </form>
+    <section id="material-review" class="material-review" hidden aria-label="Разбор материала">
+      <h2>Разбор</h2>
+      <ol id="material-sources"></ol>
+      <h3>Персонажи</h3>
+      <ul id="material-characters"></ul>
+      <h3>Обращения</h3>
+      <ul id="material-aliases"></ul>
+      <h3>Говорящие</h3>
+      <ul id="material-speakers"></ul>
+      <ul id="material-findings" hidden></ul>
+      <p id="material-mismatch" class="material-mismatch" hidden>Черновик не совпадает с разобранным текстом. Подтверждение недоступно.</p>
+      <button id="confirm-material" type="button" disabled>Подтвердить</button>
+    </section>
     <p id="loading" class="loading" hidden>Сборка раскадровки…</p>
     <p id="notice" class="notice" hidden></p>
     <ul id="failure-codes" hidden></ul>

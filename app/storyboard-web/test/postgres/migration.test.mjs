@@ -8,6 +8,7 @@ import { migrate } from "../../db/migrate.mjs";
 import { startServer } from "../../server.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
+const TEST_LOCK = "90210002026008";
 
 test("seeds one project and a failed migration does not listen", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
@@ -24,6 +25,7 @@ test("seeds one project and a failed migration does not listen", {
     await migrate({ connectionString: databaseUrl, logger: { log() {} } });
     await client.connect();
     connected = true;
+    await client.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
     const current = await client.query("SELECT current_database() AS name");
     assert.equal(current.rows[0].name, "comics_test");
     const projects = await client.query("SELECT singleton FROM project");
@@ -78,7 +80,10 @@ test("seeds one project and a failed migration does not listen", {
     if (previous === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previous;
     rmSync(tempDir, { recursive: true, force: true });
-    if (connected) await client.end();
+    if (connected) {
+      await client.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+      await client.end();
+    }
     if (server) {
       await new Promise((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

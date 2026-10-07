@@ -7,11 +7,18 @@ export function bindDraftAutosave({
   reloadButton,
   keepButton,
   fetchImpl = globalThis.fetch,
+  onActivity,
 } = {}) {
   let token = null;
   let state = "boot";
   let sent = null;
+  let savedText = null;
   let timer = null;
+
+  function notify() {
+    if (typeof onActivity !== "function") return;
+    onActivity({ state, savedText });
+  }
 
   function showConflict(visible) {
     conflict.hidden = !visible;
@@ -41,12 +48,14 @@ export function bindDraftAutosave({
     state = "conflict";
     showConflict(true);
     setBusy(false);
+    notify();
   }
 
   function finishIdle() {
     state = "idle";
     showConflict(false);
     setBusy(false);
+    notify();
   }
 
   async function readProject() {
@@ -75,6 +84,7 @@ export function bindDraftAutosave({
 
   async function saveLoop() {
     state = "saving";
+    notify();
     try {
       while (state === "saving") {
         const text = textarea.value;
@@ -90,6 +100,8 @@ export function bindDraftAutosave({
           return;
         }
         token = result.payload.revisionToken;
+        savedText = sent;
+        notify();
         if (textarea.value !== sent) continue;
         finishIdle();
         return;
@@ -97,6 +109,28 @@ export function bindDraftAutosave({
     } catch {
       if (state === "saving") finishIdle();
     }
+  }
+
+  async function flush() {
+    if (state === "boot") {
+      try {
+        await ready;
+      } catch {
+        return false;
+      }
+    }
+    if (timer != null) {
+      clearTimeout(timer);
+      timer = null;
+      if (state === "idle" && textarea.value !== savedText) await saveLoop();
+    }
+    while (state === "saving" || state === "resolving") {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 15);
+      });
+    }
+    if (state === "idle" && textarea.value !== savedText) await saveLoop();
+    return state === "idle" && textarea.value === savedText;
   }
 
   function scheduleSave() {
@@ -173,11 +207,12 @@ export function bindDraftAutosave({
       const project = await readProject();
       textarea.value = project.draft.text;
       token = project.draft.revisionToken;
+      savedText = project.draft.text;
       finishIdle();
     } catch {
       finishConflict();
     }
   })();
 
-  return { ready };
+  return { ready, flush };
 }

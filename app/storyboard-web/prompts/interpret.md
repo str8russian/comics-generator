@@ -11,8 +11,10 @@ Segments are already split. Their ids and text are exact. Empty text is a real s
 Return this object:
 
 ```json
-{ "sourceItems": [] }
+{ "sourceItems": [], "characters": [], "surfaceForms": [] }
 ```
+
+`sourceItems`, `characters`, and `surfaceForms` are all required. Do not omit an array.
 
 `sourceItems` is the ordered reading of the draft. One physical line is not one item. Several items may share one segment. One item may list several segments when its text continues across them. Keep array order equal to reading order.
 
@@ -33,7 +35,21 @@ Speaker rules:
 - `unresolved` has no `speakerLabel`. Use it when an utterance has no resolvable speaker.
 - `action`, `context`, and `note` use `speakerStatus` `none` and have no `speakerLabel`.
 
-Do not add any other property. Do not send numeric offsets or positions of any kind, including `start`, `end`, `draftStart`, `draftEnd`, or character counts. Do not send `utteranceQuote` or a separate spoken-text field. The server locates `sourceQuote` and derives spoken text.
+`characters` lists provisional people. Each character has:
+
+- `id`: a unique id matching `^[A-Za-z0-9][A-Za-z0-9_-]*$`
+- `name`: the proposed display name. It does not have to occur in the draft.
+
+`surfaceForms` lists exact surfaces from the draft. Each surface form has:
+
+- `id`: a unique id matching `^[A-Za-z0-9][A-Za-z0-9_-]*$`
+- `quote`: an exact substring copied character for character from the draft. It must contain a non-whitespace character. A speaker label, an address, and a mentioned name are separate surfaces when the words differ.
+- `role`: `speaker-label`, `address`, or `mention`
+- `characterId`: include it only when the surface refers to one id in `characters`. Omit it when the surface is not linked. Do not invent an id that is not in `characters`.
+
+An address can stay unlinked. Linking it does not rewrite the draft.
+
+Do not add any other property. Do not send numeric offsets or positions of any kind, including `start`, `end`, `draftStart`, `draftEnd`, or character counts. Do not send `utteranceQuote` or a separate spoken-text field. The server locates `sourceQuote` and each surface `quote`, and it derives spoken text.
 
 Cover the draft's source-authored utterances, silent actions, context, and notes. A parenthetical or staged action that is written in the draft is an `action`, not dialogue. A bracketed circumstance or heading is `context`. An informal aside about the draft is a `note`. Do not add a derived pause, reaction, or camera beat in this step.
 

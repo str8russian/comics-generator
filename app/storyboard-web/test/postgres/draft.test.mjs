@@ -5,6 +5,7 @@ import { migrate } from "../../db/migrate.mjs";
 import { loadProject, saveDraft } from "../../project-store.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
+const TEST_LOCK = "90210002026008";
 
 test("draft saves are conditional and do not create a source revision", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
@@ -14,6 +15,8 @@ test("draft saves are conditional and do not create a source revision", {
   const previous = process.env.DATABASE_URL;
   delete process.env.DATABASE_URL;
   const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
   try {
     await migrate({ connectionString: databaseUrl, logger: { log() {} } });
     const current = await pool.query("SELECT current_database() AS name");
@@ -60,6 +63,8 @@ test("draft saves are conditional and do not create a source revision", {
   } finally {
     if (previous === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = previous;
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
     await pool.end();
   }
 });
