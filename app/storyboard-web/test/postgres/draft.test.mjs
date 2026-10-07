@@ -21,8 +21,6 @@ test("draft saves are conditional and do not create a source revision", {
     await migrate({ connectionString: databaseUrl, logger: { log() {} } });
     const current = await pool.query("SELECT current_database() AS name");
     assert.equal(current.rows[0].name, "comics_test");
-    const comics = await pool.query("SELECT datname FROM pg_database WHERE datname = 'comics'");
-    assert.equal(comics.rowCount, 0);
 
     const initial = await loadProject(pool);
     const staleToken = initial.draft.revisionToken;

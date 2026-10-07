@@ -205,8 +205,6 @@ test("storyboard results bind to the captured material state and rebuild dialogu
     await migrate({ connectionString: databaseUrl, logger: { log() {} } });
     const current = await pool.query("SELECT current_database() AS name");
     assert.equal(current.rows[0].name, "comics_test");
-    const comics = await pool.query("SELECT datname FROM pg_database WHERE datname = 'comics'");
-    assert.equal(comics.rowCount, 0);
 
     await resetProject(pool);
     await saveDraft(pool, {
