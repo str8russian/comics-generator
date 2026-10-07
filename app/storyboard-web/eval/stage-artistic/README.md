@@ -67,6 +67,16 @@ node --env-file=.env.local app/storyboard-web/eval/stage-artistic/run-stage.mjs
 
 The command refuses to start when any file already exists in `app/storyboard-web/eval/stage-artistic/results/`. That directory is gitignored. A schema-valid completion writes `current-stage.candidate.json`, `current-stage.score.json`, and `current-stage-summary.md`. Any other completion writes only `current-stage.attempt.json` with the request count, failure kind, HTTP status, finish reason, and schema paths when those values exist.
 
+## Offline preview
+
+Show the saved candidate without calling the provider:
+
+```sh
+node app/storyboard-web/eval/stage-artistic/preview-stage.mjs
+```
+
+The command reads `results/current-stage.candidate.json` and does not write it. Schema validation and source fidelity run first. When both pass, it listens on `127.0.0.1` and prints the preview URL. The page fits that candidate with the tracer renderer; spoken text and action text come from `fixture.json`.
+
 ## Tests
 
 ```sh

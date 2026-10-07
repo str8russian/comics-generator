@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Offline Stage preview</title>
+  <link rel="stylesheet" href="/viewer.css">
+  <link rel="stylesheet" href="/app.css">
+  <style>
+    .preview-label {
+      margin: 0 0 16px;
+      padding: 10px 12px;
+      border: 1px solid #1d2428;
+      background: #fff4cc;
+      font-size: 16px;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p id="preview-label" class="preview-label">Offline preview of a saved Stage candidate</p>
+    <h1>Раскадровка</h1>
+    <p id="loading" class="loading">Сборка раскадровки…</p>
+    <p id="notice" class="notice" hidden></p>
+    <ul id="failure-codes" hidden></ul>
+    <p id="failure-kind" hidden></p>
+    <button id="open-last" type="button" hidden>Открыть последний кадр</button>
+    <section id="storyboard" class="grid" aria-label="Кадры раскадровки"></section>
+  </main>
+  <dialog id="detail">
+    <div class="detail-layout">
+      <div id="detail-frame" class="frame-host"></div>
+      <p id="detail-outside" class="outside-frame"></p>
+    </div>
+    <button id="close-detail" type="button">Закрыть</button>
+  </dialog>
+  <script type="module" src="/preview.js"></script>
+</body>
+</html>
