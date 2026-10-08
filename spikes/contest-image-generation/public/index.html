@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contest image generation spike</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <p class="eyebrow">Research spike</p>
+      <h1>Character image calls</h1>
+    </div>
+    <div class="counter" id="counter">
+      <span id="live-count">0</span>
+      <small>live API calls in this campaign</small>
+    </div>
+  </header>
+  <p class="orientation" id="orientation">GTA may appear only as a human orientation name. Prompts sent to the model describe the drawing directly.</p>
+  <section class="status-bar" id="status-bar"></section>
+  <main>
+    <section class="column cases">
+      <h2>Experiments</h2>
+      <div id="experiment-list"></div>
+      <button type="button" id="batch-run" disabled>Run selected batch</button>
+      <p class="hint">A batch is at most three calls and uses each case's template prompt.</p>
+    </section>
+    <section class="column setup">
+      <h2 id="case-title">Select a case</h2>
+      <p id="case-meta"></p>
+      <h3>References</h3>
+      <div id="references"></div>
+      <label class="field">Workflow
+        <select id="workflow"></select>
+      </label>
+      <p id="role-warning" class="warning" hidden></p>
+      <label class="field">Target aspect ratio
+        <select id="aspect"></select>
+      </label>
+      <p id="aspect-note" class="hint"></p>
+      <label class="field">Final prompt
+        <textarea id="prompt" rows="16" spellcheck="false"></textarea>
+      </label>
+      <div class="actions">
+        <button type="button" id="execute" disabled>Execute one request</button>
+        <button type="button" id="discover">Probe transport</button>
+      </div>
+      <p class="hint">The transport probe sends one Chat Completions request and does not start when the server starts. Nothing is accepted automatically.</p>
+    </section>
+    <section class="column review">
+      <h2>Result</h2>
+      <div id="result"></div>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

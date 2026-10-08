@@ -1,0 +1,6 @@
+{
+  "id": "layout-rendition",
+  "version": 1,
+  "workflow": "layout-rendition",
+  "text": "Create one layout rendition of {{CHARACTER_NAME}} for the {{LAYOUT_LABEL}} panel.\n\nGaze: {{GAZE}}\n\nRole of each input:\n{{REFERENCE_LIST}}\n\nAuthority order:\n1. The authoritative staging source controls staging: composition, crop, head angle, gaze, expression, pose, and stillness.\n2. The identity anchor controls who the person is.\n3. The style anchor controls how the image is rendered. It must not transfer another person's facial geometry, hair, moustache, age, clothing, or identity.\n\n{{STYLE_LANGUAGE}}\n\nFit the existing staging into aspect ratio {{ASPECT_RATIO}} so the mouth, expression, pose, and essential upper body survive the intended crop.\nDo not redesign the person or the performance.\nNo text, logo, or watermark."
+}

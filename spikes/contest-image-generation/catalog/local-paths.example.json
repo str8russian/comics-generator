@@ -1,0 +1,27 @@
+{
+  "paths": {
+    "putin-identity-photo": "",
+    "durov-identity-photo": "",
+    "peskov-identity-photo": "",
+    "peskov-perf-sleep": "",
+    "peskov-perf-sleep-2": "",
+    "peskov-perf-half-asleep": "",
+    "peskov-perf-wide-eyes": "",
+    "peskov-perf-panic": "",
+    "putin-perf-callout": "",
+    "putin-perf-punchline": "",
+    "putin-approved-anchor": "",
+    "durov-approved-anchor": "",
+    "peskov-approved-anchor": "",
+    "style-before-photo": "",
+    "style-after-strong": "",
+    "style-gta-group": "",
+    "style-gta-panels": "",
+    "stage-putin-speaking-durov": "",
+    "stage-putin-attention-peskov": "",
+    "stage-peskov-sleep": "",
+    "stage-peskov-panic": "",
+    "stage-putin-shout": ""
+  },
+  "forbidden_paths": []
+}

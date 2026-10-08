@@ -1,0 +1,6 @@
+{
+  "id": "performance-heavy",
+  "version": 1,
+  "workflow": "performance-heavy",
+  "text": "Create one performance-specific state of {{CHARACTER_NAME}}.\n\nState: {{STATE_INTENT}}\nGaze: {{GAZE}}\n\nRole of each input:\n{{REFERENCE_LIST}}\n\nAuthority order:\n1. The performance reference controls staging: composition, crop, head angle, gaze, expression, pose, and stillness.\n2. The identity anchor controls who the person is. The performance reference must not replace this person's identity.\n3. The style anchor controls how the image is rendered. It must not transfer facial geometry, hair, moustache, age, clothing, or identity from the person depicted in the style anchor.\n\n{{STYLE_LANGUAGE}}\n\nKeep the mouth, expression, pose, and essential upper body inside the frame.\nTarget aspect ratio: {{ASPECT_RATIO}}.\nNo text, logo, or watermark."
+}

@@ -1,0 +1,6 @@
+{
+  "id": "derived-state",
+  "version": 1,
+  "workflow": "derived-state",
+  "text": "Create one derived state of {{CHARACTER_NAME}} without a performance reference.\n\nState: {{STATE_INTENT}}\nGaze: {{GAZE}}\n\nRole of each input:\n{{REFERENCE_LIST}}\n\nThe identity anchor controls who the person is. Preserve that approved stylized identity.\nThe style anchor controls only the rendering language. Do not transfer the style anchor's facial geometry, hair, moustache, age, clothing, or identity.\nDo not take staging from the style anchor.\n\n{{STYLE_LANGUAGE}}\n\nThe difference from the identity anchor must be visible at small panel size.\nKeep the mouth, expression, and essential upper body inside the frame.\nTarget aspect ratio: {{ASPECT_RATIO}}.\nNo text, logo, or watermark."
+}

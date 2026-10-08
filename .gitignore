@@ -2,6 +2,8 @@ node_modules/
 .DS_Store
 .env.local
 spikes/contest-chat-completions/results/
+spikes/contest-image-generation/runs/
+spikes/contest-image-generation/catalog/local-paths.json
 
 # Run artefacts are the record of what happened. Keep them.
 # Nothing under evals/runs/ is ignored on purpose.

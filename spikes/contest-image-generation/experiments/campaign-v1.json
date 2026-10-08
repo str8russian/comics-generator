@@ -1,0 +1,432 @@
+{
+  "id": "campaign-v1",
+  "version": 1,
+  "envelope": {
+    "total": 50,
+    "discovery": 4,
+    "anchor": 9,
+    "derived": 18,
+    "layout": 10,
+    "repetition": 6,
+    "diagnostic": 3,
+    "note": "Research envelope for the first campaign. It is not a permanent product limit."
+  },
+  "experiments": [
+    {
+      "id": "anchor-putin",
+      "version": 1,
+      "phase": "anchor",
+      "workflow": "base-anchor",
+      "character": "putin",
+      "title": "Putin identity anchor",
+      "state_intent": "Calm readable chest-up identity portrait.",
+      "gaze": "toward the viewer",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "anchor-review",
+      "intended_crop": "both",
+      "parent_reference_id": null,
+      "orientation": "GTA is only a human orientation name. The prompt describes the drawing and does not use that name.",
+      "inputs": [
+        { "id": "putin-identity-photo", "role": "identity-reference", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ],
+      "optional_inputs": [
+        { "id": "style-after-strong", "role": "supporting-style-reference" },
+        { "id": "style-before-photo", "role": "supporting-style-reference" },
+        { "id": "style-gta-panels", "role": "supporting-style-reference" },
+        { "id": "style-gta-group", "role": "supporting-style-reference" }
+      ]
+    },
+    {
+      "id": "anchor-durov",
+      "version": 1,
+      "phase": "anchor",
+      "workflow": "base-anchor",
+      "character": "durov",
+      "title": "Durov identity anchor",
+      "state_intent": "Calm readable chest-up identity portrait.",
+      "gaze": "toward the viewer",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "anchor-review",
+      "intended_crop": "both",
+      "parent_reference_id": null,
+      "orientation": "GTA is only a human orientation name. The prompt describes the drawing and does not use that name.",
+      "inputs": [
+        { "id": "durov-identity-photo", "role": "identity-reference", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ],
+      "optional_inputs": [
+        { "id": "style-after-strong", "role": "supporting-style-reference" },
+        { "id": "style-before-photo", "role": "supporting-style-reference" },
+        { "id": "style-gta-panels", "role": "supporting-style-reference" },
+        { "id": "style-gta-group", "role": "supporting-style-reference" }
+      ]
+    },
+    {
+      "id": "anchor-peskov",
+      "version": 1,
+      "phase": "anchor",
+      "workflow": "base-anchor",
+      "character": "peskov",
+      "title": "Peskov identity anchor",
+      "state_intent": "Calm readable chest-up identity portrait.",
+      "gaze": "toward the viewer",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "anchor-review",
+      "intended_crop": "both",
+      "parent_reference_id": null,
+      "orientation": "The approved Peskov image is the style authority. Identity still comes from the photograph.",
+      "inputs": [
+        { "id": "peskov-identity-photo", "role": "identity-reference", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ],
+      "optional_inputs": [
+        { "id": "style-after-strong", "role": "supporting-style-reference" },
+        { "id": "style-before-photo", "role": "supporting-style-reference" }
+      ]
+    },
+    {
+      "id": "putin-derived-callout",
+      "version": 1,
+      "phase": "derived",
+      "workflow": "derived-state",
+      "character": "putin",
+      "title": "Putin callout, no performance reference",
+      "state_intent": "Sharply calling out, mouth open enough to read, upper body leaning into the address.",
+      "gaze": "to the right",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "anchor-review",
+      "intended_crop": "both",
+      "parent_reference_id": "putin-approved-anchor",
+      "inputs": [
+        { "id": "putin-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "durov-derived-listening",
+      "version": 1,
+      "phase": "derived",
+      "workflow": "derived-state",
+      "character": "durov",
+      "title": "Durov listening, no performance reference",
+      "state_intent": "Attentive listening, mouth closed, head turned slightly, visibly distinct from a neutral front portrait.",
+      "gaze": "to the right",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "anchor-review",
+      "intended_crop": "both",
+      "parent_reference_id": "durov-approved-anchor",
+      "inputs": [
+        { "id": "durov-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "peskov-derived-sleep",
+      "version": 1,
+      "phase": "derived",
+      "workflow": "derived-state",
+      "character": "peskov",
+      "title": "Peskov sleep, no performance reference",
+      "state_intent": "Deep sleep, eyes closed, still, heavy rest.",
+      "gaze": "eyes closed; no directed gaze",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "anchor-review",
+      "intended_crop": "both",
+      "parent_reference_id": "peskov-approved-anchor",
+      "inputs": [
+        { "id": "peskov-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "peskov-sleep-performance",
+      "version": 1,
+      "phase": "derived",
+      "workflow": "performance-heavy",
+      "character": "peskov",
+      "title": "Peskov deep sleep, performance reference",
+      "state_intent": "Deep sleep.",
+      "gaze": "eyes closed; match the performance reference",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "anchor-review",
+      "intended_crop": "both",
+      "parent_reference_id": "peskov-approved-anchor",
+      "inputs": [
+        { "id": "peskov-perf-sleep", "role": "performance-reference", "required": true },
+        { "id": "peskov-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ],
+      "optional_inputs": [
+        { "id": "peskov-perf-sleep-2", "role": "performance-reference" },
+        { "id": "peskov-perf-half-asleep", "role": "performance-reference" }
+      ]
+    },
+    {
+      "id": "peskov-panic-performance",
+      "version": 1,
+      "phase": "derived",
+      "workflow": "performance-heavy",
+      "character": "peskov",
+      "title": "Peskov panicked awakening",
+      "state_intent": "Surprised, panicked awakening.",
+      "gaze": "match the performance reference",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "anchor-review",
+      "intended_crop": "both",
+      "parent_reference_id": "peskov-approved-anchor",
+      "inputs": [
+        { "id": "peskov-perf-panic", "role": "performance-reference", "required": true },
+        { "id": "peskov-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "peskov-wide-eyes-performance",
+      "version": 1,
+      "phase": "derived",
+      "workflow": "performance-heavy",
+      "character": "peskov",
+      "title": "Peskov wide-open eyes",
+      "state_intent": "Eyes wide open, alert, still.",
+      "gaze": "match the performance reference",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "anchor-review",
+      "intended_crop": "both",
+      "parent_reference_id": "peskov-approved-anchor",
+      "inputs": [
+        { "id": "peskov-perf-wide-eyes", "role": "performance-reference", "required": true },
+        { "id": "peskov-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "putin-callout-performance",
+      "version": 1,
+      "phase": "derived",
+      "workflow": "performance-heavy",
+      "character": "putin",
+      "title": "Putin calling out, performance reference",
+      "state_intent": "Sharply calling out to Peskov.",
+      "gaze": "match the performance reference",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "wide-single",
+      "intended_crop": "wide-single",
+      "parent_reference_id": "putin-approved-anchor",
+      "inputs": [
+        { "id": "putin-perf-callout", "role": "performance-reference", "required": true },
+        { "id": "putin-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "putin-punchline-performance",
+      "version": 1,
+      "phase": "derived",
+      "workflow": "performance-heavy",
+      "character": "putin",
+      "title": "Putin final punchline",
+      "state_intent": "Final punchline: frontal, still, tightly pressed lips, dry pause.",
+      "gaze": "direct gaze toward the viewer",
+      "aspect_ratio": "4:5",
+      "layout_purpose": "wide-single",
+      "intended_crop": "wide-single",
+      "parent_reference_id": "putin-approved-anchor",
+      "inputs": [
+        { "id": "putin-perf-punchline", "role": "performance-reference", "required": true },
+        { "id": "putin-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-putin-speaking-wide",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "putin",
+      "title": "Putin speaking to Durov, wide frame",
+      "state_intent": "Speaking to Durov.",
+      "gaze": "to the right",
+      "aspect_ratio": "21:9",
+      "layout_purpose": "wide-single",
+      "intended_crop": "wide-single",
+      "parent_reference_id": "stage-putin-speaking-durov",
+      "inputs": [
+        { "id": "stage-putin-speaking-durov", "role": "authoritative-staging-source", "required": true },
+        { "id": "putin-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-putin-speaking-split",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "putin",
+      "title": "Putin speaking to Durov, split panel",
+      "state_intent": "Speaking to Durov.",
+      "gaze": "to the right",
+      "aspect_ratio": "5:4",
+      "layout_purpose": "split-panel",
+      "intended_crop": "split-panel",
+      "parent_reference_id": "stage-putin-speaking-durov",
+      "inputs": [
+        { "id": "stage-putin-speaking-durov", "role": "authoritative-staging-source", "required": true },
+        { "id": "putin-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-putin-attention-wide",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "putin",
+      "title": "Putin attention to Peskov, wide frame",
+      "state_intent": "Shifting attention to Peskov.",
+      "gaze": "to the right",
+      "aspect_ratio": "21:9",
+      "layout_purpose": "wide-single",
+      "intended_crop": "wide-single",
+      "parent_reference_id": "stage-putin-attention-peskov",
+      "inputs": [
+        { "id": "stage-putin-attention-peskov", "role": "authoritative-staging-source", "required": true },
+        { "id": "putin-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-putin-attention-split",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "putin",
+      "title": "Putin attention to Peskov, split panel",
+      "state_intent": "Shifting attention to Peskov.",
+      "gaze": "to the right",
+      "aspect_ratio": "5:4",
+      "layout_purpose": "split-panel",
+      "intended_crop": "split-panel",
+      "parent_reference_id": "stage-putin-attention-peskov",
+      "inputs": [
+        { "id": "stage-putin-attention-peskov", "role": "authoritative-staging-source", "required": true },
+        { "id": "putin-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-peskov-sleep-wide",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "peskov",
+      "title": "Sleeping Peskov, wide frame",
+      "state_intent": "Sleeping.",
+      "gaze": "eyes closed; no directed gaze",
+      "aspect_ratio": "21:9",
+      "layout_purpose": "wide-single",
+      "intended_crop": "wide-single",
+      "parent_reference_id": "stage-peskov-sleep",
+      "inputs": [
+        { "id": "stage-peskov-sleep", "role": "authoritative-staging-source", "required": true },
+        { "id": "peskov-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-peskov-sleep-split",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "peskov",
+      "title": "Sleeping Peskov, split panel",
+      "state_intent": "Sleeping.",
+      "gaze": "eyes closed; no directed gaze",
+      "aspect_ratio": "5:4",
+      "layout_purpose": "split-panel",
+      "intended_crop": "split-panel",
+      "parent_reference_id": "stage-peskov-sleep",
+      "inputs": [
+        { "id": "stage-peskov-sleep", "role": "authoritative-staging-source", "required": true },
+        { "id": "peskov-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-peskov-panic-wide",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "peskov",
+      "title": "Panicked Peskov, wide frame",
+      "state_intent": "Panicked awakening.",
+      "gaze": "match the staging source",
+      "aspect_ratio": "21:9",
+      "layout_purpose": "wide-single",
+      "intended_crop": "wide-single",
+      "parent_reference_id": "stage-peskov-panic",
+      "inputs": [
+        { "id": "stage-peskov-panic", "role": "authoritative-staging-source", "required": true },
+        { "id": "peskov-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-peskov-panic-split",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "peskov",
+      "title": "Panicked Peskov, split panel",
+      "state_intent": "Panicked awakening.",
+      "gaze": "match the staging source",
+      "aspect_ratio": "5:4",
+      "layout_purpose": "split-panel",
+      "intended_crop": "split-panel",
+      "parent_reference_id": "stage-peskov-panic",
+      "inputs": [
+        { "id": "stage-peskov-panic", "role": "authoritative-staging-source", "required": true },
+        { "id": "peskov-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-putin-shout-wide",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "putin",
+      "title": "Shouting Putin, wide frame",
+      "state_intent": "Shouting.",
+      "gaze": "match the staging source",
+      "aspect_ratio": "21:9",
+      "layout_purpose": "wide-single",
+      "intended_crop": "wide-single",
+      "parent_reference_id": "stage-putin-shout",
+      "inputs": [
+        { "id": "stage-putin-shout", "role": "authoritative-staging-source", "required": true },
+        { "id": "putin-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    },
+    {
+      "id": "layout-putin-shout-split",
+      "version": 1,
+      "phase": "layout",
+      "workflow": "layout-rendition",
+      "character": "putin",
+      "title": "Shouting Putin, split panel",
+      "state_intent": "Shouting.",
+      "gaze": "match the staging source",
+      "aspect_ratio": "5:4",
+      "layout_purpose": "split-panel",
+      "intended_crop": "split-panel",
+      "parent_reference_id": "stage-putin-shout",
+      "inputs": [
+        { "id": "stage-putin-shout", "role": "authoritative-staging-source", "required": true },
+        { "id": "putin-approved-anchor", "role": "identity-anchor", "required": true },
+        { "id": "peskov-approved-anchor", "role": "style-anchor", "required": true }
+      ]
+    }
+  ]
+}

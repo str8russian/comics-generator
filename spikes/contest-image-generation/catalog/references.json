@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "style_authority_id": "peskov-approved-anchor",
+  "forbidden": [
+    {
+      "basename": "peskov base.jpeg",
+      "reason": "Excluded from this character-image workflow."
+    },
+    {
+      "basename": "2vV3Qq9hXkCAICkAEHskTrVYCD9ISy9Z.jpg.avif",
+      "reason": "Excluded from this character-image workflow."
+    },
+    {
+      "basename": "putin-state-s01-speaking-to-durov-v1.png",
+      "reason": "Superseded by the corrected v2 staging source."
+    },
+    {
+      "basename": "putin-state-s03-attention-to-peskov-v1.png",
+      "reason": "Superseded by the corrected v2 staging source."
+    }
+  ],
+  "references": [
+    {
+      "id": "putin-identity-photo",
+      "character": "putin",
+      "default_role": "identity-reference",
+      "eligible_roles": ["identity-reference"],
+      "basename": "3868823.jpg",
+      "purpose": "Identity reference for Putin: age, facial structure, hair, and other stable traits."
+    },
+    {
+      "id": "durov-identity-photo",
+      "character": "durov",
+      "default_role": "identity-reference",
+      "eligible_roles": ["identity-reference"],
+      "basename": "images-8.jpeg",
+      "purpose": "Identity reference for Durov: age, facial structure, hair, and other stable traits. Durov has no separate performance references."
+    },
+    {
+      "id": "peskov-identity-photo",
+      "character": "peskov",
+      "default_role": "identity-reference",
+      "eligible_roles": ["identity-reference"],
+      "basename": "RIA_8816258-pic_32ratio_900x600-900x600-44287.jpg",
+      "purpose": "Identity reference for Peskov: age, facial structure, hair, and other stable traits."
+    },
+    {
+      "id": "peskov-perf-sleep",
+      "character": "peskov",
+      "default_role": "performance-reference",
+      "eligible_roles": ["performance-reference"],
+      "basename": "peskov sleep.png",
+      "purpose": "Primary performance reference for Peskov in deep sleep: composition, crop, head angle, gaze, expression, pose, and stillness."
+    },
+    {
+      "id": "peskov-perf-sleep-2",
+      "character": "peskov",
+      "default_role": "performance-reference",
+      "eligible_roles": ["performance-reference"],
+      "basename": "peskov sleep 2.png",
+      "purpose": "Additional sleep performance reference. Optional. It must not replace Peskov's identity."
+    },
+    {
+      "id": "peskov-perf-half-asleep",
+      "character": "peskov",
+      "default_role": "performance-reference",
+      "eligible_roles": ["performance-reference"],
+      "basename": "peskov sleep 3.png",
+      "purpose": "Additional half-asleep performance reference. Optional. It must not replace Peskov's identity."
+    },
+    {
+      "id": "peskov-perf-wide-eyes",
+      "character": "peskov",
+      "default_role": "performance-reference",
+      "eligible_roles": ["performance-reference"],
+      "basename": "peskov wide open 2.jpeg",
+      "purpose": "Performance reference for Peskov with wide-open eyes."
+    },
+    {
+      "id": "peskov-perf-panic",
+      "character": "peskov",
+      "default_role": "performance-reference",
+      "eligible_roles": ["performance-reference"],
+      "basename": "peskov wide open.png",
+      "purpose": "Performance reference for Peskov's surprised, panicked awakening."
+    },
+    {
+      "id": "putin-perf-callout",
+      "character": "putin",
+      "default_role": "performance-reference",
+      "eligible_roles": ["performance-reference"],
+      "basename": "Screenshot 2026-10-04 at 10.35.23.png",
+      "purpose": "Performance reference for Putin sharply calling out to Peskov."
+    },
+    {
+      "id": "putin-perf-punchline",
+      "character": "putin",
+      "default_role": "performance-reference",
+      "eligible_roles": ["performance-reference"],
+      "basename": "09ca2527-986e-4014-9b04-1bf70426a048_w1023_r1_s.jpg",
+      "purpose": "Performance reference for Putin's final punchline: frontal crop, direct heavy gaze, pressed lips, and stillness."
+    },
+    {
+      "id": "putin-approved-anchor",
+      "character": "putin",
+      "default_role": "identity-anchor",
+      "eligible_roles": ["identity-anchor"],
+      "basename": "putin-identity-anchor-v1.png",
+      "purpose": "Approved stylized identity anchor for Putin."
+    },
+    {
+      "id": "durov-approved-anchor",
+      "character": "durov",
+      "default_role": "identity-anchor",
+      "eligible_roles": ["identity-anchor"],
+      "basename": "durov-identity-anchor-v1.png",
+      "purpose": "Approved stylized identity anchor for Durov."
+    },
+    {
+      "id": "peskov-approved-anchor",
+      "character": "peskov",
+      "default_role": "style-anchor",
+      "eligible_roles": ["style-anchor", "identity-anchor"],
+      "basename": "peskov-identity-anchor-v1.png",
+      "purpose": "Approved Peskov identity anchor and the project-wide style authority. For any other character it transfers only the rendering language, never Peskov's facial geometry, hair, moustache, age, clothing, or identity."
+    },
+    {
+      "id": "style-before-photo",
+      "character": null,
+      "default_role": "supporting-style-reference",
+      "eligible_roles": ["supporting-style-reference"],
+      "basename": "Screenshot 2026-09-10 at 18.16.45.png",
+      "purpose": "Source photograph from the before/after stylization pair. Supporting style context only."
+    },
+    {
+      "id": "style-after-strong",
+      "character": null,
+      "default_role": "supporting-style-reference",
+      "eligible_roles": ["supporting-style-reference"],
+      "basename": "exec-25e7571f-96e8-46c1-8afa-2710e2654085.png",
+      "purpose": "Target strong stylization from the before/after pair. Supporting style context only. The Peskov anchor remains authoritative."
+    },
+    {
+      "id": "style-gta-group",
+      "character": null,
+      "default_role": "supporting-style-reference",
+      "eligible_roles": ["supporting-style-reference"],
+      "basename": "1644526071_1-abrakadabra-fun-p-oboi-gta-san-andreas-na-rabochii-stol-2.jpg",
+      "purpose": "Supporting style reference for group key art. It must not transfer any depicted person's identity. The Peskov anchor remains authoritative."
+    },
+    {
+      "id": "style-gta-panels",
+      "character": null,
+      "default_role": "supporting-style-reference",
+      "eligible_roles": ["supporting-style-reference"],
+      "basename": "wall105353.jpg",
+      "purpose": "Supporting style reference for panel portraits. It must not transfer any depicted person's identity. The Peskov anchor remains authoritative."
+    },
+    {
+      "id": "stage-putin-speaking-durov",
+      "character": "putin",
+      "default_role": "authoritative-staging-source",
+      "eligible_roles": ["authoritative-staging-source"],
+      "basename": "putin-state-s01-speaking-to-durov-v2.png",
+      "purpose": "Authoritative staging source for Putin speaking to Durov, with the corrected rightward gaze."
+    },
+    {
+      "id": "stage-putin-attention-peskov",
+      "character": "putin",
+      "default_role": "authoritative-staging-source",
+      "eligible_roles": ["authoritative-staging-source"],
+      "basename": "putin-state-s03-attention-to-peskov-v2.png",
+      "purpose": "Authoritative staging source for Putin shifting attention to Peskov, with the corrected rightward gaze."
+    },
+    {
+      "id": "stage-peskov-sleep",
+      "character": "peskov",
+      "default_role": "authoritative-staging-source",
+      "eligible_roles": ["authoritative-staging-source"],
+      "basename": "peskov-state-s01-sleep-v1.png",
+      "purpose": "Authoritative staging source for sleeping Peskov."
+    },
+    {
+      "id": "stage-peskov-panic",
+      "character": "peskov",
+      "default_role": "authoritative-staging-source",
+      "eligible_roles": ["authoritative-staging-source"],
+      "basename": "peskov-state-s02-panic-v1.png",
+      "purpose": "Authoritative staging source for panicked, awakened Peskov."
+    },
+    {
+      "id": "stage-putin-shout",
+      "character": "putin",
+      "default_role": "authoritative-staging-source",
+      "eligible_roles": ["authoritative-staging-source"],
+      "basename": "putin-state-s04-shout-v1.png",
+      "purpose": "Authoritative staging source for shouting Putin."
+    }
+  ]
+}

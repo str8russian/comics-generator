@@ -1,0 +1,6 @@
+{
+  "id": "base-anchor",
+  "version": 1,
+  "workflow": "base-anchor",
+  "text": "Create one stylized base identity portrait of {{CHARACTER_NAME}}.\n\nRole of each input:\n{{REFERENCE_LIST}}\n\nThe identity reference defines this person: age, facial structure, hair, and other stable traits. Preserve that person.\n\nThe style anchor controls only the rendering language. Do not transfer the style anchor's facial geometry, hair, moustache, age, clothing, or identity onto this person.\n\n{{STYLE_LANGUAGE}}\n\nFraming: chest-up portrait, mouth visible, plain background, no extra people.\nTarget aspect ratio: {{ASPECT_RATIO}}.\nNo text, logo, or watermark."
+}
