@@ -168,6 +168,10 @@ Interpret and Stage model JSON do not carry offsets. Server and compiler offsets
 | `/overflow.mjs` | `app/storyboard-web/overflow.mjs` |
 | `/frame-renderer.mjs` | `prototypes/storyboard-viewer/frame-renderer.mjs` |
 | `/viewer.css` | `prototypes/storyboard-viewer/viewer.css` |
+| `/visual-anchors.mjs` | `app/storyboard-web/public/visual-anchors.mjs` |
+| `/character-anchors/putin.png` | `app/storyboard-web/public/character-anchors/putin.png` |
+| `/character-anchors/durov.png` | `app/storyboard-web/public/character-anchors/durov.png` |
+| `/character-anchors/peskov.png` | `app/storyboard-web/public/character-anchors/peskov.png` |
 
 Every other path is 404. The pathname is an exact map key, not a filesystem suffix. Wrong method on a file path is 405 with `Allow: GET`.
 

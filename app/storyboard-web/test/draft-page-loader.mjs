@@ -4,6 +4,7 @@ const files = {
   "/overflow.mjs": "app/storyboard-web/overflow.mjs",
   "/frame-renderer.mjs": "prototypes/storyboard-viewer/frame-renderer.mjs",
   "/draft-autosave.mjs": "app/storyboard-web/public/draft-autosave.mjs",
+  "/visual-anchors.mjs": "app/storyboard-web/public/visual-anchors.mjs",
   "/app.js": "app/storyboard-web/public/app.js",
 };
 

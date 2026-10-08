@@ -11,6 +11,10 @@ const files = {
   "app/storyboard-web/overflow.mjs": "export function compileOverflow() {}\n",
   "prototypes/storyboard-viewer/frame-renderer.mjs": "export const injectedRenderer = true;\n",
   "prototypes/storyboard-viewer/viewer.css": ".frame-canvas { font-family: Arial, Helvetica, sans-serif; }\n",
+  "app/storyboard-web/public/visual-anchors.mjs": "export function presentVisualFrame() { return null; }\n",
+  "app/storyboard-web/public/character-anchors/putin.png": "putin-anchor",
+  "app/storyboard-web/public/character-anchors/durov.png": "durov-anchor",
+  "app/storyboard-web/public/character-anchors/peskov.png": "peskov-anchor",
 };
 
 function readFile(filePath) {
@@ -68,6 +72,10 @@ test("names the static allowlist from the storyboard contract", () => {
     ["GET", "/overflow.mjs", "app/storyboard-web/overflow.mjs"],
     ["GET", "/frame-renderer.mjs", "prototypes/storyboard-viewer/frame-renderer.mjs"],
     ["GET", "/viewer.css", "prototypes/storyboard-viewer/viewer.css"],
+    ["GET", "/visual-anchors.mjs", "app/storyboard-web/public/visual-anchors.mjs"],
+    ["GET", "/character-anchors/putin.png", "app/storyboard-web/public/character-anchors/putin.png"],
+    ["GET", "/character-anchors/durov.png", "app/storyboard-web/public/character-anchors/durov.png"],
+    ["GET", "/character-anchors/peskov.png", "app/storyboard-web/public/character-anchors/peskov.png"],
   ]);
 });
 

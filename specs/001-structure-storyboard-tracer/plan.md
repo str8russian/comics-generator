@@ -251,6 +251,10 @@ Version-controlled prompts live at:
 | `GET /overflow.mjs` | `app/storyboard-web/overflow.mjs` |
 | `GET /frame-renderer.mjs` | `prototypes/storyboard-viewer/frame-renderer.mjs` |
 | `GET /viewer.css` | `prototypes/storyboard-viewer/viewer.css` |
+| `GET /visual-anchors.mjs` | `app/storyboard-web/public/visual-anchors.mjs` |
+| `GET /character-anchors/putin.png` | `app/storyboard-web/public/character-anchors/putin.png` |
+| `GET /character-anchors/durov.png` | `app/storyboard-web/public/character-anchors/durov.png` |
+| `GET /character-anchors/peskov.png` | `app/storyboard-web/public/character-anchors/peskov.png` |
 | `POST /api/storyboard` | the storyboard handler |
 
 Any other pathname is 404, including encoded `..` and backslashes. The request path is not appended to a directory. `app.css` loads after `viewer.css` and may reset page-level `body` presentation. It must not override `.frame-canvas`, `.panel-strip`, `.panel`, `.panel-description`, `.dialogue-bar`, `.dialogue-cell`, or `.dialogue-text`.

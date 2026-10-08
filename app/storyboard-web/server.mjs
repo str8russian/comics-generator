@@ -20,6 +20,10 @@ export const routes = [
   { method: "GET", path: "/overflow.mjs", file: "app/storyboard-web/overflow.mjs" },
   { method: "GET", path: "/frame-renderer.mjs", file: "prototypes/storyboard-viewer/frame-renderer.mjs" },
   { method: "GET", path: "/viewer.css", file: "prototypes/storyboard-viewer/viewer.css" },
+  { method: "GET", path: "/visual-anchors.mjs", file: "app/storyboard-web/public/visual-anchors.mjs" },
+  { method: "GET", path: "/character-anchors/putin.png", file: "app/storyboard-web/public/character-anchors/putin.png" },
+  { method: "GET", path: "/character-anchors/durov.png", file: "app/storyboard-web/public/character-anchors/durov.png" },
+  { method: "GET", path: "/character-anchors/peskov.png", file: "app/storyboard-web/public/character-anchors/peskov.png" },
 ];
 
 const routesByPath = new Map(routes.map((route) => [route.path, route]));
@@ -35,6 +39,7 @@ function defaultRead(filePath) {
 function contentType(filePath) {
   if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
   if (filePath.endsWith(".html")) return "text/html; charset=utf-8";
+  if (filePath.endsWith(".png")) return "image/png";
   return "text/javascript; charset=utf-8";
 }
 

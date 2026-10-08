@@ -1,6 +1,7 @@
 import { bindDraftAutosave } from "/draft-autosave.mjs";
 import { assessDialogue, compileOverflow, pageState } from "/overflow.mjs";
 import * as FrameRenderer from "/frame-renderer.mjs";
+import { presentVisualFrame } from "/visual-anchors.mjs";
 
 const form = document.querySelector("#draft-form");
 const draftField = document.querySelector("#draft");
@@ -100,7 +101,8 @@ function mountFrame(host, frame, scale) {
   stage.style.width = `${FrameRenderer.FRAME_GEOMETRY.width * scale}px`;
   stage.style.height = `${FrameRenderer.FRAME_GEOMETRY.height * scale}px`;
   stage.style.setProperty("--frame-scale", String(scale));
-  stage.append(FrameRenderer.render(frame, { mode: "structure" }));
+  const pictured = presentVisualFrame(frame);
+  stage.append(FrameRenderer.render(pictured || frame, { mode: pictured ? "visual" : "structure" }));
   host.append(stage);
 }
 

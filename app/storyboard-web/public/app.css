@@ -67,6 +67,11 @@ h1 {
   font-weight: 700;
 }
 
+.anchor-note {
+  margin: 0 0 16px;
+  font-size: 16px;
+}
+
 .grid {
   display: flex;
   flex-wrap: wrap;
