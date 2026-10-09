@@ -2053,8 +2053,9 @@ export async function beginSceneBackgroundLifecycle(pool, {
             mime: image.mime,
             bytes: image.bytes,
           })),
-          aspectRatio: "21:9",
+          aspectRatio: config.generationSettings.aspectRatio,
           model: config.model,
+          timeoutMs: config.timeoutMs,
           generationSettings: config.generationSettings,
           promptCompilerVersion: compiled.promptCompilerVersion,
         };
@@ -2260,8 +2261,9 @@ export async function beginCharacterStateLifecycle(pool, {
             mime: image.mime,
             bytes: image.bytes,
           })),
-          aspectRatio: "4:5",
+          aspectRatio: config.generationSettings.aspectRatio,
           model: config.model,
+          timeoutMs: config.timeoutMs,
           generationSettings: config.generationSettings,
           promptCompilerVersion: compiled.promptCompilerVersion,
         };
@@ -2401,12 +2403,48 @@ async function failOperationConflict(pool, operationId, failures) {
   return { ok: false, kind: "conflict", componentFailures: failures };
 }
 
+/** Finalize a begun component as failed/conflict when provider I/O is skipped. */
+async function finalizeBegunComponentAsConflict(pool, { component, generationId }) {
+  if (component === "scene-background") {
+    return finalizeSceneBackgroundLifecycle(pool, {
+      generationId,
+      providerResult: { ok: false, kind: "conflict" },
+    });
+  }
+  return finalizeCharacterStateLifecycle(pool, {
+    generationId,
+    providerResult: { ok: false, kind: "conflict" },
+  });
+}
+
+/** Provider args must use the immutable settings captured at lifecycle begin. */
+function providerInvocationFromBegin(begun, { component, panelIndex = null } = {}) {
+  const settings = begun.generationSettings && typeof begun.generationSettings === "object"
+    ? begun.generationSettings
+    : {};
+  const args = {
+    prompt: begun.prompt,
+    images: begun.images,
+    aspectRatio: settings.aspectRatio ?? begun.aspectRatio,
+    model: begun.model,
+    timeoutMs: settings.timeoutMs ?? begun.timeoutMs,
+    component: settings.component ?? component,
+  };
+  const resolvedPanel = Number.isInteger(settings.panelIndex)
+    ? settings.panelIndex
+    : (Number.isInteger(panelIndex) ? panelIndex : null);
+  if (Number.isInteger(resolvedPanel)) args.panelIndex = resolvedPanel;
+  return args;
+}
+
 /** T019: orchestrate component lifecycles without creating provenance itself. */
 export async function orchestrateHybridFrameOperation(pool, {
   operationId,
   generateImage,
   env = process.env,
   providerConfig = null,
+  onAfterBackgroundBegin = null,
+  onAfterCharacterBegin = null,
 } = {}) {
   if (!operationId || typeof generateImage !== "function") return failed("invalid-request");
   const failures = [];
@@ -2445,19 +2483,23 @@ export async function orchestrateHybridFrameOperation(pool, {
     }
 
     if (background.mode === "generate") {
+      if (typeof onAfterBackgroundBegin === "function") {
+        await onAfterBackgroundBegin(background);
+      }
       const beforeProvider = await assertFrameOperationAuthority(pool, { operationId, frameId });
       if (!beforeProvider.ok) {
-        return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+        await finalizeBegunComponentAsConflict(pool, {
+          component: "scene-background",
+          generationId: background.generationId,
+        });
+        failures.push({ component: "background", kind: "conflict" });
+        return failOperationConflict(pool, operationId, failures);
       }
       await updateFrameOperation(pool, { operationId, phase: "generating-background", status: "running" });
       let providerResult;
       try {
         providerResult = await generateImage({
-          prompt: background.prompt,
-          images: background.images,
-          aspectRatio: background.aspectRatio,
-          model: background.model,
-          component: "scene-background",
+          ...providerInvocationFromBegin(background, { component: "scene-background" }),
           env,
         });
       } catch {
@@ -2530,15 +2572,25 @@ export async function orchestrateHybridFrameOperation(pool, {
         });
         return { ok: false, kind, componentFailures: failures };
       }
+      if (typeof onAfterCharacterBegin === "function") {
+        await onAfterCharacterBegin(started);
+      }
+      const beforeCharProvider = await assertFrameOperationAuthority(pool, { operationId, frameId });
+      if (!beforeCharProvider.ok) {
+        await finalizeBegunComponentAsConflict(pool, {
+          component: "character-state",
+          generationId: started.generationId,
+        });
+        failures.push({ component: "character-state", panelIndex, kind: "conflict" });
+        return failOperationConflict(pool, operationId, failures);
+      }
       let providerResult;
       try {
         providerResult = await generateImage({
-          prompt: started.prompt,
-          images: started.images,
-          aspectRatio: started.aspectRatio,
-          model: started.model,
-          component: "character-state",
-          panelIndex,
+          ...providerInvocationFromBegin(started, {
+            component: "character-state",
+            panelIndex,
+          }),
           env,
         });
       } catch {
