@@ -116,3 +116,112 @@ test("keeps the viewer.css declarations measurement depends on", () => {
     assert.equal(css.includes(declaration), true, declaration);
   }
 });
+
+test("hybrid visual mode layers shared background under clipped character panels", () => {
+  installDocument();
+  const canvas = render({
+    layout: "split2",
+    speakerPanel: 0,
+    dialogue: "Слой проверка",
+    fontSize: 31,
+    compositionMode: "near-frontal-pair",
+    hybrid: {
+      sceneKey: "primary",
+      compositionMode: "near-frontal-pair",
+      background: { status: "ready", assetId: "bg-1", asset: "/api/visual/assets/bg-1" },
+    },
+    panels: [
+      {
+        subject: "Путин",
+        role: "Говорит",
+        description: "слева",
+        characterAsset: "/api/visual/assets/c0",
+        zoom: 1.5,
+        position: "40% 20%",
+        align: "40% 20%",
+        positionX: 40,
+        positionY: 20,
+      },
+      {
+        subject: "Дуров",
+        role: "Слушает",
+        description: "справа",
+        characterAsset: "/api/visual/assets/c1",
+        zoom: 1.25,
+        position: "60% 25%",
+        align: "60% 25%",
+        positionX: 60,
+        positionY: 25,
+      },
+    ],
+  }, { mode: "visual" });
+
+  assert.equal(canvas.dataset.compositionMode, "near-frontal-pair");
+  const background = byClass(canvas, "scene-background");
+  assert.equal(background.length, 1);
+  assert.equal(background[0].src, "/api/visual/assets/bg-1");
+  assert.equal(background[0].tag, "img");
+
+  const strip = byClass(canvas, "panel-strip");
+  assert.equal(strip.length, 1);
+  assert.equal(canvas.children[0], background[0], "background is drawn below the panel strip");
+  assert.equal(canvas.children[1], strip[0]);
+
+  const panels = byClass(canvas, "panel");
+  assert.equal(panels.length, 2);
+  assert.equal(panels[0].style.overflow, "hidden");
+  assert.equal(panels[1].style.overflow, "hidden");
+  assert.equal(panels[1].style.borderLeft, `${FRAME_GEOMETRY.panelGutter}px solid #02090b`);
+
+  const characters = byClass(canvas, "character-layer");
+  assert.equal(characters.length, 2);
+  assert.equal(characters[0].src, "/api/visual/assets/c0");
+  assert.equal(characters[0].style.objectPosition, "40% 20%");
+  assert.equal(characters[0].style.transformOrigin, "40% 20%");
+  assert.equal(characters[0].style.transform, "scale(1.5)");
+  assert.equal(characters[1].style.transform, "scale(1.25)");
+  assert.equal(byClass(canvas, "panel-asset").length, 0, "hybrid mode uses character layers, not full-panel assets");
+
+  const spoken = byClass(canvas, "dialogue-text");
+  assert.equal(spoken.length, 1);
+  assert.equal(spoken[0].textContent, "Слой проверка");
+  const cells = byClass(canvas, "dialogue-cell");
+  assert.equal(byClass(cells[0], "dialogue-text").length, 1);
+  assert.equal(byClass(cells[1], "dialogue-text").length, 0);
+});
+
+test("historical visual mode still draws one opaque panel asset when hybrid layers are absent", () => {
+  installDocument();
+  const canvas = render({
+    layout: "split2",
+    speakerPanel: 1,
+    dialogue: "История",
+    fontSize: 31,
+    panels: [
+      {
+        subject: "Путин",
+        role: "Слушает",
+        description: "слева",
+        asset: "/api/visual/assets/full-0",
+        zoom: 1,
+        position: "50% 30%",
+        align: "50% 30%",
+      },
+      {
+        subject: "Дуров",
+        role: "Говорит",
+        description: "справа",
+        asset: "/api/visual/assets/full-1",
+        zoom: 1.2,
+        position: "45% 28%",
+        align: "45% 28%",
+      },
+    ],
+  }, { mode: "visual" });
+  assert.equal(byClass(canvas, "scene-background").length, 0);
+  assert.equal(byClass(canvas, "character-layer").length, 0);
+  const assets = byClass(canvas, "panel-asset");
+  assert.equal(assets.length, 2);
+  assert.equal(assets[1].style.transform, "scale(1.2)");
+  assert.equal(byClass(canvas, "dialogue-text")[0].textContent, "История");
+});

@@ -226,6 +226,23 @@ export function validateAnchorRequired(anchorVersionId, { subjectRequired = true
   return { ok: true };
 }
 
+/**
+ * Deterministic eligibility for the ordinary split-dialogue hybrid path.
+ * Single, silent, action, and other out-of-scope frames remain on prior behavior.
+ */
+export function isEligibleHybridDialogueFrame(frame) {
+  if (!frame || frame.layout !== "split2") return false;
+  if (!Array.isArray(frame.panels) || frame.panels.length !== 2) return false;
+  if (frame.silent === true) return false;
+  if (frame.sourceRole === "action") return false;
+  const dialogue = typeof frame.dialogue === "string" ? frame.dialogue.trim() : "";
+  if (!dialogue) return false;
+  if (!Number.isInteger(frame.speakerPanel) || frame.speakerPanel < 0 || frame.speakerPanel > 1) {
+    return false;
+  }
+  return true;
+}
+
 /** People-free background prompt + style-only reference manifest. */
 export function compileSceneBackgroundPrompt({
   sceneContinuity,
