@@ -172,14 +172,22 @@ test("hybrid character-state compiler requires #00FF00 backing and distinct iden
     compositionMode: "inward-conversation",
     panelIndex: 0,
     speakerPanel: 0,
+    role: "speaker",
+    expressionAndPose: "calm conversational near-frontal performance with mouth visible",
+    shotScale: "chest-up",
+    gazeOrScreenDirection: "subtle-inward-right",
+    cropAndSafeMargins: "safe margins around head and shoulders for later placement zoom and pan",
     offscreenOthers: ["Дуров"],
     identityAsset: identity,
     styleAsset: style,
   });
   assert.equal(compiled.ok, true);
+  assert.equal(compiled.promptCompilerVersion, HYBRID_PROMPT_COMPILER_VERSION);
   assert.match(compiled.prompt, /#00FF00/);
-  assert.match(compiled.prompt, /Exactly one visible person/i);
-  assert.match(compiled.prompt, /off-screen only/i);
+  assert.match(compiled.prompt, /Exactly one visible assigned person/i);
+  assert.match(compiled.prompt, /subtle screen-right/i);
+  assert.doesNotMatch(compiled.prompt, /Дуров/);
+  assert.doesNotMatch(compiled.prompt, /Panel description:/i);
   assert.match(compiled.prompt, /Image 1 is the approved identity anchor/);
   assert.match(compiled.prompt, /Image 2 is the approved project style authority/);
   assert.match(compiled.prompt, /No nested comic panels/i);
@@ -202,6 +210,89 @@ test("hybrid character-state compiler requires #00FF00 backing and distinct iden
   assert.equal(sameAsset.referenceManifest[0].assetId, sameAsset.referenceManifest[1].assetId);
   assert.equal(sameAsset.images.length, 1);
   assert.match(sameAsset.prompt, /distinct required role/);
+});
+
+test("hybrid character prompts exclude raw panel descriptions, interlocutor names, and scene nouns", () => {
+  const identityPutin = { id: "anchor-putin", mime: "image/png" };
+  const identityDurov = { id: "anchor-durov", mime: "image/png" };
+  const style = { id: "style-seed", mime: "image/png" };
+  const putinDescription =
+    "Путин сидит за столом переговоров в строгом кабинете, спокойно обращаясь к Дурову.";
+  const durovDescription =
+    "Дуров напротив Путина внимательно слушает, на столе лежат папки и телефон.";
+
+  const putin = compileCharacterStatePrompt({
+    characterName: "Путин",
+    description: putinDescription,
+    role: "speaker",
+    expressionAndPose: "calm conversational near-frontal performance with mouth visible",
+    shotScale: "chest-up",
+    gazeOrScreenDirection: "near-frontal-subtle-right",
+    cropAndSafeMargins: "safe margins around head and shoulders for later placement zoom and pan",
+    panelIndex: 0,
+    speakerPanel: 0,
+    offscreenOthers: ["Дуров"],
+    identityAsset: identityPutin,
+    styleAsset: style,
+  });
+  const durov = compileCharacterStatePrompt({
+    characterName: "Дуров",
+    description: durovDescription,
+    role: "listener",
+    expressionAndPose: "calm conversational near-frontal performance with mouth visible",
+    shotScale: "chest-up",
+    gazeOrScreenDirection: "near-frontal-subtle-left",
+    cropAndSafeMargins: "safe margins around head and shoulders for later placement zoom and pan",
+    panelIndex: 1,
+    speakerPanel: 0,
+    offscreenOthers: ["Путин"],
+    identityAsset: identityDurov,
+    styleAsset: style,
+  });
+
+  assert.equal(putin.ok, true);
+  assert.equal(durov.ok, true);
+  assert.equal(putin.promptCompilerVersion, "hybrid-dialogue-v2");
+  assert.equal(durov.promptCompilerVersion, "hybrid-dialogue-v2");
+
+  assert.match(putin.prompt, /Путин/);
+  assert.doesNotMatch(putin.prompt, /Дуров/);
+  assert.doesNotMatch(putin.prompt, /кабинет/i);
+  assert.doesNotMatch(putin.prompt, /стол/i);
+  assert.equal(putin.prompt.includes(putinDescription), false);
+  assert.match(putin.prompt, /subtle screen-right/i);
+  assert.match(putin.prompt, /speaking/i);
+  assert.match(putin.prompt, /chest-up/i);
+  assert.match(putin.prompt, /safe margins/i);
+  assert.match(putin.prompt, /#00FF00/);
+  assert.match(putin.prompt, /identity anchor/i);
+  assert.match(putin.prompt, /style authority/i);
+  assert.match(putin.prompt, /furniture|props|foreground|other (faces|heads|body)|silhouette/i);
+
+  assert.match(durov.prompt, /Дуров/);
+  assert.doesNotMatch(durov.prompt, /Путин/);
+  assert.doesNotMatch(durov.prompt, /стол/i);
+  assert.doesNotMatch(durov.prompt, /папк/i);
+  assert.doesNotMatch(durov.prompt, /телефон/i);
+  assert.equal(durov.prompt.includes(durovDescription), false);
+  assert.match(durov.prompt, /subtle screen-left/i);
+  assert.match(durov.prompt, /listening|reaction/i);
+  assert.match(durov.prompt, /chest-up/i);
+  assert.match(durov.prompt, /safe margins/i);
+  assert.match(durov.prompt, /#00FF00/);
+  assert.match(durov.prompt, /identity anchor/i);
+  assert.match(durov.prompt, /style authority/i);
+
+  const background = compileSceneBackgroundPrompt({
+    sceneContinuity: "strict negotiation office with desk folders and telephone on the table",
+    compositionMode: "near-frontal-pair",
+    styleAsset: style,
+  });
+  assert.equal(background.ok, true);
+  assert.match(background.prompt, /desk folders and telephone/i);
+  assert.doesNotMatch(background.prompt, /Путин|Дуров/);
+  assert.match(background.prompt, /people-free/i);
+  assert.equal(background.promptCompilerVersion, "hybrid-dialogue-v2");
 });
 
 test("ordinary dialogue helpers no longer request split-layout nesting wording", () => {

@@ -2205,14 +2205,17 @@ export async function beginCharacterStateLifecycle(pool, {
         }
         const frame = expandStoryboardFrames(context.version.frames).find((entry) => entry.id === frameId);
         const panels = frame?.panels || [];
-        const otherSubjects = [];
+        const panelSubjects = [];
         for (let index = 0; index < panels.length; index += 1) {
-          if (index === panelIndex) continue;
-          const other = await panelContext(client, frameId, index);
-          if (other?.state?.subject && other.state.subject !== subject) {
-            otherSubjects.push(other.state.subject);
+          if (index === panelIndex) {
+            panelSubjects[index] = subject;
+            continue;
           }
+          const other = await panelContext(client, frameId, index);
+          panelSubjects[index] = other?.state?.subject || panels[index]?.subject || null;
         }
+        const otherSubjects = panelSubjects
+          .filter((name, index) => index !== panelIndex && name && name !== subject);
         const config = resolveImageProviderConfig({
           env,
           aspectRatio: "4:5",
@@ -2225,12 +2228,34 @@ export async function beginCharacterStateLifecycle(pool, {
           await client.query("ROLLBACK");
           return failed(config.kind, config.kind === "configuration" ? 500 : 400);
         }
+        const intent = visualIntent || buildHybridVisualIntent({
+          project: { styleSeedAssetId: styleAsset.id },
+          scene: { sceneKey: PRIMARY_SCENE_KEY },
+          frame: { ...frame, id: frameId, compositionMode },
+          panels: panels.map((panel, index) => ({
+            ...panel,
+            panelIndex: index,
+            subject: panelSubjects[index] || panel.subject,
+            offscreenOthers: panelSubjects
+              .filter((name, otherIndex) => otherIndex !== index && name && name !== panelSubjects[index]),
+          })),
+        }).intent;
+        const panelIntent = (intent.panels || []).find((panel) => panel.panelIndex === panelIndex)
+          || intent.panels?.[panelIndex]
+          || null;
         const compiled = compileCharacterStatePrompt({
           characterName: subject,
-          description: panels[panelIndex]?.description || subject,
+          // Keep human-readable description for call-site clarity; compiler must not copy it.
+          description: panelIntent?.description || panels[panelIndex]?.description || subject,
           compositionMode,
           panelIndex,
           speakerPanel: frame?.speakerPanel ?? null,
+          role: panelIntent?.role ?? null,
+          expressionAndPose: panelIntent?.expressionAndPose ?? null,
+          shotScale: panelIntent?.shotScale ?? null,
+          gazeOrScreenDirection: panelIntent?.gazeOrScreenDirection ?? null,
+          cropAndSafeMargins: panelIntent?.cropAndSafeMargins ?? null,
+          prohibitedContent: panelIntent?.prohibitedContent ?? null,
           offscreenOthers: otherSubjects,
           identityAsset: { id: identity.assetId, mime: identity.mime, bytes: identity.bytes },
           styleAsset,
@@ -2239,16 +2264,6 @@ export async function beginCharacterStateLifecycle(pool, {
           await client.query("ROLLBACK");
           return failed(compiled.kind, 409);
         }
-        const intent = visualIntent || buildHybridVisualIntent({
-          project: { styleSeedAssetId: styleAsset.id },
-          scene: { sceneKey: PRIMARY_SCENE_KEY },
-          frame: { ...frame, id: frameId, compositionMode },
-          panels: panels.map((panel, index) => ({
-            ...panel,
-            panelIndex: index,
-            subject: index === panelIndex ? subject : otherSubjects[0] || panel.subject,
-          })),
-        }).intent;
 
         const generationId = randomUUID();
         const recordId = randomUUID();

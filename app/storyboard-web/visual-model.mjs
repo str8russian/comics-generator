@@ -1,4 +1,4 @@
-export const HYBRID_PROMPT_COMPILER_VERSION = "hybrid-dialogue-v1";
+export const HYBRID_PROMPT_COMPILER_VERSION = "hybrid-dialogue-v2";
 
 const STYLE_LANGUAGE = `
 Rendering language:
@@ -280,17 +280,58 @@ export function compileSceneBackgroundPrompt({
   };
 }
 
+function performanceRoleLabel({ role, panelIndex, speakerPanel }) {
+  const normalized = clean(role, 40).toLowerCase();
+  if (normalized === "speaker" || normalized === "speaking") return "speaking";
+  if (normalized === "listener" || normalized === "listening" || normalized === "listening/reaction") {
+    return "listening/reaction";
+  }
+  if (normalized === "reaction") return "listening/reaction";
+  if (normalized === "silent") return "silent";
+  if (Number.isInteger(speakerPanel)) {
+    return panelIndex === speakerPanel ? "speaking" : "listening/reaction";
+  }
+  return "silent";
+}
+
+/**
+ * Map structured gaze/screen tokens to provider-facing screen direction.
+ * Relational intent survives as screen left/right only — never as an interlocutor name.
+ */
+export function screenDirectionForCharacterPrompt(gazeOrScreenDirection, { panelIndex = 0 } = {}) {
+  const raw = clean(gazeOrScreenDirection, 160).toLowerCase();
+  if (/(screen-right|rightward|inward-right|subtle-right|right-bias)/.test(raw)) {
+    return "subtle screen-right";
+  }
+  if (/(screen-left|leftward|inward-left|subtle-left|left-bias)/.test(raw)) {
+    return "subtle screen-left";
+  }
+  if (panelIndex === 0) return "subtle screen-right";
+  if (panelIndex === 1) return "subtle screen-left";
+  return "near-frontal";
+}
+
 /**
  * Single-character chromakey state prompt.
  * Identity and style remain distinct roles even when they resolve to the same asset id.
+ *
+ * Compiles only from character-performance structured fields. The human-readable panel
+ * `description` remains available to callers for intent/diagnostics but must not be
+ * copied wholesale into the provider prompt (scene nouns and interlocutor names leak).
  */
 export function compileCharacterStatePrompt({
   characterName,
-  description,
+  description: _humanReadableDescription = null,
   compositionMode = "near-frontal-pair",
   panelIndex = 0,
   speakerPanel = null,
-  offscreenOthers = [],
+  role = null,
+  expressionAndPose = null,
+  shotScale = "chest-up",
+  gazeOrScreenDirection = null,
+  cropAndSafeMargins = null,
+  prohibitedContent = null,
+  offscreenOthers: _offscreenOthers = [],
   identityAsset = null,
   styleAsset = null,
   gazeHint = null,
@@ -300,29 +341,54 @@ export function compileCharacterStatePrompt({
   const anchorCheck = validateAnchorRequired(identityAsset?.id, { subjectRequired: true });
   if (!anchorCheck.ok) return { ok: false, kind: anchorCheck.kind };
 
-  const role = Number.isInteger(speakerPanel)
-    ? (panelIndex === speakerPanel ? "speaking" : "listening/reaction")
-    : "silent";
-  const others = (offscreenOthers || []).map((name) => clean(name, 160)).filter(Boolean);
-  const relational = others.length
-    ? `Other named people (${others.join(", ")}) are off-screen only and may influence gaze or reaction. Do not draw them.`
-    : "No second person is present, even partially.";
-  const gaze = clean(gazeHint || "near-frontal head with subtle relational gaze toward the off-screen partner", 400);
+  const performanceRole = performanceRoleLabel({ role, panelIndex, speakerPanel });
+  const expression = clean(
+    expressionAndPose || "calm conversational near-frontal performance with mouth visible",
+    400,
+  );
+  const scale = clean(shotScale || "chest-up", 80);
+  const margins = clean(
+    cropAndSafeMargins || "safe margins around head and shoulders for later placement zoom and pan",
+    400,
+  );
+  const screenDirection = screenDirectionForCharacterPrompt(
+    gazeOrScreenDirection || gazeHint,
+    { panelIndex },
+  );
+  const prohibitions = Array.isArray(prohibitedContent) && prohibitedContent.length
+    ? prohibitedContent.map((entry) => clean(entry, 80)).filter(Boolean)
+    : [
+      "nested-panels",
+      "split-screen-layout",
+      "second-visible-person",
+      "dialogue-text",
+      "speech-bubbles",
+      "captions",
+      "logos",
+      "watermarks",
+      "gutters",
+      "borders",
+    ];
 
   const sameAsset = identityAsset.id === styleAsset.id;
   const prompt = [
-    `Create one single-character visual state of ${clean(characterName, 160)} for comic compositing.`,
-    `Panel description: ${clean(description)}.`,
-    `Performance role: ${role}. Composition mode: ${clean(compositionMode, 80)}.`,
+    `Create one reusable single-character visual state of ${clean(characterName, 160)} for comic compositing.`,
+    `Assigned subject: exactly one person — ${clean(characterName, 160)} — and no one else.`,
+    `Performance role: ${performanceRole}.`,
+    `Expression and pose: ${expression}.`,
+    `Head angle and gaze/screen direction: near-frontal head with ${screenDirection} gaze. Do not name or depict any other person.`,
+    `Shot scale: ${scale}. Isolated chest-up character with mouth visible.`,
+    `Safe margins: ${margins}.`,
+    `Composition support mode (framing only, not a scene to draw): ${clean(compositionMode, 80)}.`,
     "Image 1 is the approved identity anchor. It controls who the person is.",
     sameAsset
       ? "Image 1 also carries the project style authority as a distinct required role (same underlying asset). Match that rendering language while preserving this person's identity only."
       : "Image 2 is the approved project style authority. It controls rendering language only; never copy that person's identity.",
-    "Exactly one visible person. No second person, shoulders, silhouettes, reflections, or crowd.",
-    relational,
-    `Gaze/head direction: ${gaze}.`,
-    "Fill the entire background with a flat pure chroma-key green exactly #00FF00. No gradients, room, furniture, props, or shadows on the background.",
-    "Chest-up portrait, mouth visible, safe margins around head and shoulders for later placement zoom/pan.",
+    "Exactly one visible assigned person. No second person is present, even partially.",
+    "Prohibit other body fragments, faces, heads, ears, shoulders, reflections, silhouettes, props, furniture, foreground surfaces, environmental objects, and scene fragments.",
+    "Do not depict rooms, cabinets, tables, desks, telephones, folders, furniture, or any environmental/scene content — scene and props belong to the shared background path, not this character state.",
+    "Fill every non-character pixel with a flat pure chroma-key green exactly #00FF00. No gradients, shadows, floor, wall, or surface behind the character.",
+    `Structured prohibitions: ${prohibitions.join(", ")}.`,
     STYLE_LANGUAGE.trim(),
     HYBRID_NEGATIVE,
     "Target aspect ratio: 4:5.",

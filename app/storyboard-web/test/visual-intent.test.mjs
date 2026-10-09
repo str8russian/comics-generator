@@ -71,6 +71,11 @@ test("hybrid visual intent separates layered fields, grid copy, and detailed bri
   const compiled = compileCharacterStatePrompt({
     characterName: "Путин",
     description: "говорит спокойно",
+    role: built.intent.panels[0].role,
+    expressionAndPose: built.intent.panels[0].expressionAndPose,
+    shotScale: built.intent.panels[0].shotScale,
+    gazeOrScreenDirection: built.intent.panels[0].gazeOrScreenDirection,
+    cropAndSafeMargins: built.intent.panels[0].cropAndSafeMargins,
     identityAsset: { id: "id-1" },
     styleAsset: { id: "style-1" },
   });
@@ -82,6 +87,72 @@ test("hybrid visual intent separates layered fields, grid copy, and detailed bri
   );
   assert.equal(built.detailedBrief.includes(compiled.prompt), false);
   assert.equal(built.gridDescription.includes("#00FF00"), false);
+});
+
+test("human-readable panel descriptions stay in intent/briefs and do not leak into character provider prompts", () => {
+  const putinDescription =
+    "Путин сидит за столом переговоров в строгом кабинете, спокойно обращаясь к Дурову.";
+  const durovDescription =
+    "Дуров напротив Путина внимательно слушает, на столе лежат папки и телефон.";
+  const built = buildHybridVisualIntent({
+    project: { styleSeedAssetId: "style-1" },
+    scene: { sceneKey: "primary", continuity: "shared negotiation office" },
+    frame: {
+      id: "frame-1",
+      layout: "split2",
+      compositionMode: "near-frontal-pair",
+      speakerPanel: 0,
+      dialogue: "Значит, Павел Валерьевич, мы решили разблокировать телеграмм.",
+    },
+    panels: [
+      { panelIndex: 0, subject: "Путин", description: putinDescription, role: "speaker" },
+      { panelIndex: 1, subject: "Дуров", description: durovDescription, role: "listener" },
+    ],
+  });
+
+  assert.equal(built.intent.panels[0].description, putinDescription);
+  assert.equal(built.intent.panels[1].description, durovDescription);
+  assert.match(built.detailedBrief, /кабинете/);
+  assert.match(built.detailedBrief, /папки и телефон/);
+  assert.match(built.detailedBrief, /обращаясь к Дурову/);
+
+  const putinPrompt = compileCharacterStatePrompt({
+    characterName: "Путин",
+    description: putinDescription,
+    role: built.intent.panels[0].role,
+    expressionAndPose: built.intent.panels[0].expressionAndPose,
+    shotScale: built.intent.panels[0].shotScale,
+    gazeOrScreenDirection: built.intent.panels[0].gazeOrScreenDirection,
+    cropAndSafeMargins: built.intent.panels[0].cropAndSafeMargins,
+    panelIndex: 0,
+    speakerPanel: 0,
+    offscreenOthers: ["Дуров"],
+    identityAsset: { id: "id-putin" },
+    styleAsset: { id: "style-1" },
+  });
+  const durovPrompt = compileCharacterStatePrompt({
+    characterName: "Дуров",
+    description: durovDescription,
+    role: built.intent.panels[1].role,
+    expressionAndPose: built.intent.panels[1].expressionAndPose,
+    shotScale: built.intent.panels[1].shotScale,
+    gazeOrScreenDirection: built.intent.panels[1].gazeOrScreenDirection,
+    cropAndSafeMargins: built.intent.panels[1].cropAndSafeMargins,
+    panelIndex: 1,
+    speakerPanel: 0,
+    offscreenOthers: ["Путин"],
+    identityAsset: { id: "id-durov" },
+    styleAsset: { id: "style-1" },
+  });
+
+  assert.equal(putinPrompt.ok, true);
+  assert.equal(durovPrompt.ok, true);
+  assert.doesNotMatch(putinPrompt.prompt, /Дуров|кабинет|стол/i);
+  assert.doesNotMatch(durovPrompt.prompt, /Путин|стол|папк|телефон/i);
+  assert.match(putinPrompt.prompt, /subtle screen-right/i);
+  assert.match(durovPrompt.prompt, /subtle screen-left/i);
+  assert.equal(assertBriefsExcludeCompiledPrompt(built, putinPrompt.prompt), true);
+  assert.equal(assertBriefsExcludeCompiledPrompt(built, durovPrompt.prompt), true);
 });
 
 test("visual intent defaults are deterministic and explicit values override them", () => {
