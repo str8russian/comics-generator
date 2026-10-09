@@ -1,0 +1,13 @@
+{
+  "copiedApprovedAnchorAssetIds": [
+    "b9f5e249-00bb-4060-9962-00c94b1e265d",
+    "b5479298-9904-41ac-9407-1dab6a127501"
+  ],
+  "identityAssetIdsPresentInDbOnly": [
+    "2a4fb60d-880f-455d-a366-6f057387a992",
+    "d227a2e0-e198-48b0-ab2d-4be139fe1e48"
+  ],
+  "identityBytesWrittenToLiveDir": false,
+  "retainedBackgroundAssetId": "471cb3f5-00ac-4eff-8a1e-a04c75f6b188",
+  "round": "round-2"
+}

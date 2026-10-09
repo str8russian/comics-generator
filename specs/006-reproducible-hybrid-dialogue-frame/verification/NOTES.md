@@ -143,30 +143,92 @@ Final successful operation: `9952ed25-f37e-4c21-aa70-6e45669ec367` → `visualRe
 - Fix: remove fringe-class edge pixels after despill (`image-matte.mjs`) + deterministic regression test
 - Offline suite re-green after repair; requests #5–#6 verified the repair path within the 6-request budget
 
-**T051 status**
+**T051 status (after round-1)**
 
 - Hybrid assembly path and diagnostics succeeded
-- Provider single-character adherence for panel 0 did **not** fully pass
-- Request budget exhausted (6/6); no further live retry authorized
-- **T051 left unchecked** pending a later counted retry or owner decision
+- Provider single-character adherence for panel 0 did **not** fully pass under `hybrid-dialogue-v1`
+- Round-1 budget exhausted (6/6); round-2 counted retry authorized later
+
+## 5b. Round-2 character-prompt repair and counted retry (#7–#8)
+
+**Confirmed root cause**
+
+Stored live prompts under `hybrid-dialogue-v1` copied the full raw panel descriptions into the character-state provider prompt, while also naming the off-screen interlocutor:
+
+- Panel 0 prompt included `...обращаясь к Дурову` plus `Other named people (Дуров)...`
+- Panel 1 prompt included `...на столе лежат папки и телефон` plus `Other named people (Путин)...`
+- Contradictory “exactly one person / no furniture” lines lost to salient positive nouns
+
+Evidence: `verification/live/frame-frame-1-diagnostics.zip` generations `7ff008ec-…` / `b0e8b9c1-…`.
+
+**Compiler repair**
+
+- Character-state prompts now compile only from structured performance fields (subject, role, expression/pose, shot scale, screen direction, safe margins, identity/style, chromakey, prohibitions)
+- Human-readable panel descriptions remain unchanged in storyboard UI, intent JSON, and detailed briefs
+- Interlocutor names and scene nouns from panel descriptions are not copied into the provider prompt
+- Relational gaze survives as explicit screen direction (`subtle screen-right` / `subtle screen-left`)
+- Prompt compiler version bumped: `hybrid-dialogue-v1` → `hybrid-dialogue-v2`
+- Existing generation records remain immutable on `hybrid-dialogue-v1`
+
+**Round-2 live accounting**
+
+| # | Component | Panel | Outcome | Retry of | Notes |
+|---|-----------|-------|---------|----------|-------|
+| 7 | character-state | 0 | provider 200 / matte ok | #5 | `hybrid-dialogue-v2`; no second person; no props |
+| 8 | character-state | 1 | provider 200 / matte ok | #6 | `hybrid-dialogue-v2`; no desk/phone/folders |
+
+- Retained shared background: asset `471cb3f5-…` / generation `6dd1551c-…` (**no new background request**)
+- Live image-provider requests this round: **2**
+- Cumulative live image-provider requests: **8**
+- Cumulative live text-provider requests: **0**
+- Ninth request not made
+- Operations: panel-0 `e79a930c-…`, panel-1 `292fc2fc-…`
+- New generation records: `b3958f77-…` / `ab81f968-…` with `prompt_compiler_version=hybrid-dialogue-v2`
+
+**Objective adherence (round-2)**
+
+- Panel 0: exactly one connected subject; zero leftover nongreen components; no second-person fragment; pure chromakey; matte thresholds pass; chest-up with safe margins; recognizable identity; style-compatible; subtle screen-right / near-frontal gaze
+- Panel 1: exactly one connected subject; zero leftover nongreen components; no desk/phone/folder props; pure chromakey; matte pass; chest-up; screen-left listening gaze; head scale compatible with panel 0
+- Assembled frame: shared background reused; no duplicated furniture from character states; dialogue + `speakerPanel` unchanged; Visual ready persists across reload
+- Previous round-1 assets remain on disk as failed historical attempts
+
+**Evidence paths (versioned; do not replace round-1)**
+
+- `verification/live/round-2/`
+- Contact sheet: `verification/live/round-2/owner-review-contact-sheet.png`
+- Assembled: `verification/live/round-2/assembled-frame-representative.png`
+- Accounting: `verification/live/round-2/request-accounting-supplement.json`, `…/request-accounting-cumulative.json`, updated `verification/live/request-accounting.json`
+- Local diagnostics ZIP (gitignored): `verification/live/round-2/frame-frame-1-diagnostics.zip`
+
+**T051 status (after round-2)**
+
+- Objective single-character hybrid contract satisfied for regenerated states #7 and #8
+- **T051 marked complete**
+- Human visual acceptance remains pending owner review (not claimed by Cursor)
 
 ## 6. Live deterministic edge measurements
 
-From final ready cutouts (`live/live-run-report.json`):
+Round-1 final ready cutouts (`live/live-run-report.json`) — historical:
 
 | Cutout | transparentRatio | opaqueSubjectRatio | opaqueGreenSpill | edgeOpaque | edgeGreenFringe | edgeFringeRatio | threshold |
 |--------|------------------|--------------------|------------------|------------|-----------------|-----------------|-----------|
 | panel-0 | 0.2707 | 0.7293 | 0 | 9119 | 0 | 0 | pass |
 | panel-1 | 0.3953 | 0.6047 | 0 | 6705 | 0 | 0 | pass |
 
-Failed attempts preserved: `failed-panel-0-attempt1-*.png`, `failed-panel-0-attempt2-*.png`.
+Round-2 current ready cutouts (`live/round-2/live-run-report.json`):
+
+| Cutout | transparentRatio | opaqueSubjectRatio | opaqueGreenSpill | edgeOpaque | edgeGreenFringe | edgeFringeRatio | threshold |
+|--------|------------------|--------------------|------------------|------------|-----------------|-----------------|-----------|
+| panel-0 | 0.3699 | 0.6301 | 0 | 6084 | 0 | 0 | pass |
+| panel-1 | 0.4270 | 0.5730 | 0 | 6149 | 0 | 0 | pass |
+
+Failed attempts preserved: `failed-panel-0-attempt1-*.png`, `failed-panel-0-attempt2-*.png`, plus round-1 final non-adherent character states under `verification/live/`.
 
 ## 7. Model observations (non-authoritative)
 
-- Attempt-1 background looked like a bordered comic panel; attempt-2 background is a cleaner people-free office plate.
-- Final panel-0 cutout still shows a second-person head fragment — objective adherence failure, not merely aesthetic taste.
-- Panel-1 includes desk props that may or may not be acceptable under “no furniture scene”; owner should decide.
-- Assembled representative composite (`assembled-frame-representative.png`) reads as one conversation more than two unrelated portraits, but panel-0’s extra person undermines the hybrid contract.
+- Attempt-1 background looked like a bordered comic panel; attempt-2 / retained background is a cleaner people-free office plate.
+- Round-1 panel-0 showed a second-person head fragment; round-1 panel-1 included desk props — both traced to raw-description leakage in `hybrid-dialogue-v1`.
+- Round-2 states appear cleanly isolated; Putin’s gaze is only mildly screen-right / near-frontal rather than a strong inward turn — aesthetic subtlety for owner judgment.
 - These observations are **not** human acceptance.
 
 ## 8. Human visual edge acceptance — pending owner review
@@ -177,20 +239,20 @@ Status:
 PENDING PRODUCT-OWNER REVIEW
 ```
 
-Inspect at least:
+Inspect at least (prefer round-2 current evidence; keep round-1 as history):
 
-- `verification/live/owner-review-contact-sheet.png`
-- `verification/live/approved-anchor-putin.png`
-- `verification/live/approved-anchor-durov.png`
-- `verification/live/panel-0-chromakey-raw.png`
-- `verification/live/panel-0-cutout-rgba.png`
-- `verification/live/panel-0-composite-{light,dark,contrast}.png`
-- `verification/live/panel-1-chromakey-raw.png`
-- `verification/live/panel-1-cutout-rgba.png`
-- `verification/live/panel-1-composite-{light,dark,contrast}.png`
-- `verification/live/shared-background.png`
-- `verification/live/assembled-frame-representative.png`
-- Optional local diagnostics ZIP (gitignored): `frame-frame-1-diagnostics.zip`
+- `verification/live/round-2/owner-review-contact-sheet.png`
+- `verification/live/round-2/approved-anchor-putin.png`
+- `verification/live/round-2/approved-anchor-durov.png`
+- `verification/live/round-2/panel-0-chromakey-raw.png`
+- `verification/live/round-2/panel-0-cutout-rgba.png`
+- `verification/live/round-2/panel-0-composite-{light,dark,contrast}.png`
+- `verification/live/round-2/panel-1-chromakey-raw.png`
+- `verification/live/round-2/panel-1-cutout-rgba.png`
+- `verification/live/round-2/panel-1-composite-{light,dark,contrast}.png`
+- `verification/live/round-2/shared-background.png` (same retained #3 bytes)
+- `verification/live/round-2/assembled-frame-representative.png`
+- Optional local diagnostics ZIP (gitignored): `verification/live/round-2/frame-frame-1-diagnostics.zip`
 
 Review questions:
 
@@ -201,9 +263,10 @@ Review questions:
 - Are chromakey edges acceptable on light, dark, and contrast backgrounds?
 - Does the final assembled frame feel like one conversation rather than two unrelated portraits?
 - Is the shared background coherent and unobtrusive?
-- Are any provider artifacts unacceptable? (especially the second-person fragment on panel 0 and furniture props on panel 1)
+- Are any provider artifacts unacceptable?
 
 **T052 left unchecked** — owner review not performed by Cursor.
+**T053 left unchecked** — final scope confirmation deferred with human acceptance.
 
 ## Explicit non-claims
 

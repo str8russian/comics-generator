@@ -9,9 +9,11 @@
  *   - Real image provider; text-provider fetch hard-refused
  *
  * Limits:
- *   - Max 6 live image-provider requests
+ *   - Max live image-provider requests via LIVE_HARNESS_MAX_REQUESTS (default 6)
  *   - 0 live text-provider requests
  *   - No deliberate live failure experiments
+ *   - Round-2 character repair: LIVE_HARNESS_CONTINUE=1 LIVE_HARNESS_PRIOR_REQUESTS=6
+ *     LIVE_HARNESS_MAX_REQUESTS=8 LIVE_HARNESS_PANEL_ONLY=1 LIVE_HARNESS_OUT_DIR=.../live/round-2
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -32,7 +34,9 @@ import { createServer } from "../../../app/storyboard-web/server.mjs";
 import { createVisualStore } from "../../../app/storyboard-web/visual-store.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
-const LIVE_DIR = join(ROOT, "live");
+const LIVE_DIR = process.env.LIVE_HARNESS_OUT_DIR
+  ? join(process.env.LIVE_HARNESS_OUT_DIR)
+  : join(ROOT, "live");
 const PORT = Number(process.env.STORYBOARD_PORT || 4175);
 const HOST = process.env.STORYBOARD_HOST || "127.0.0.1";
 const VERIFY_DB = "comics_006_live_verify";
@@ -40,10 +44,12 @@ const COMICS_URL = process.env.COMICS_SOURCE_DATABASE_URL
   || "postgres://comics:comics@127.0.0.1:5432/comics";
 const VERIFY_URL = process.env.STORYBOARD_LIVE_DATABASE_URL
   || `postgres://comics:comics@127.0.0.1:5432/${VERIFY_DB}`;
-const MAX_LIVE_IMAGE_REQUESTS = 6;
+const MAX_LIVE_IMAGE_REQUESTS = Number(process.env.LIVE_HARNESS_MAX_REQUESTS || 6);
 const CONTINUE = process.env.LIVE_HARNESS_CONTINUE === "1";
 const FORCE_BACKGROUND_RETRY = process.env.LIVE_HARNESS_FORCE_BACKGROUND_RETRY === "1";
 const PRIOR_REQUEST_COUNT = Number(process.env.LIVE_HARNESS_PRIOR_REQUESTS || 0);
+const PANEL_ONLY = process.env.LIVE_HARNESS_PANEL_ONLY === "1";
+const ROUND_LABEL = process.env.LIVE_HARNESS_ROUND || null;
 const ENV_FILE = process.env.STORYBOARD_ENV_FILE
   || "/Users/andrey/Documents/Projects/comics-pipeline/.env.local";
 
@@ -573,6 +579,28 @@ async function exportLiveEvidence({
   const bgDecoded = decodeAnyToRgba(bg.rows[0].bytes);
   cells.push({ label: "shared-background", ...bgDecoded });
 
+  // Representative assembled frame: shared background with both cutouts side-by-side.
+  const c0Decoded = decodeAnyToRgba(c0.rows[0].bytes);
+  const c1Decoded = decodeAnyToRgba(c1.rows[0].bytes);
+  const assembledW = Math.max(bgDecoded.width, 1200);
+  const assembledH = Math.max(bgDecoded.height, 540);
+  const assembled = Buffer.alloc(assembledW * assembledH * 4, 0);
+  {
+    const scaledBg = downscaleRgba(bgDecoded.rgba, bgDecoded.width, bgDecoded.height, Math.max(assembledW, assembledH));
+    blit(assembled, assembledW, assembledH, scaledBg.rgba, scaledBg.width, scaledBg.height, 0, 0, [20, 20, 24, 255]);
+    const half = Math.floor(assembledW / 2);
+    const left = downscaleRgba(c0Decoded.rgba, c0Decoded.width, c0Decoded.height, Math.min(half - 24, assembledH - 24));
+    const right = downscaleRgba(c1Decoded.rgba, c1Decoded.width, c1Decoded.height, Math.min(half - 24, assembledH - 24));
+    const leftX = Math.floor((half - left.width) / 2);
+    const rightX = half + Math.floor((half - right.width) / 2);
+    const leftY = Math.floor((assembledH - left.height) / 2);
+    const rightY = Math.floor((assembledH - right.height) / 2);
+    blit(assembled, assembledW, assembledH, left.rgba, left.width, left.height, leftX, leftY);
+    blit(assembled, assembledW, assembledH, right.rgba, right.width, right.height, rightX, rightY);
+  }
+  writeFileSync(join(LIVE_DIR, "assembled-frame-representative.png"), encodeRgbaPng(assembledW, assembledH, assembled));
+  cells.push({ label: "assembled", rgba: assembled, width: assembledW, height: assembledH });
+
   const contactSheet = buildContactSheet(cells, { cols: 6, cellW: 180, cellH: 180 });
   const contactSheetPath = join(LIVE_DIR, "owner-review-contact-sheet.png");
   writeFileSync(contactSheetPath, contactSheet);
@@ -641,6 +669,7 @@ async function exportLiveEvidence({
       contactSheet: "owner-review-contact-sheet.png",
       diagnosticsZip: `frame-${frameId}-diagnostics.zip`,
       sharedBackground: "shared-background.png",
+      assembledFrame: "assembled-frame-representative.png",
       panel0Raw: "panel-0-chromakey-raw.png",
       panel0Cutout: "panel-0-cutout-rgba.png",
       panel0Composites: [
@@ -659,8 +688,10 @@ async function exportLiveEvidence({
         "approved-anchor-putin.png",
         "approved-anchor-durov.png",
       ],
-      note: "Original uploaded identity photographs were not written into verification/live/.",
+      note: "Original uploaded identity photographs were not written into the evidence directory.",
     },
+    round: ROUND_LABEL,
+    outDir: LIVE_DIR,
   };
 
   writeFileSync(join(LIVE_DIR, "live-run-report.json"), `${JSON.stringify(report, null, 2)}\n`);
@@ -740,22 +771,29 @@ async function main() {
       ...providerInput
     } = input;
     const sequential = PRIOR_REQUEST_COUNT + requestLog.length + 1;
+    const component = providerInput?.component || null;
+    const panelIndex = Number.isInteger(providerInput?.panelIndex) ? providerInput.panelIndex : null;
+    let retryOf = null;
+    let retryReason = null;
+    if (FORCE_BACKGROUND_RETRY && component === "scene-background") {
+      retryOf = 1;
+      retryReason = "background-border-nonadherence";
+    } else if (PRIOR_REQUEST_COUNT >= 6 && component === "character-state") {
+      retryOf = panelIndex === 0 ? 5 : (panelIndex === 1 ? 6 : null);
+      retryReason = "character-prompt-compiler-repair-v2";
+    } else if (component === "character-state" && panelIndex === 0) {
+      retryOf = 2;
+      retryReason = "matte-failed-edge-fringe";
+    }
     const entry = {
       sequentialRequestNumber: sequential,
-      component: providerInput?.component || null,
-      panelIndex: Number.isInteger(providerInput?.panelIndex) ? providerInput.panelIndex : null,
+      component,
+      panelIndex,
       aspectRatio: providerInput?.aspectRatio || null,
       startedAt: new Date().toISOString(),
-      retryOf: FORCE_BACKGROUND_RETRY && providerInput?.component === "scene-background"
-        ? 1
-        : (providerInput?.component === "character-state" && providerInput?.panelIndex === 0
-          ? 2
-          : null),
-      retryReason: FORCE_BACKGROUND_RETRY && providerInput?.component === "scene-background"
-        ? "background-border-nonadherence"
-        : (providerInput?.component === "character-state" && providerInput?.panelIndex === 0
-          ? "matte-failed-edge-fringe"
-          : null),
+      retryOf,
+      retryReason,
+      round: ROUND_LABEL,
       success: null,
       providerStatus: null,
       latencyMs: null,
@@ -839,28 +877,68 @@ async function main() {
     assert.equal(preFrame.panels.every((panel) => panel.subject), true, "panel subjects required");
     assert.equal(preVisual.body.styleSeedAssetId, seed.styleAssetId);
     assert.equal(preVisual.body.allAnchorsApproved, true);
-
-    const accepted = await request(PORT, {
-      method: "POST",
-      path: "/api/visual/frames/frame-1/generate",
-      body: {},
-    });
-    assert.equal(accepted.status, 202, `expected 202 got ${accepted.status} ${JSON.stringify(accepted.body)}`);
-    const operationId = accepted.body.operationId;
-    assert.ok(operationId);
-    console.log(`live-harness accepted operationId=${operationId} phase=${accepted.body.phase}`);
-
-    const done = await pollUntil(PORT, "frame-1", operationId, (res) => (
-      res.status === 200 && (res.body?.status === "complete" || res.body?.status === "failed")
-    ));
-    if (done.body.status !== "complete") {
-      writeFileSync(join(LIVE_DIR, "failed-operation.json"), `${JSON.stringify({
-        operation: done.body,
-        requestLog,
-      }, null, 2)}\n`);
-      refuse(`operation-failed:${done.body.errorKind || done.body.status}`);
+    const retainedBackgroundAssetId = preFrame.hybrid?.background?.assetId || null;
+    if (PANEL_ONLY) {
+      assert.ok(retainedBackgroundAssetId, "panel-only mode requires a ready retained background");
+      assert.equal(preFrame.hybrid?.background?.status, "ready");
+      console.log(`live-harness panel-only retained-background=${retainedBackgroundAssetId}`);
     }
-    assert.equal(done.body.visualReady, true);
+
+    const operationIds = [];
+    if (PANEL_ONLY) {
+      for (const panelIndex of [0, 1]) {
+        const accepted = await request(PORT, {
+          method: "POST",
+          path: `/api/visual/frames/frame-1/panels/${panelIndex}/generate`,
+          body: {},
+        });
+        assert.equal(
+          accepted.status,
+          202,
+          `expected 202 for panel ${panelIndex} got ${accepted.status} ${JSON.stringify(accepted.body)}`,
+        );
+        const operationId = accepted.body.operationId;
+        assert.ok(operationId);
+        operationIds.push(operationId);
+        console.log(`live-harness accepted panel=${panelIndex} operationId=${operationId} phase=${accepted.body.phase}`);
+        const done = await pollUntil(PORT, "frame-1", operationId, (res) => (
+          res.status === 200 && (res.body?.status === "complete" || res.body?.status === "failed")
+        ));
+        if (done.body.status !== "complete") {
+          mkdirSync(LIVE_DIR, { recursive: true });
+          writeFileSync(join(LIVE_DIR, "failed-operation.json"), `${JSON.stringify({
+            panelIndex,
+            operation: done.body,
+            requestLog,
+          }, null, 2)}\n`);
+          refuse(`operation-failed:panel-${panelIndex}:${done.body.errorKind || done.body.status}`);
+        }
+      }
+    } else {
+      const accepted = await request(PORT, {
+        method: "POST",
+        path: "/api/visual/frames/frame-1/generate",
+        body: {},
+      });
+      assert.equal(accepted.status, 202, `expected 202 got ${accepted.status} ${JSON.stringify(accepted.body)}`);
+      const operationId = accepted.body.operationId;
+      assert.ok(operationId);
+      operationIds.push(operationId);
+      console.log(`live-harness accepted operationId=${operationId} phase=${accepted.body.phase}`);
+
+      const done = await pollUntil(PORT, "frame-1", operationId, (res) => (
+        res.status === 200 && (res.body?.status === "complete" || res.body?.status === "failed")
+      ));
+      if (done.body.status !== "complete") {
+        mkdirSync(LIVE_DIR, { recursive: true });
+        writeFileSync(join(LIVE_DIR, "failed-operation.json"), `${JSON.stringify({
+          operation: done.body,
+          requestLog,
+        }, null, 2)}\n`);
+        refuse(`operation-failed:${done.body.errorKind || done.body.status}`);
+      }
+      assert.equal(done.body.visualReady, true);
+    }
 
     const visual = await request(PORT, { path: "/api/visual" });
     assert.equal(visual.status, 200);
@@ -868,6 +946,15 @@ async function main() {
     assert.equal(frame.visualReady, true);
     assert.equal(frame.dialogue, seed.frame.dialogue);
     assert.equal(frame.speakerPanel, 0);
+    if (PANEL_ONLY) {
+      assert.equal(frame.hybrid.background.assetId, retainedBackgroundAssetId, "background must be reused");
+      assert.equal(
+        requestLog.every((entry) => entry.component === "character-state"),
+        true,
+        "panel-only mode must not issue background requests",
+      );
+      assert.equal(requestLog.length, 2, "panel-only round must make exactly two character requests");
+    }
 
     const reload = await request(PORT, { path: "/api/visual" });
     const reloaded = reload.body.frames.find((entry) => entry.id === "frame-1");
@@ -882,16 +969,24 @@ async function main() {
     assert.equal(diagnostics.status, 200);
     assert.match(String(diagnostics.headers["content-type"] || ""), /application\/zip/);
 
-    // Attach operation/generation ids into request log from DB.
+    // Attach operation/generation ids into request log from the newest matching records.
     const genMeta = await pool.query(`
       SELECT id, operation_type, panel_index, component_generation_id, operation_id,
-             output_asset_id, output_sha256, provider_status, latency_ms, status
+             output_asset_id, output_sha256, provider_status, latency_ms, status,
+             prompt_compiler_version, created_at
       FROM generation_record
       WHERE storyboard_version_id = $1 AND frame_id = 'frame-1'
       ORDER BY created_at
     `, [ids.version]);
+    const unusedRecords = [...genMeta.rows];
     for (let i = 0; i < requestLog.length; i += 1) {
-      const meta = genMeta.rows[i] || null;
+      const entry = requestLog[i];
+      const matchIndex = unusedRecords.findIndex((row) => (
+        row.operation_type === (entry.component === "scene-background" ? "scene-background" : "character-state")
+        && (entry.panelIndex == null || row.panel_index === entry.panelIndex)
+        && (entry.outputSha256 == null || row.output_sha256 === entry.outputSha256)
+      ));
+      const meta = matchIndex >= 0 ? unusedRecords.splice(matchIndex, 1)[0] : null;
       if (!meta) continue;
       requestLog[i].operationId = meta.operation_id;
       requestLog[i].generationRecordId = meta.id;
@@ -899,6 +994,7 @@ async function main() {
       requestLog[i].persistedOutputAssetId = meta.output_asset_id;
       requestLog[i].persistedOutputSha256 = meta.output_sha256;
       requestLog[i].persistedStatus = meta.status;
+      requestLog[i].promptCompilerVersion = meta.prompt_compiler_version;
     }
 
     mkdirSync(LIVE_DIR, { recursive: true });
@@ -921,20 +1017,26 @@ async function main() {
         SOURCE_ASSETS.durovIdentity,
       ],
       identityBytesWrittenToLiveDir: false,
+      retainedBackgroundAssetId,
+      round: ROUND_LABEL,
     }, null, 2)}\n`);
 
     assert.equal(liveTextCalls, 0, "text provider must not be called");
     assert.ok(report.liveImageProviderRequestCount <= MAX_LIVE_IMAGE_REQUESTS);
-    assert.ok(report.liveImageProviderRequestCount >= 1, "at least one live background request required");
+    if (!PANEL_ONLY) {
+      assert.ok(report.liveImageProviderRequestCount >= 1, "at least one live background request required");
+    }
 
     console.log(JSON.stringify({
       event: "live-harness-complete",
       liveImageProviderRequestCount: report.liveImageProviderRequestCount,
       liveTextProviderRequestCount: 0,
-      operationId,
+      operationIds,
       visualReady: true,
       contactSheet: report.files.contactSheet,
       diagnosticsZip: report.files.diagnosticsZip,
+      round: ROUND_LABEL,
+      outDir: LIVE_DIR,
     }));
 
     // Leave server up briefly so an optional browser screenshot can be taken by the agent.

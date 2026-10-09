@@ -1,0 +1,80 @@
+{
+  "panel-0-chromakey-raw.png": {
+    "sha256": "db85c6633e94fd700f304502fda9df8955c5d4acf8e4fee1750862d7868f3f79",
+    "bytes": 1060326,
+    "width": 928,
+    "height": 1152
+  },
+  "panel-0-cutout-rgba.png": {
+    "sha256": "27c59fcb6e8ec41004ebc02e663ee7cb5bee2d3f906141deefe6d00252fbafc1",
+    "bytes": 1255302,
+    "width": 928,
+    "height": 1152
+  },
+  "panel-1-chromakey-raw.png": {
+    "sha256": "1d4af6add52e806dbb78af95eab48f0b76a2c652dbd594cc3858f3700ba37c5c",
+    "bytes": 1077833,
+    "width": 928,
+    "height": 1152
+  },
+  "panel-1-cutout-rgba.png": {
+    "sha256": "0e662af1c274d22d7ead5eef8755c55f19c0ea29e5da8b5cb4282cfb0e23dd44",
+    "bytes": 1295969,
+    "width": 928,
+    "height": 1152
+  },
+  "assembled-frame-representative.png": {
+    "sha256": "3dd1342defc70902c8f164f5493f910392f684c7d8f218311c709655543712ab",
+    "bytes": 910049,
+    "width": 1584,
+    "height": 672
+  },
+  "owner-review-contact-sheet.png": {
+    "sha256": "0bbd3bccdc4b04bd3844aae162fe44f61c6c6197f1d696c5f8ae7c5a47a2f841",
+    "bytes": 196734,
+    "width": 1164,
+    "height": 672
+  },
+  "shared-background.png": {
+    "sha256": "25954ad59f0050dd95d8f162206ac10de0a20cb61ebc137a077b6c416432f6c6",
+    "bytes": 808762,
+    "width": 1584,
+    "height": 672
+  },
+  "panel-0-composite-light.png": {
+    "sha256": "c30b7d58eac33e68fac4fc0faa379fecb80ebc7828a7779c8a10f5226d0f63fc",
+    "bytes": 879064,
+    "width": 928,
+    "height": 1152
+  },
+  "panel-0-composite-dark.png": {
+    "sha256": "c0128cda6c33f3d4f20fb84801a2560dd2f13f6d402a5e6ed9f8d09ff011a808",
+    "bytes": 879054,
+    "width": 928,
+    "height": 1152
+  },
+  "panel-0-composite-contrast.png": {
+    "sha256": "1ea8853eab090f5102f645e78a37f0df7f483d5606e1f9ee1e965c9145b57b04",
+    "bytes": 879058,
+    "width": 928,
+    "height": 1152
+  },
+  "panel-1-composite-light.png": {
+    "sha256": "3e131d18d40fe73805623f58f8e1e68e0a3866a34b8a958c7250c24b38634495",
+    "bytes": 841468,
+    "width": 928,
+    "height": 1152
+  },
+  "panel-1-composite-dark.png": {
+    "sha256": "32951dd5d24a0bd35d7b77b561cd87b76aa44805ecd76079ceaeef99eef7e6e1",
+    "bytes": 841462,
+    "width": 928,
+    "height": 1152
+  },
+  "panel-1-composite-contrast.png": {
+    "sha256": "426b880ad040711324e9c578e78b6b7938e2a9d70fd9213952033f15ce155331",
+    "bytes": 841477,
+    "width": 928,
+    "height": 1152
+  }
+}
