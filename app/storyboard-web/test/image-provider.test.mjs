@@ -1,8 +1,51 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildImageRequest, extractGeneratedImage } from "../image-provider.mjs";
+import {
+  buildImageRequest,
+  extractGeneratedImage,
+  normalizeProviderOutcome,
+  resolveImageProviderConfig,
+} from "../image-provider.mjs";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=", "base64");
+
+test("resolveImageProviderConfig exposes safe model/settings without credentials", () => {
+  const config = resolveImageProviderConfig({
+    env: { IMAGE_MODEL: "cfg-model", IMAGE_TIMEOUT_MS: "9000", CONTEST_API_TOKEN: "secret" },
+    aspectRatio: "21:9",
+    component: "scene-background",
+  });
+  assert.equal(config.ok, true);
+  assert.equal(config.model, "cfg-model");
+  assert.equal(config.generationSettings.timeoutMs, 9000);
+  assert.equal(config.generationSettings.component, "scene-background");
+  assert.equal(JSON.stringify(config).includes("secret"), false);
+  assert.equal(JSON.stringify(config).includes("CONTEST_API_TOKEN"), false);
+});
+
+test("normalizeProviderOutcome reads success metadata and failure diagnostics", () => {
+  assert.deepEqual(normalizeProviderOutcome({
+    ok: true,
+    image: { bytes: png },
+    metadata: { providerStatus: 200, latencyMs: 15, model: "m" },
+  }), {
+    ok: true,
+    image: { bytes: png },
+    providerStatus: 200,
+    latencyMs: 15,
+    model: "m",
+  });
+  assert.deepEqual(normalizeProviderOutcome({
+    ok: false,
+    kind: "timeout",
+    diagnostics: { providerStatus: 504, latencyMs: 2 },
+  }), {
+    ok: false,
+    kind: "timeout",
+    providerStatus: 504,
+    latencyMs: 2,
+  });
+});
 
 test("image request sends prompt before reference images and requests the chosen aspect", () => {
   const request = buildImageRequest({
