@@ -1,6 +1,32 @@
 import { randomUUID } from "node:crypto";
 import { inspectImage } from "./image-info.mjs";
-import { expandStoryboardFrames, placement, resolvePanelSubject } from "./visual-model.mjs";
+import { extractChromakeyMatte } from "./image-matte.mjs";
+import { buildHybridVisualIntent } from "./visual-intent.mjs";
+import {
+  compileCharacterStatePrompt,
+  compileSceneBackgroundPrompt,
+  expandStoryboardFrames,
+  HYBRID_PROMPT_COMPILER_VERSION,
+  isEligibleHybridDialogueFrame,
+  placement,
+  resolvePanelSubject,
+} from "./visual-model.mjs";
+
+const PRIMARY_SCENE_KEY = "primary";
+const HYBRID_COMPOSITION_MODES = new Set([
+  "near-frontal-pair",
+  "inward-conversation",
+  "asymmetric-pair",
+]);
+const OPERATION_PHASES = new Set([
+  "queued",
+  "preparing-background",
+  "generating-background",
+  "generating-character-states",
+  "assembling",
+  "complete",
+  "failed",
+]);
 
 function failed(kind, httpStatus = 400) {
   return { ok: false, status: "failed", kind, httpStatus };
@@ -298,14 +324,81 @@ async function loadVisualWithClient(client) {
       });
     }
 
+    const styleSeed = await backfillStyleSeed(client, context.result.material_state_id);
+    const hybridRows = await client.query(`
+      SELECT * FROM frame_hybrid_state
+      WHERE storyboard_version_id = $1
+    `, [context.version.id]);
+    const hybridByFrame = new Map(hybridRows.rows.map((row) => [row.frame_id, row]));
+    const sceneQuery = await client.query(
+      `SELECT * FROM scene_background_state
+       WHERE storyboard_version_id = $1 AND scene_key = $2`,
+      [context.version.id, PRIMARY_SCENE_KEY],
+    );
+    const sceneState = sceneQuery.rows[0] ?? null;
+    const sceneGeneration = sceneState?.current_generation_id
+      ? (await client.query(
+        `SELECT * FROM scene_background_generation WHERE id = $1`,
+        [sceneState.current_generation_id],
+      )).rows[0]
+      : null;
+    const characterIds = states.rows
+      .map((row) => row.current_character_generation_id)
+      .filter(Boolean);
+    const characterRows = characterIds.length
+      ? await client.query(`
+          SELECT * FROM character_visual_state_generation
+          WHERE id = ANY($1::uuid[])
+        `, [characterIds])
+      : { rows: [] };
+    const characterById = new Map(characterRows.rows.map((row) => [row.id, row]));
+    const operationIds = [
+      ...hybridRows.rows.map((row) => row.active_operation_id).filter(Boolean),
+    ];
+    const operations = operationIds.length
+      ? await client.query(`SELECT * FROM visual_frame_operation WHERE id = ANY($1::uuid[])`, [operationIds])
+      : { rows: [] };
+    const operationById = new Map(operations.rows.map((row) => [row.id, row]));
+
     const frames = expandStoryboardFrames(context.version.frames).map((frame) => {
+      const hybridRow = hybridByFrame.get(frame.id) ?? null;
+      const hybridAttempted = Boolean(hybridRow);
+      const operation = hybridRow?.active_operation_id
+        ? operationById.get(hybridRow.active_operation_id) ?? null
+        : null;
+      const compositionMode = hybridRow?.composition_mode || "near-frontal-pair";
+      const intentBuilt = isEligibleHybridDialogueFrame(frame) || hybridAttempted
+        ? buildHybridVisualIntent({
+          project: {
+            styleSeedAssetId: styleSeed?.style_asset_id ?? null,
+            visualDirection: "project-style-seed",
+          },
+          scene: {
+            sceneKey: PRIMARY_SCENE_KEY,
+            continuity: "shared dialogue interior",
+          },
+          frame: { ...frame, compositionMode },
+          panels: frame.panels.map((panel, panelIndex) => ({
+            ...panel,
+            subject: stateByKey.get(`${frame.id}:${panelIndex}`)?.subject ?? panel.subject,
+            panelIndex,
+          })),
+        })
+        : null;
+
       const panels = frame.panels.map((panel, panelIndex) => {
         const state = stateByKey.get(`${frame.id}:${panelIndex}`);
         const latestGeneration = state ? latestByState.get(state.id) : null;
         const anchorCurrent = !state?.subject || (
           state.anchor_version_id && approvedByName.get(state.subject) === state.anchor_version_id
         );
-        const outputAssetId = state?.generation_status === "ready" && anchorCurrent ? state.output_asset_id : null;
+        const historicalAssetId = state?.generation_status === "ready" && anchorCurrent
+          ? state.output_asset_id
+          : null;
+        const character = state?.current_character_generation_id
+          ? characterById.get(state.current_character_generation_id)
+          : null;
+        const characterReady = character?.status === "ready" && character.output_asset_id;
         const placed = placement({
           zoom: state?.zoom ?? 1,
           positionX: state?.position_x ?? 50,
@@ -318,17 +411,79 @@ async function loadVisualWithClient(client) {
             ? (frame.speakerPanel === panelIndex ? "Говорит" : "Слушает")
             : "Действие",
           stateId: state?.id ?? null,
-          assetId: outputAssetId,
-          asset: assetUrl(outputAssetId),
+          assetId: historicalAssetId,
+          asset: assetUrl(historicalAssetId),
+          characterAssetId: characterReady ? character.output_asset_id : null,
+          characterAsset: assetUrl(characterReady ? character.output_asset_id : null),
+          characterStatus: character?.status ?? null,
+          characterErrorKind: character?.error_kind ?? null,
           performanceAssetId: state?.performance_asset_id ?? null,
           performanceAssetUrl: assetUrl(state?.performance_asset_id),
           generationStatus: latestGeneration?.status ?? null,
           generationError: latestGeneration?.error_kind ?? null,
           instruction: state?.generation_instruction ?? "",
+          fitMode: state?.fit_mode ?? "manual",
+          positionX: Number(state?.position_x ?? 50),
+          positionY: Number(state?.position_y ?? 30),
           ...placed,
         };
       });
-      return { ...frame, panels, visualReady: panels.length > 0 && panels.every((panel) => panel.assetId) };
+
+      const backgroundReady = sceneGeneration?.status === "ready" && sceneGeneration.output_asset_id;
+      const charactersReady = panels.length > 0 && panels.every((panel) => panel.characterAssetId);
+      const assemblyStatus = hybridRow?.assembly_status ?? "not-ready";
+      const hybridVisualReady = Boolean(
+        backgroundReady && charactersReady && assemblyStatus === "ready",
+      );
+      const historicalVisualReady = panels.length > 0 && panels.every((panel) => panel.assetId);
+      // Precedence: hybrid wins when ready; after a hybrid attempt begins, never claim
+      // historical full-panel assets as successful hybrid completion.
+      const visualReady = hybridAttempted
+        ? hybridVisualReady
+        : historicalVisualReady;
+
+      const hybrid = hybridAttempted || isEligibleHybridDialogueFrame(frame)
+        ? {
+          sceneKey: PRIMARY_SCENE_KEY,
+          compositionMode,
+          activeOperationId: hybridRow?.active_operation_id ?? null,
+          operation: operation ? {
+            operationId: operation.id,
+            phase: operation.phase,
+            status: operation.status,
+            errorKind: operation.error_kind,
+            writeVersion: Number(operation.write_version),
+          } : null,
+          background: {
+            status: backgroundReady
+              ? "ready"
+              : (sceneGeneration?.status || (sceneState?.active_operation_id ? "pending" : "missing")),
+            assetId: backgroundReady ? sceneGeneration.output_asset_id : null,
+            asset: assetUrl(backgroundReady ? sceneGeneration.output_asset_id : null),
+          },
+          panels: panels.map((panel, panelIndex) => ({
+            panelIndex,
+            subject: panel.subject,
+            status: panel.characterStatus
+              || (panel.characterAssetId ? "ready" : "missing"),
+            assetId: panel.characterAssetId,
+            errorKind: panel.characterErrorKind,
+            zoom: panel.zoom,
+            positionX: panel.positionX,
+            positionY: panel.positionY,
+            fitMode: panel.fitMode,
+          })),
+        }
+        : null;
+
+      return {
+        ...frame,
+        panels,
+        visualReady,
+        gridDescription: intentBuilt?.gridDescription ?? null,
+        detailedBrief: intentBuilt?.detailedBrief ?? null,
+        hybrid,
+      };
     });
     const complete = frames.length > 0 && frames.every((frame) => frame.visualReady);
     const snapshot = currentSnapshot(frames);
@@ -340,7 +495,6 @@ async function loadVisualWithClient(client) {
       LIMIT 1
     `, [context.version.id]);
     const approved = approval.rowCount === 1 && JSON.stringify(approval.rows[0].snapshot) === JSON.stringify(snapshot);
-    const styleSeed = await backfillStyleSeed(client, context.result.material_state_id);
     return {
       ok: true,
       status: "ready",
@@ -771,13 +925,6 @@ export async function loadStoryboardStructure(pool) {
     return failed("database", 503);
   }
 }
-
-const PRIMARY_SCENE_KEY = "primary";
-const HYBRID_COMPOSITION_MODES = new Set([
-  "near-frontal-pair",
-  "inward-conversation",
-  "asymmetric-pair",
-]);
 
 async function ensureSceneBackgroundState(client, storyboardVersionId) {
   await client.query(`
@@ -1308,10 +1455,10 @@ export async function finalizeCharacterStateGeneration(pool, {
       const errorKind = result?.ok ? null : (result?.kind || "provider");
       let rawAssetId = null;
       let outputAssetId = null;
+      if (result?.rawImage) {
+        rawAssetId = (await insertAsset(client, "character-state-raw", result.rawImage)).id;
+      }
       if (result?.ok) {
-        if (result.rawImage) {
-          rawAssetId = (await insertAsset(client, "character-state-raw", result.rawImage)).id;
-        }
         outputAssetId = (await insertAsset(client, "character-state", result.image)).id;
       }
       const finalizedRecord = await finalizeGenerationRecordRow(client, {
@@ -1507,6 +1654,733 @@ function mapFrameHybrid(row) {
   };
 }
 
+function mapOperationRow(row, extras = {}) {
+  return {
+    ok: true,
+    operationId: row.id,
+    frameId: row.frame_id,
+    storyboardResultId: row.storyboard_result_id,
+    storyboardVersionId: row.storyboard_version_id,
+    scope: row.scope,
+    panelIndex: row.panel_index,
+    writeVersion: Number(row.write_version),
+    phase: row.phase,
+    status: row.status,
+    errorKind: row.error_kind,
+    componentFailures: Array.isArray(row.component_failures_json) ? row.component_failures_json : [],
+    createdAt: row.created_at?.toISOString?.() ?? row.created_at,
+    updatedAt: row.updated_at?.toISOString?.() ?? row.updated_at,
+    finishedAt: row.finished_at?.toISOString?.() ?? row.finished_at ?? null,
+    ...extras,
+  };
+}
+
+async function loadStyleAsset(client, materialStateId) {
+  const seed = await backfillStyleSeed(client, materialStateId);
+  if (!seed?.style_asset_id) return null;
+  const asset = await assetRow(client, seed.style_asset_id);
+  if (!asset) return null;
+  return {
+    id: asset.id,
+    mime: asset.mime,
+    bytes: asset.bytes,
+    width: asset.width,
+    height: asset.height,
+  };
+}
+
+async function loadApprovedAnchorAsset(client, materialStateId, characterName) {
+  const approved = await approvedAnchor(client, materialStateId, characterName);
+  if (!approved?.output_asset_id) return null;
+  const asset = await assetRow(client, approved.output_asset_id);
+  if (!asset) return null;
+  return {
+    id: approved.id,
+    assetId: asset.id,
+    mime: asset.mime,
+    bytes: asset.bytes,
+    width: asset.width,
+    height: asset.height,
+  };
+}
+
+export async function updateFrameOperation(pool, {
+  operationId,
+  phase,
+  status,
+  errorKind = null,
+  componentFailures = null,
+} = {}) {
+  if (!operationId) return failed("invalid-request");
+  if (phase != null && !OPERATION_PHASES.has(phase)) return failed("invalid-request");
+  if (status != null && status !== "running" && status !== "complete" && status !== "failed") {
+    return failed("invalid-request");
+  }
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      const existing = await client.query(
+        `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
+        [operationId],
+      );
+      if (existing.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const row = existing.rows[0];
+      if (row.status !== "running" && (phase === "complete" || phase === "failed" || status === "complete" || status === "failed")) {
+        // Allow terminal writes only from running; otherwise conflict.
+        if (row.status !== status || (phase != null && row.phase !== phase)) {
+          await client.query("ROLLBACK");
+          return failed("conflict", 409);
+        }
+      }
+      const nextPhase = phase ?? row.phase;
+      const nextStatus = status ?? (nextPhase === "complete" || nextPhase === "failed" ? nextPhase : row.status);
+      const nextError = errorKind !== undefined ? errorKind : row.error_kind;
+      const nextFailures = componentFailures != null
+        ? componentFailures
+        : row.component_failures_json;
+      const finished = nextStatus === "complete" || nextStatus === "failed";
+      const updated = await client.query(`
+        UPDATE visual_frame_operation
+        SET phase = $2,
+            status = $3,
+            error_kind = $4,
+            component_failures_json = $5::jsonb,
+            updated_at = clock_timestamp(),
+            finished_at = CASE
+              WHEN $6::boolean THEN COALESCE(finished_at, clock_timestamp())
+              ELSE finished_at
+            END
+        WHERE id = $1
+        RETURNING *
+      `, [
+        operationId,
+        nextPhase,
+        nextStatus,
+        nextError,
+        JSON.stringify(nextFailures ?? []),
+        finished,
+      ]);
+      await client.query("COMMIT");
+      return mapOperationRow(updated.rows[0]);
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+export async function getFrameOperation(pool, { frameId, operationId } = {}) {
+  if (!frameId || !operationId) return failed("invalid-request");
+  try {
+    return await withClient(pool, async (client) => {
+      const context = await ensureVersion(client);
+      if (!context) return failed("not-found", 404);
+      const operation = await client.query(`
+        SELECT * FROM visual_frame_operation
+        WHERE id = $1
+          AND frame_id = $2
+          AND storyboard_result_id = $3
+          AND storyboard_version_id = $4
+      `, [operationId, frameId, context.result.id, context.version.id]);
+      if (operation.rowCount !== 1) return failed("not-found", 404);
+      const summary = await buildHybridOperationSummary(client, context, frameId, operation.rows[0]);
+      return mapOperationRow(operation.rows[0], summary);
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+async function buildHybridOperationSummary(client, context, frameId, operationRow) {
+  const hybrid = await client.query(`
+    SELECT * FROM frame_hybrid_state
+    WHERE storyboard_version_id = $1 AND frame_id = $2
+  `, [context.version.id, frameId]);
+  const scene = await client.query(
+    `SELECT * FROM scene_background_state
+     WHERE storyboard_version_id = $1 AND scene_key = $2`,
+    [context.version.id, PRIMARY_SCENE_KEY],
+  );
+  const sceneState = scene.rows[0] ?? null;
+  const sceneGeneration = sceneState?.current_generation_id
+    ? (await client.query(
+      `SELECT * FROM scene_background_generation WHERE id = $1`,
+      [sceneState.current_generation_id],
+    )).rows[0]
+    : null;
+  const panels = await client.query(`
+    SELECT panel_visual_state.*, character_visual_state_generation.status AS character_status,
+           character_visual_state_generation.error_kind AS character_error_kind,
+           character_visual_state_generation.output_asset_id AS character_asset_id
+    FROM panel_visual_state
+    LEFT JOIN character_visual_state_generation
+      ON character_visual_state_generation.id = panel_visual_state.current_character_generation_id
+    WHERE panel_visual_state.storyboard_version_id = $1
+      AND panel_visual_state.frame_id = $2
+    ORDER BY panel_visual_state.panel_index
+  `, [context.version.id, frameId]);
+  const backgroundReady = sceneGeneration?.status === "ready" && sceneGeneration.output_asset_id;
+  const charactersReady = panels.rows.length > 0
+    && panels.rows.every((row) => row.character_status === "ready" && row.character_asset_id);
+  const assemblyStatus = hybrid.rows[0]?.assembly_status ?? "not-ready";
+  const visualReady = Boolean(backgroundReady && charactersReady && assemblyStatus === "ready");
+  return {
+    visualReady,
+    hybrid: {
+      sceneKey: PRIMARY_SCENE_KEY,
+      compositionMode: hybrid.rows[0]?.composition_mode || "near-frontal-pair",
+      background: {
+        status: backgroundReady
+          ? "ready"
+          : (sceneGeneration?.status || (sceneState?.active_operation_id ? "pending" : "missing")),
+        assetId: backgroundReady ? sceneGeneration.output_asset_id : null,
+      },
+      panels: panels.rows.map((row) => ({
+        panelIndex: row.panel_index,
+        subject: row.subject,
+        status: row.character_status || "missing",
+        assetId: row.character_asset_id,
+        errorKind: row.character_error_kind,
+        zoom: Number(row.zoom),
+        positionX: Number(row.position_x),
+        positionY: Number(row.position_y),
+        fitMode: row.fit_mode,
+      })),
+    },
+  };
+}
+
+/** T017 sole owner: begin background component (provenance before provider I/O). */
+export async function beginSceneBackgroundLifecycle(pool, {
+  operationId,
+  sceneContinuity = "shared dialogue interior",
+  compositionMode = "near-frontal-pair",
+  visualIntent = null,
+} = {}) {
+  if (!operationId) return failed("invalid-request");
+  const claim = await claimOrReuseSceneBackground(pool, { operationId, preferReuse: true });
+  if (!claim.ok) return claim;
+  if (claim.mode === "reuse") {
+    return {
+      ok: true,
+      mode: "reuse",
+      claimed: false,
+      currentGenerationId: claim.currentGenerationId,
+      writeVersion: claim.writeVersion,
+      sceneBackgroundStateId: claim.sceneBackgroundStateId,
+    };
+  }
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      const operation = await client.query(
+        `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
+        [operationId],
+      );
+      if (operation.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const op = operation.rows[0];
+      const context = await ensureVersion(client);
+      if (!context
+          || context.version.id !== op.storyboard_version_id
+          || context.result.id !== op.storyboard_result_id) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const styleAsset = await loadStyleAsset(client, context.result.material_state_id);
+      if (!styleAsset) {
+        await client.query("ROLLBACK");
+        return failed("style-required", 409);
+      }
+      const compiled = compileSceneBackgroundPrompt({
+        sceneContinuity,
+        compositionMode,
+        styleAsset,
+      });
+      if (!compiled.ok) {
+        await client.query("ROLLBACK");
+        return failed(compiled.kind, 409);
+      }
+      const intent = visualIntent || buildHybridVisualIntent({
+        project: { styleSeedAssetId: styleAsset.id },
+        scene: { sceneKey: PRIMARY_SCENE_KEY, continuity: sceneContinuity },
+        frame: { id: op.frame_id, compositionMode, layout: "split2" },
+        panels: [],
+      }).intent;
+      await client.query("COMMIT");
+
+      const created = await createSceneBackgroundGeneration(pool, {
+        operationId,
+        styleAssetId: styleAsset.id,
+        capturedSceneWriteVersion: claim.capturedSceneWriteVersion,
+        provenance: {
+          visualIntent: intent,
+          compiledPrompt: compiled.prompt,
+          promptCompilerVersion: compiled.promptCompilerVersion || HYBRID_PROMPT_COMPILER_VERSION,
+          model: null,
+          generationSettings: { aspectRatio: "21:9", component: "scene-background" },
+          referenceManifest: compiled.referenceManifest,
+          omittedReferences: compiled.omittedReferences,
+        },
+      });
+      if (!created.ok) return created;
+      return {
+        ok: true,
+        mode: "generate",
+        claimed: true,
+        generationId: created.generationId,
+        generationRecordId: created.generationRecordId,
+        capturedSceneWriteVersion: created.capturedSceneWriteVersion,
+        prompt: compiled.prompt,
+        images: compiled.images.map((image) => ({
+          id: image.id,
+          mime: image.mime,
+          bytes: image.bytes,
+        })),
+        aspectRatio: "21:9",
+        promptCompilerVersion: compiled.promptCompilerVersion,
+      };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+/** T017 sole owner: finalize background component after provider I/O. */
+export async function finalizeSceneBackgroundLifecycle(pool, {
+  generationId,
+  providerResult,
+} = {}) {
+  if (!generationId) return failed("invalid-request");
+  if (!providerResult?.ok) {
+    return finalizeSceneBackgroundGeneration(pool, {
+      generationId,
+      result: {
+        ok: false,
+        kind: providerResult?.kind || "provider",
+        providerStatus: providerResult?.providerStatus ?? providerResult?.diagnostics?.providerStatus ?? null,
+        latencyMs: providerResult?.latencyMs ?? null,
+      },
+    });
+  }
+  if (!imageBytes(providerResult.image)) {
+    return finalizeSceneBackgroundGeneration(pool, {
+      generationId,
+      result: { ok: false, kind: "invalid-output" },
+    });
+  }
+  return finalizeSceneBackgroundGeneration(pool, {
+    generationId,
+    result: {
+      ok: true,
+      image: providerResult.image,
+      providerStatus: providerResult.providerStatus ?? providerResult.diagnostics?.providerStatus ?? null,
+      latencyMs: providerResult.latencyMs ?? null,
+    },
+  });
+}
+
+/** T018 sole owner: begin character-state component (provenance before provider I/O). */
+export async function beginCharacterStateLifecycle(pool, {
+  operationId,
+  frameId,
+  panelIndex,
+  compositionMode = "near-frontal-pair",
+  visualIntent = null,
+} = {}) {
+  if (!operationId || !frameId || !Number.isInteger(panelIndex)) return failed("invalid-request");
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      const operation = await client.query(
+        `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
+        [operationId],
+      );
+      if (operation.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const op = operation.rows[0];
+      if (op.frame_id !== frameId) {
+        await client.query("ROLLBACK");
+        return failed("conflict", 409);
+      }
+      const context = await ensureVersion(client);
+      if (!context
+          || context.version.id !== op.storyboard_version_id
+          || context.result.id !== op.storyboard_result_id) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const cast = await castFor(client, context.result.material_state_id);
+      await ensurePanelRows(client, context, cast);
+      const target = await panelContext(client, frameId, panelIndex);
+      if (!target) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const subject = target.state.subject;
+      if (!subject) {
+        await client.query("ROLLBACK");
+        return failed("anchor-required", 409);
+      }
+      const styleAsset = await loadStyleAsset(client, context.result.material_state_id);
+      if (!styleAsset) {
+        await client.query("ROLLBACK");
+        return failed("style-required", 409);
+      }
+      const identity = await loadApprovedAnchorAsset(client, context.result.material_state_id, subject);
+      if (!identity) {
+        await client.query("ROLLBACK");
+        return failed("anchor-required", 409);
+      }
+      const frame = expandStoryboardFrames(context.version.frames).find((entry) => entry.id === frameId);
+      const panels = frame?.panels || [];
+      const otherSubjects = [];
+      for (let index = 0; index < panels.length; index += 1) {
+        if (index === panelIndex) continue;
+        const other = await panelContext(client, frameId, index);
+        if (other?.state?.subject && other.state.subject !== subject) {
+          otherSubjects.push(other.state.subject);
+        }
+      }
+      const compiled = compileCharacterStatePrompt({
+        characterName: subject,
+        description: panels[panelIndex]?.description || subject,
+        compositionMode,
+        panelIndex,
+        speakerPanel: frame?.speakerPanel ?? null,
+        offscreenOthers: otherSubjects,
+        identityAsset: { id: identity.assetId, mime: identity.mime, bytes: identity.bytes },
+        styleAsset,
+      });
+      if (!compiled.ok) {
+        await client.query("ROLLBACK");
+        return failed(compiled.kind, 409);
+      }
+      const intent = visualIntent || buildHybridVisualIntent({
+        project: { styleSeedAssetId: styleAsset.id },
+        scene: { sceneKey: PRIMARY_SCENE_KEY },
+        frame: { ...frame, id: frameId, compositionMode },
+        panels: panels.map((panel, index) => ({
+          ...panel,
+          panelIndex: index,
+          subject: index === panelIndex ? subject : otherSubjects[0] || panel.subject,
+        })),
+      }).intent;
+      await client.query("COMMIT");
+
+      const created = await createCharacterStateGeneration(pool, {
+        operationId,
+        frameId,
+        panelIndex,
+        anchorVersionId: identity.id,
+        styleAssetId: styleAsset.id,
+        parentGenerationId: target.state.current_character_generation_id,
+        provenance: {
+          visualIntent: intent,
+          compiledPrompt: compiled.prompt,
+          promptCompilerVersion: compiled.promptCompilerVersion || HYBRID_PROMPT_COMPILER_VERSION,
+          model: null,
+          generationSettings: { aspectRatio: "4:5", component: "character-state", panelIndex },
+          referenceManifest: compiled.referenceManifest,
+          omittedReferences: compiled.omittedReferences,
+        },
+      });
+      if (!created.ok) return created;
+      return {
+        ok: true,
+        mode: "generate",
+        generationId: created.generationId,
+        generationRecordId: created.generationRecordId,
+        panelIndex,
+        subject,
+        prompt: compiled.prompt,
+        images: compiled.images.map((image) => ({
+          id: image.id,
+          mime: image.mime,
+          bytes: image.bytes,
+        })),
+        aspectRatio: "4:5",
+        promptCompilerVersion: compiled.promptCompilerVersion,
+      };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+/** T018 sole owner: matte + finalize character-state after provider I/O. */
+export async function finalizeCharacterStateLifecycle(pool, {
+  generationId,
+  providerResult,
+  advanceWithOperationId = null,
+} = {}) {
+  if (!generationId) return failed("invalid-request");
+  if (!providerResult?.ok) {
+    return finalizeCharacterStateGeneration(pool, {
+      generationId,
+      advanceWithOperationId,
+      result: {
+        ok: false,
+        kind: providerResult?.kind || "provider",
+        providerStatus: providerResult?.providerStatus ?? providerResult?.diagnostics?.providerStatus ?? null,
+        latencyMs: providerResult?.latencyMs ?? null,
+      },
+    });
+  }
+  const rawBytes = imageBytes(providerResult.image);
+  if (!rawBytes) {
+    return finalizeCharacterStateGeneration(pool, {
+      generationId,
+      advanceWithOperationId,
+      result: { ok: false, kind: "invalid-output" },
+    });
+  }
+  const matte = extractChromakeyMatte(rawBytes);
+  if (!matte.ok) {
+    return finalizeCharacterStateGeneration(pool, {
+      generationId,
+      advanceWithOperationId,
+      result: {
+        ok: false,
+        kind: "matte-failed",
+        rawImage: { bytes: matte.rawBytes || rawBytes, mime: "image/png" },
+        providerStatus: providerResult.providerStatus ?? providerResult.diagnostics?.providerStatus ?? null,
+        latencyMs: providerResult.latencyMs ?? null,
+      },
+    });
+  }
+  return finalizeCharacterStateGeneration(pool, {
+    generationId,
+    advanceWithOperationId,
+    result: {
+      ok: true,
+      rawImage: { bytes: matte.rawBytes, mime: "image/png" },
+      image: { bytes: matte.rgbaBytes, mime: "image/png" },
+      providerStatus: providerResult.providerStatus ?? providerResult.diagnostics?.providerStatus ?? null,
+      latencyMs: providerResult.latencyMs ?? null,
+    },
+  });
+}
+
+/** T020: deterministic assembly validation and readiness. */
+export async function evaluateHybridAssembly(pool, { frameId, operationId = null } = {}) {
+  if (!frameId) return failed("invalid-request");
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      const context = await ensureVersion(client);
+      if (!context) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const hybrid = await lockFrameHybridState(client, context.version.id, frameId);
+      const scene = await ensureSceneBackgroundState(client, context.version.id);
+      const readyBackground = await readySceneBackground(client, scene);
+      const panels = await client.query(`
+        SELECT panel_visual_state.panel_index,
+               panel_visual_state.current_character_generation_id,
+               character_visual_state_generation.status,
+               character_visual_state_generation.output_asset_id
+        FROM panel_visual_state
+        LEFT JOIN character_visual_state_generation
+          ON character_visual_state_generation.id = panel_visual_state.current_character_generation_id
+        WHERE panel_visual_state.storyboard_version_id = $1
+          AND panel_visual_state.frame_id = $2
+        ORDER BY panel_visual_state.panel_index
+      `, [context.version.id, frameId]);
+      const frame = expandStoryboardFrames(context.version.frames).find((entry) => entry.id === frameId);
+      const requiredCount = frame?.panels?.length ?? panels.rows.length;
+      const charactersReady = panels.rows.length >= requiredCount
+        && panels.rows.every((row) => row.status === "ready" && row.output_asset_id);
+      // visualReady follows current authoritative pointers. Failed replacements that leave
+      // previous ready pointers untouched keep assembly_status ready.
+      const assemblyReady = Boolean(readyBackground && charactersReady);
+      await client.query(`
+        UPDATE frame_hybrid_state
+        SET assembly_status = $3, updated_at = clock_timestamp()
+        WHERE storyboard_version_id = $1 AND frame_id = $2
+      `, [context.version.id, frameId, assemblyReady ? "ready" : "not-ready"]);
+      void operationId;
+      void hybrid;
+      await client.query("COMMIT");
+      return {
+        ok: true,
+        frameId,
+        assemblyStatus: assemblyReady ? "ready" : "not-ready",
+        visualReady: assemblyReady,
+        backgroundReady: Boolean(readyBackground),
+        charactersReady,
+      };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+/** T019: orchestrate component lifecycles without creating provenance itself. */
+export async function orchestrateHybridFrameOperation(pool, {
+  operationId,
+  generateImage,
+} = {}) {
+  if (!operationId || typeof generateImage !== "function") return failed("invalid-request");
+  const failures = [];
+  try {
+    const operation = await withClient(pool, async (client) => {
+      const result = await client.query(`SELECT * FROM visual_frame_operation WHERE id = $1`, [operationId]);
+      return result.rows[0] ?? null;
+    });
+    if (!operation) return failed("not-found", 404);
+    const frameId = operation.frame_id;
+
+    await updateFrameOperation(pool, { operationId, phase: "preparing-background", status: "running" });
+    const background = await beginSceneBackgroundLifecycle(pool, { operationId });
+    if (!background.ok) {
+      failures.push({ component: "background", kind: background.kind || "provider" });
+      await updateFrameOperation(pool, {
+        operationId,
+        phase: "failed",
+        status: "failed",
+        errorKind: background.kind || "provider",
+        componentFailures: failures,
+      });
+      return { ok: false, kind: background.kind || "provider", componentFailures: failures };
+    }
+
+    if (background.mode === "generate") {
+      await updateFrameOperation(pool, { operationId, phase: "generating-background", status: "running" });
+      let providerResult;
+      try {
+        providerResult = await generateImage({
+          prompt: background.prompt,
+          images: background.images,
+          aspectRatio: background.aspectRatio,
+        });
+      } catch {
+        providerResult = { ok: false, kind: "provider" };
+      }
+      const finalized = await finalizeSceneBackgroundLifecycle(pool, {
+        generationId: background.generationId,
+        providerResult,
+      });
+      if (!finalized.ok || finalized.status === "failed") {
+        const kind = finalized.errorKind || providerResult?.kind || "provider";
+        failures.push({ component: "background", kind });
+        await updateFrameOperation(pool, {
+          operationId,
+          phase: "failed",
+          status: "failed",
+          errorKind: kind,
+          componentFailures: failures,
+        });
+        return { ok: false, kind, componentFailures: failures };
+      }
+    }
+
+    await updateFrameOperation(pool, {
+      operationId,
+      phase: "generating-character-states",
+      status: "running",
+    });
+
+    const panelCount = await withClient(pool, async (client) => {
+      const context = await ensureVersion(client);
+      const frame = expandStoryboardFrames(context.version.frames).find((entry) => entry.id === frameId);
+      return frame?.panels?.length ?? 0;
+    });
+
+    for (let panelIndex = 0; panelIndex < panelCount; panelIndex += 1) {
+      const started = await beginCharacterStateLifecycle(pool, {
+        operationId,
+        frameId,
+        panelIndex,
+      });
+      if (!started.ok) {
+        failures.push({
+          component: "character-state",
+          panelIndex,
+          kind: started.kind || "provider",
+        });
+        await updateFrameOperation(pool, {
+          operationId,
+          phase: "failed",
+          status: "failed",
+          errorKind: started.kind || "provider",
+          componentFailures: failures,
+        });
+        return { ok: false, kind: started.kind || "provider", componentFailures: failures };
+      }
+      let providerResult;
+      try {
+        providerResult = await generateImage({
+          prompt: started.prompt,
+          images: started.images,
+          aspectRatio: started.aspectRatio,
+        });
+      } catch {
+        providerResult = { ok: false, kind: "provider" };
+      }
+      const finalized = await finalizeCharacterStateLifecycle(pool, {
+        generationId: started.generationId,
+        providerResult,
+        advanceWithOperationId: operationId,
+      });
+      if (!finalized.ok || finalized.status === "failed") {
+        const kind = finalized.errorKind || providerResult?.kind || "provider";
+        failures.push({ component: "character-state", panelIndex, kind });
+        await evaluateHybridAssembly(pool, { frameId, operationId });
+        await updateFrameOperation(pool, {
+          operationId,
+          phase: "failed",
+          status: "failed",
+          errorKind: kind,
+          componentFailures: failures,
+        });
+        return { ok: false, kind, componentFailures: failures };
+      }
+    }
+
+    await updateFrameOperation(pool, { operationId, phase: "assembling", status: "running" });
+    const assembly = await evaluateHybridAssembly(pool, { frameId, operationId });
+    if (!assembly.ok || !assembly.visualReady) {
+      failures.push({ component: "assembly", kind: "assembly-failed" });
+      await updateFrameOperation(pool, {
+        operationId,
+        phase: "failed",
+        status: "failed",
+        errorKind: "assembly-failed",
+        componentFailures: failures,
+      });
+      return { ok: false, kind: "assembly-failed", componentFailures: failures };
+    }
+
+    await updateFrameOperation(pool, {
+      operationId,
+      phase: "complete",
+      status: "complete",
+      errorKind: null,
+      componentFailures: [],
+    });
+    return { ok: true, phase: "complete", visualReady: true };
+  } catch (error) {
+    const kind = error?.kind || "provider";
+    failures.push({ component: "operation", kind });
+    await updateFrameOperation(pool, {
+      operationId,
+      phase: "failed",
+      status: "failed",
+      errorKind: kind,
+      componentFailures: failures,
+    }).catch(() => {});
+    return { ok: false, kind, componentFailures: failures };
+  }
+}
+
 export function createVisualStore(pool) {
   return {
     load: () => loadVisual(pool),
@@ -1531,5 +2405,13 @@ export function createVisualStore(pool) {
     finalizeCharacterStateGeneration: (input) => finalizeCharacterStateGeneration(pool, input),
     finalizeGenerationRecord: (input) => finalizeGenerationRecord(pool, input),
     loadHybridPersistence: (input) => loadHybridPersistence(pool, input),
+    updateFrameOperation: (input) => updateFrameOperation(pool, input),
+    getFrameOperation: (input) => getFrameOperation(pool, input),
+    beginSceneBackgroundLifecycle: (input) => beginSceneBackgroundLifecycle(pool, input),
+    finalizeSceneBackgroundLifecycle: (input) => finalizeSceneBackgroundLifecycle(pool, input),
+    beginCharacterStateLifecycle: (input) => beginCharacterStateLifecycle(pool, input),
+    finalizeCharacterStateLifecycle: (input) => finalizeCharacterStateLifecycle(pool, input),
+    evaluateHybridAssembly: (input) => evaluateHybridAssembly(pool, input),
+    orchestrateHybridFrameOperation: (input) => orchestrateHybridFrameOperation(pool, input),
   };
 }

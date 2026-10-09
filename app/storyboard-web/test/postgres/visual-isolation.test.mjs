@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPool } from "../../db/pool.mjs";
 import { migrate } from "../../db/migrate.mjs";
+import { encodeRgbPng } from "../../image-matte.mjs";
 import { createVisualStore } from "../../visual-store.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
@@ -751,6 +752,136 @@ test("hybrid foundation repairs: concurrent heads, atomic write versions, finali
       `SELECT count(*)::int AS count FROM generation_record WHERE compiled_prompt = 'compiled-foreign-version'`,
     );
     assert.equal(noRowsForeign.rows[0].count, 0);
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+function chromakeySubjectPng() {
+  const width = 32;
+  const height = 32;
+  const rgb = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 3;
+      const subject = x >= 8 && x < 24 && y >= 8 && y < 24;
+      rgb[i] = subject ? 40 : 0;
+      rgb[i + 1] = subject ? 40 : 255;
+      rgb[i + 2] = subject ? 40 : 0;
+    }
+  }
+  return encodeRgbPng(width, height, rgb);
+}
+
+test("hybrid lifecycle keeps provenance before provider I/O and retains ready heads", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-09T14:00:00Z", splitDialogueFrames());
+    const store = createVisualStore(pool);
+    await approveStyleAndAnchor(store);
+    await store.ensureHybridHeads({ frameId: "frame-1" });
+    const op = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(op.ok, true);
+
+    let providerCalls = 0;
+    const backgroundBegin = await store.beginSceneBackgroundLifecycle({
+      operationId: op.operationId,
+    });
+    assert.equal(backgroundBegin.ok, true);
+    assert.equal(backgroundBegin.mode, "generate");
+    const recordBeforeProvider = await pool.query(
+      `SELECT status, compiled_prompt FROM generation_record WHERE id = $1`,
+      [backgroundBegin.generationRecordId],
+    );
+    assert.equal(recordBeforeProvider.rows[0].status, "pending");
+    assert.ok(String(recordBeforeProvider.rows[0].compiled_prompt).length > 0);
+    assert.equal(providerCalls, 0, "provenance exists before any provider call");
+
+    providerCalls += 1;
+    const bgDone = await store.finalizeSceneBackgroundLifecycle({
+      generationId: backgroundBegin.generationId,
+      providerResult: { ok: true, image: { bytes: png } },
+    });
+    assert.equal(bgDone.ok, true);
+    assert.equal(bgDone.advancedCurrentPointer, true);
+
+    const charBegin = await store.beginCharacterStateLifecycle({
+      operationId: op.operationId,
+      frameId: "frame-1",
+      panelIndex: 0,
+    });
+    assert.equal(charBegin.ok, true);
+    const charRecord = await pool.query(
+      `SELECT status FROM generation_record WHERE id = $1`,
+      [charBegin.generationRecordId],
+    );
+    assert.equal(charRecord.rows[0].status, "pending");
+    const charReady = await store.finalizeCharacterStateLifecycle({
+      generationId: charBegin.generationId,
+      providerResult: { ok: true, image: { bytes: chromakeySubjectPng() } },
+      advanceWithOperationId: op.operationId,
+    });
+    assert.equal(charReady.ok, true);
+    assert.equal(charReady.status, "ready");
+    assert.equal(charReady.advancedCurrentPointer, true);
+    assert.ok(charReady.rawAssetId);
+    assert.ok(charReady.outputAssetId);
+
+    const opaqueFailBegin = await store.beginCharacterStateLifecycle({
+      operationId: op.operationId,
+      frameId: "frame-1",
+      panelIndex: 0,
+    });
+    assert.equal(opaqueFailBegin.ok, true);
+    const matteFailed = await store.finalizeCharacterStateLifecycle({
+      generationId: opaqueFailBegin.generationId,
+      providerResult: { ok: true, image: { bytes: png } },
+      advanceWithOperationId: op.operationId,
+    });
+    assert.equal(matteFailed.ok, true);
+    assert.equal(matteFailed.status, "failed");
+    assert.equal(matteFailed.errorKind, "matte-failed");
+    assert.equal(matteFailed.advancedCurrentPointer, false);
+    const head = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(head.panels[0].currentCharacterGenerationId, charBegin.generationId);
+
+    const assembly = await store.evaluateHybridAssembly({ frameId: "frame-1" });
+    assert.equal(assembly.ok, true);
+    assert.equal(assembly.visualReady, false, "both panels required for assembly readiness");
+
+    const char1 = await store.beginCharacterStateLifecycle({
+      operationId: op.operationId,
+      frameId: "frame-1",
+      panelIndex: 1,
+    });
+    assert.equal(char1.ok, true);
+    const char1Ready = await store.finalizeCharacterStateLifecycle({
+      generationId: char1.generationId,
+      providerResult: { ok: true, image: { bytes: chromakeySubjectPng() } },
+      advanceWithOperationId: op.operationId,
+    });
+    assert.equal(char1Ready.ok, true);
+    const readyAssembly = await store.evaluateHybridAssembly({ frameId: "frame-1" });
+    assert.equal(readyAssembly.visualReady, true);
+
+    const loaded = await store.load();
+    assert.equal(loaded.frames[0].visualReady, true);
+    assert.equal(loaded.frames[0].hybrid.background.status, "ready");
+    assert.equal(loaded.frames[0].hybrid.panels[0].status, "ready");
+    assert.ok(loaded.frames[0].detailedBrief);
+    assert.equal(String(loaded.frames[0].detailedBrief).includes("#00FF00"), false);
   } finally {
     await reset(pool).catch(() => {});
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
