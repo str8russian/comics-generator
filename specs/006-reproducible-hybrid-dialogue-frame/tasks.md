@@ -173,13 +173,13 @@
 
 ### Tests for User Story 4
 
-- [ ] T038 [US4] Create `app/storyboard-web/test/visual-diagnostics.test.mjs` that builds/exports a diagnostics ZIP and asserts archive contents include prompts, briefs, intent, manifests, reference roles/hashes, provider settings (non-secret), operations, outputs, raw chromakey assets, RGBA cutouts, composites when available, placement, and assembly manifest; asserts exclusion of credentials, `.env`, Authorization material, secret-bearing URLs, unrelated frames/results; asserts `404 not-found` when no generation evidence exists. Depends on provenance from T017/T018 and read-model/version scoping from T027; **not** marked `[P]` until those prerequisites exist (do not author as parallel with foundational work)
+- [x] T038 [US4] Create `app/storyboard-web/test/visual-diagnostics.test.mjs` that builds/exports a diagnostics ZIP and asserts archive contents include prompts, briefs, intent, manifests, reference roles/hashes, provider settings (non-secret), operations, outputs, raw chromakey assets, RGBA cutouts, composites when available, placement, and assembly manifest; asserts exclusion of credentials, `.env`, Authorization material, secret-bearing URLs, unrelated frames/results; asserts `404 not-found` when no generation evidence exists. Depends on provenance from T017/T018 and read-model/version scoping from T027; **not** marked `[P]` until those prerequisites exist (do not author as parallel with foundational work)
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Implement `app/storyboard-web/visual-diagnostics.mjs` as an in-process ZIP builder (pure Node zlib/ZIP; no remote upload) scoped to the current result/version/frame. Completion: T038 content/exclusion cases that exercise the builder pass
-- [ ] T040 [US4] Add `GET /api/visual/frames/:frameId/diagnostics` in `app/storyboard-web/server.mjs` returning `application/zip` with `Content-Disposition: attachment; filename="frame-<frameId>-diagnostics.zip"`, never auto-upload. Emit diagnostics export through the logging ownership in T031 only (this task does not redefine the allowlist). Completion: HTTP contract + T038 pass
-- [ ] T041 [US4] Add an explicit diagnostics download control in `app/storyboard-web/public/app.js` / `app/storyboard-web/public/index.html` / `app/storyboard-web/public/app.css` outside the 1920×1080 canvas. Completion: user can download the ZIP on demand
+- [x] T039 [US4] Implement `app/storyboard-web/visual-diagnostics.mjs` as an in-process ZIP builder (pure Node zlib/ZIP; no remote upload) scoped to the current result/version/frame. Completion: T038 content/exclusion cases that exercise the builder pass
+- [x] T040 [US4] Add `GET /api/visual/frames/:frameId/diagnostics` in `app/storyboard-web/server.mjs` returning `application/zip` with `Content-Disposition: attachment; filename="frame-<frameId>-diagnostics.zip"`, never auto-upload. Emit diagnostics export through the logging ownership in T031 only (this task does not redefine the allowlist). Completion: HTTP contract + T038 pass
+- [x] T041 [US4] Add an explicit diagnostics download control in `app/storyboard-web/public/app.js` / `app/storyboard-web/public/index.html` / `app/storyboard-web/public/app.css` outside the 1920×1080 canvas. Completion: user can download the ZIP on demand
 
 **Checkpoint**: Local provenance + diagnostic export are independently demonstrable
 
@@ -193,8 +193,8 @@
 
 ### Tests / hardening for User Story 5
 
-- [ ] T042 [US5] Extend `app/storyboard-web/test/postgres/visual-isolation.test.mjs` to cover hybrid backgrounds, character states, placement, operations, provenance, and diagnostics scoping across result A vs result B with identical semantic frame/panel keys (building on T004). Not marked `[P]` (same file as T004; sequential after hybrid write paths exist)
-- [ ] T043 [US5] Audit version-scoped keys and load/export paths in `app/storyboard-web/visual-store.mjs` and `app/storyboard-web/visual-diagnostics.mjs` so no mutable current hybrid/background pointer or diagnostic enumeration can cross `storyboard_version_id` / result boundaries. Completion: T042 passes
+- [x] T042 [US5] Extend `app/storyboard-web/test/postgres/visual-isolation.test.mjs` to cover hybrid backgrounds, character states, placement, operations, provenance, and diagnostics scoping across result A vs result B with identical semantic frame/panel keys (building on T004). Not marked `[P]` (same file as T004; sequential after hybrid write paths exist)
+- [x] T043 [US5] Audit version-scoped keys and load/export paths in `app/storyboard-web/visual-store.mjs` and `app/storyboard-web/visual-diagnostics.mjs` so no mutable current hybrid/background pointer or diagnostic enumeration can cross `storyboard_version_id` / result boundaries. Completion: T042 passes
 
 ---
 
