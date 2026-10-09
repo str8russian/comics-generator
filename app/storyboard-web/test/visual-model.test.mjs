@@ -5,9 +5,14 @@ import {
   aspectRatioForFrame,
   assembleAnchorReferences,
   assemblePanelReferences,
+  compileCharacterStatePrompt,
+  compileSceneBackgroundPrompt,
   expandStoryboardFrames,
+  HYBRID_PROMPT_COMPILER_VERSION,
   panelPrompt,
   resolvePanelSubject,
+  validateAnchorRequired,
+  validateStyleRequired,
 } from "../visual-model.mjs";
 
 const characters = [{ name: "Путин" }, { name: "Дуров" }, { name: "Песков" }];
@@ -117,6 +122,102 @@ test("directing-beat segments become the same numbered frames used for visual as
   assert.deepEqual(result.map((frame) => frame.structureSegmentIndex), [0, 1]);
   assert.equal(result[1].speakerPanel, 1);
   assert.deepEqual(result[1].displayBlock, { sourceItemId: "item-1", start: 8, end: 15 });
+});
+
+test("hybrid background compiler is style-only, people-free, and self-contained", () => {
+  assert.deepEqual(validateStyleRequired(null), { ok: false, kind: "style-required" });
+  assert.deepEqual(validateAnchorRequired(null), { ok: false, kind: "anchor-required" });
+
+  const missing = compileSceneBackgroundPrompt({
+    sceneContinuity: "corridor",
+    styleAsset: null,
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.kind, "style-required");
+
+  const style = { id: "style-seed", mime: "image/png" };
+  const compiled = compileSceneBackgroundPrompt({
+    sceneContinuity: "dim shared corridor",
+    compositionMode: "near-frontal-pair",
+    styleAsset: style,
+  });
+  assert.equal(compiled.ok, true);
+  assert.equal(compiled.promptCompilerVersion, HYBRID_PROMPT_COMPILER_VERSION);
+  assert.match(compiled.prompt, /people-free scene background/i);
+  assert.match(compiled.prompt, /Do not depict any people/i);
+  assert.match(compiled.prompt, /project style authority/i);
+  assert.doesNotMatch(compiled.prompt, /identity anchor/i);
+  assert.match(compiled.prompt, /No nested comic panels/i);
+  assert.doesNotMatch(compiled.prompt, /Layout:\s*one side of a two-panel split screen/i);
+  assert.doesNotMatch(compiled.prompt, /full-scene dialogue panel/i);
+  assert.deepEqual(compiled.referenceManifest, [{ role: "style", assetId: "style-seed", required: true }]);
+  assert.equal(compiled.images.length, 1);
+});
+
+test("hybrid character-state compiler requires #00FF00 backing and distinct identity/style roles", () => {
+  const identity = { id: "anchor-1", mime: "image/png" };
+  const style = { id: "style-seed", mime: "image/png" };
+  const missingAnchor = compileCharacterStatePrompt({
+    characterName: "Путин",
+    description: "говорит",
+    identityAsset: null,
+    styleAsset: style,
+  });
+  assert.equal(missingAnchor.ok, false);
+  assert.equal(missingAnchor.kind, "anchor-required");
+
+  const compiled = compileCharacterStatePrompt({
+    characterName: "Путин",
+    description: "говорит спокойно, addressing Дуров",
+    compositionMode: "inward-conversation",
+    panelIndex: 0,
+    speakerPanel: 0,
+    offscreenOthers: ["Дуров"],
+    identityAsset: identity,
+    styleAsset: style,
+  });
+  assert.equal(compiled.ok, true);
+  assert.match(compiled.prompt, /#00FF00/);
+  assert.match(compiled.prompt, /Exactly one visible person/i);
+  assert.match(compiled.prompt, /off-screen only/i);
+  assert.match(compiled.prompt, /Image 1 is the approved identity anchor/);
+  assert.match(compiled.prompt, /Image 2 is the approved project style authority/);
+  assert.match(compiled.prompt, /No nested comic panels/i);
+  assert.doesNotMatch(compiled.prompt, /Layout:\s*one side of a two-panel split screen/i);
+  assert.match(compiled.prompt, /No dialogue, speech bubbles/);
+  assert.deepEqual(compiled.referenceManifest, [
+    { role: "identity", assetId: "anchor-1", required: true },
+    { role: "style", assetId: "style-seed", required: true },
+  ]);
+  assert.equal(compiled.images.length, 2);
+
+  const sameAsset = compileCharacterStatePrompt({
+    characterName: "Путин",
+    description: "слушает",
+    identityAsset: style,
+    styleAsset: style,
+  });
+  assert.equal(sameAsset.ok, true);
+  assert.deepEqual(sameAsset.referenceManifest.map((entry) => entry.role), ["identity", "style"]);
+  assert.equal(sameAsset.referenceManifest[0].assetId, sameAsset.referenceManifest[1].assetId);
+  assert.equal(sameAsset.images.length, 1);
+  assert.match(sameAsset.prompt, /distinct required role/);
+});
+
+test("ordinary dialogue helpers no longer request split-layout nesting wording", () => {
+  const panel = panelPrompt({
+    characterName: "Песков",
+    description: "Песков смотрит",
+    instruction: "",
+    layout: "split2",
+    panelIndex: 0,
+    speakerPanel: 0,
+    hasPrevious: false,
+    hasPerformance: false,
+    hasStyle: true,
+  });
+  assert.doesNotMatch(panel, /one side of a two-panel split screen/i);
+  assert.match(panel, /nested panels|split-screen layout/i);
 });
 
 test("visible frame 14 maps to structure frame-12 when the opening directing beat has three segments", () => {

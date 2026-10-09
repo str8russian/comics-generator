@@ -1,3 +1,5 @@
+export const HYBRID_PROMPT_COMPILER_VERSION = "hybrid-dialogue-v1";
+
 const STYLE_LANGUAGE = `
 Rendering language:
 - clearly illustrated rather than photorealistic
@@ -7,6 +9,12 @@ Rendering language:
 - simplified graphic shapes for the face, hair, facial hair, and clothing
 - minimal fine texture
 - strong readability at small panel size`;
+
+const HYBRID_NEGATIVE = [
+  "No nested comic panels, gutters, borders, or split-screen layout inside the image.",
+  "No dialogue, speech bubbles, captions, text, logos, or watermarks.",
+  "Do not render any final comic page or nested split-panel framing.",
+].join(" ");
 
 function clean(value, max = 4000) {
   return String(value ?? "").trim().slice(0, max);
@@ -131,11 +139,13 @@ export function panelPrompt({
   const role = Number.isInteger(speakerPanel)
     ? (panelIndex === speakerPanel ? "This is the speaking panel." : "This is a listening or reaction panel.")
     : "This is a silent action panel.";
+  // Ordinary dialogue success uses hybrid compilers. This historical helper remains for
+  // non-hybrid / non-ordinary paths and must not request split-layout nesting.
   return `Create one scene-specific storyboard panel${characterName ? ` featuring ${clean(characterName, 160)}` : ""}.
 
 Panel description: ${clean(description)}
 User revision request: ${clean(instruction) || "No additional revision."}
-Layout: ${layout === "split2" ? "one side of a two-panel split screen" : "single wide frame"}. ${role}
+Frame framing: ${layout === "split2" ? "portrait-friendly panel crop for later assembly" : "single wide frame"}. ${role}
 
 Role of the reference images:
 ${roles.length ? roles.join("\n") : "No reference image is supplied. Follow the panel description and rendering language."}
@@ -143,7 +153,7 @@ ${roles.length ? roles.join("\n") : "No reference image is supplied. Follow the 
 The finished image must visibly match the described action, emotion, gaze, pose, and composition. Keep the face, mouth, expression, gesture, and essential upper body safely inside the image so placement zoom can be adjusted later without losing them.
 ${STYLE_LANGUAGE}
 
-No text, speech bubbles, logo, or watermark.`;
+No text, speech bubbles, logo, watermark, nested panels, gutters, or split-screen layout.`;
 }
 
 export function aspectRatioForFrame(frame) {
@@ -202,5 +212,118 @@ export function assemblePanelReferences({
     hasPrevious: roles.has("previous"),
     hasPerformance: roles.has("performance"),
     hasStyle: roles.has("style") || (previous?.id != null && previous.id === styleId),
+  };
+}
+
+export function validateStyleRequired(styleAssetId) {
+  if (!styleAssetId) return { ok: false, kind: "style-required" };
+  return { ok: true };
+}
+
+export function validateAnchorRequired(anchorVersionId, { subjectRequired = true } = {}) {
+  if (!subjectRequired) return { ok: true };
+  if (!anchorVersionId) return { ok: false, kind: "anchor-required" };
+  return { ok: true };
+}
+
+/** People-free background prompt + style-only reference manifest. */
+export function compileSceneBackgroundPrompt({
+  sceneContinuity,
+  compositionMode = "near-frontal-pair",
+  styleAsset = null,
+} = {}) {
+  const styleCheck = validateStyleRequired(styleAsset?.id);
+  if (!styleCheck.ok) return { ok: false, kind: styleCheck.kind };
+
+  const prompt = [
+    "Create one people-free scene background for a comic dialogue frame assembly.",
+    `Scene continuity: ${clean(sceneContinuity || "shared interior for a conversation")}.`,
+    `Composition support mode: ${clean(compositionMode, 80)}.`,
+    "Image 1 is the approved project style authority. It controls rendering language only.",
+    "Do not depict any people, faces, hands, silhouettes, reflections of people, or character identity traits.",
+    "No furniture-scale props that imply a specific portrait subject. Keep the space empty of human presence.",
+    STYLE_LANGUAGE.trim(),
+    HYBRID_NEGATIVE,
+    "Target aspect ratio: 21:9 wide scene plate suitable for later panel cropping.",
+  ].join("\n");
+
+  const manifest = [{
+    role: "style",
+    assetId: styleAsset.id,
+    required: true,
+  }];
+
+  return {
+    ok: true,
+    prompt,
+    promptCompilerVersion: HYBRID_PROMPT_COMPILER_VERSION,
+    referenceManifest: manifest,
+    images: [styleAsset],
+    omittedReferences: [],
+  };
+}
+
+/**
+ * Single-character chromakey state prompt.
+ * Identity and style remain distinct roles even when they resolve to the same asset id.
+ */
+export function compileCharacterStatePrompt({
+  characterName,
+  description,
+  compositionMode = "near-frontal-pair",
+  panelIndex = 0,
+  speakerPanel = null,
+  offscreenOthers = [],
+  identityAsset = null,
+  styleAsset = null,
+  gazeHint = null,
+} = {}) {
+  const styleCheck = validateStyleRequired(styleAsset?.id);
+  if (!styleCheck.ok) return { ok: false, kind: styleCheck.kind };
+  const anchorCheck = validateAnchorRequired(identityAsset?.id, { subjectRequired: true });
+  if (!anchorCheck.ok) return { ok: false, kind: anchorCheck.kind };
+
+  const role = Number.isInteger(speakerPanel)
+    ? (panelIndex === speakerPanel ? "speaking" : "listening/reaction")
+    : "silent";
+  const others = (offscreenOthers || []).map((name) => clean(name, 160)).filter(Boolean);
+  const relational = others.length
+    ? `Other named people (${others.join(", ")}) are off-screen only and may influence gaze or reaction. Do not draw them.`
+    : "No second person is present, even partially.";
+  const gaze = clean(gazeHint || "near-frontal head with subtle relational gaze toward the off-screen partner", 400);
+
+  const sameAsset = identityAsset.id === styleAsset.id;
+  const prompt = [
+    `Create one single-character visual state of ${clean(characterName, 160)} for comic compositing.`,
+    `Panel description: ${clean(description)}.`,
+    `Performance role: ${role}. Composition mode: ${clean(compositionMode, 80)}.`,
+    "Image 1 is the approved identity anchor. It controls who the person is.",
+    sameAsset
+      ? "Image 1 also carries the project style authority as a distinct required role (same underlying asset). Match that rendering language while preserving this person's identity only."
+      : "Image 2 is the approved project style authority. It controls rendering language only; never copy that person's identity.",
+    "Exactly one visible person. No second person, shoulders, silhouettes, reflections, or crowd.",
+    relational,
+    `Gaze/head direction: ${gaze}.`,
+    "Fill the entire background with a flat pure chroma-key green exactly #00FF00. No gradients, room, furniture, props, or shadows on the background.",
+    "Chest-up portrait, mouth visible, safe margins around head and shoulders for later placement zoom/pan.",
+    STYLE_LANGUAGE.trim(),
+    HYBRID_NEGATIVE,
+    "Target aspect ratio: 4:5.",
+  ].join("\n");
+
+  const referenceManifest = [
+    { role: "identity", assetId: identityAsset.id, required: true },
+    { role: "style", assetId: styleAsset.id, required: true },
+  ];
+  const images = sameAsset ? [identityAsset] : [identityAsset, styleAsset];
+
+  return {
+    ok: true,
+    prompt,
+    promptCompilerVersion: HYBRID_PROMPT_COMPILER_VERSION,
+    referenceManifest,
+    images,
+    omittedReferences: [],
+    hasDistinctStyleImage: !sameAsset,
   };
 }
