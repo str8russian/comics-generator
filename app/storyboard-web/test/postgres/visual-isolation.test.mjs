@@ -1155,3 +1155,367 @@ test("stale frame operation finalizes own evidence but cannot complete or contin
     await pool.end();
   }
 });
+
+test("background pre-provider stale race finalizes begun generation as failed/conflict", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-09T16:00:00Z", splitDialogueFrames());
+    const store = createVisualStore(pool);
+    await approveStyleAndAnchor(store);
+    await store.ensureHybridHeads({ frameId: "frame-1" });
+    const providerConfig = { model: "bg-stale-model", timeoutMs: 1111 };
+    const beforePointer = await store.loadHybridPersistence({ frameId: "frame-1" });
+    const previousBg = beforePointer.sceneBackgroundState.currentGenerationId;
+
+    const opA = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(opA.ok, true);
+    let aCalls = 0;
+    let opBId = null;
+    let aGenerationId = null;
+    let aRecordId = null;
+
+    const resultA = await store.orchestrateHybridFrameOperation({
+      operationId: opA.operationId,
+      providerConfig,
+      env: { IMAGE_MODEL: "env-should-not-win", IMAGE_TIMEOUT_MS: "999999" },
+      onAfterBackgroundBegin: async (begun) => {
+        aGenerationId = begun.generationId;
+        aRecordId = begun.generationRecordId;
+        const opB = await store.createFrameOperation({ frameId: "frame-1" });
+        assert.equal(opB.ok, true);
+        opBId = opB.operationId;
+        const bBegin = await store.beginSceneBackgroundLifecycle({
+          operationId: opB.operationId,
+          providerConfig: { model: "b-model", timeoutMs: 2222 },
+          env: {},
+          preferReuse: false,
+        });
+        assert.equal(bBegin.ok, true);
+        assert.equal(bBegin.mode, "generate");
+      },
+      generateImage: async () => {
+        aCalls += 1;
+        return { ok: true, image: { bytes: png }, metadata: { providerStatus: 200, latencyMs: 1 } };
+      },
+    });
+
+    assert.equal(resultA.ok, false);
+    assert.equal(resultA.kind, "conflict");
+    assert.equal(aCalls, 0, "stale operation A must make zero provider calls");
+    assert.ok(aGenerationId);
+    assert.ok(aRecordId);
+    assert.ok(opBId);
+
+    const gen = await pool.query(
+      `SELECT status, error_kind FROM scene_background_generation WHERE id = $1`,
+      [aGenerationId],
+    );
+    assert.equal(gen.rows[0].status, "failed");
+    assert.equal(gen.rows[0].error_kind, "conflict");
+    const record = await pool.query(
+      `SELECT status, error_kind FROM generation_record WHERE id = $1`,
+      [aRecordId],
+    );
+    assert.equal(record.rows[0].status, "failed");
+    assert.equal(record.rows[0].error_kind, "conflict");
+
+    const opARow = await pool.query(
+      `SELECT status, phase, error_kind FROM visual_frame_operation WHERE id = $1`,
+      [opA.operationId],
+    );
+    assert.equal(opARow.rows[0].status, "failed");
+    assert.equal(opARow.rows[0].phase, "failed");
+    assert.equal(opARow.rows[0].error_kind, "conflict");
+
+    const persistence = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(persistence.sceneBackgroundState.currentGenerationId, previousBg);
+    assert.equal(persistence.sceneBackgroundState.activeOperationId, opBId);
+    assert.equal(persistence.frameHybridState.activeOperationId, opBId);
+
+    const pending = await pool.query(`
+      SELECT count(*)::int AS count FROM (
+        SELECT id FROM scene_background_generation
+         WHERE status = 'pending' AND operation_id = $1
+        UNION ALL
+        SELECT id FROM character_visual_state_generation
+         WHERE status = 'pending' AND operation_id = $1
+        UNION ALL
+        SELECT id FROM generation_record
+         WHERE status = 'pending' AND operation_id = $1
+      ) pending_rows
+    `, [opA.operationId]);
+    assert.equal(pending.rows[0].count, 0, "A leaves no pending generation or provenance rows");
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+test("character pre-provider stale race finalizes begun generation as failed/conflict", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-09T16:30:00Z", splitDialogueFrames());
+    const store = createVisualStore(pool);
+    await approveStyleAndAnchor(store);
+    await store.ensureHybridHeads({ frameId: "frame-1" });
+    const providerConfig = { model: "char-stale-model", timeoutMs: 3333 };
+
+    // Seed a ready background so orchestration reuses it and reaches character begin.
+    const setupOp = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(setupOp.ok, true);
+    const setupBg = await store.beginSceneBackgroundLifecycle({
+      operationId: setupOp.operationId,
+      providerConfig,
+      env: {},
+    });
+    assert.equal(setupBg.mode, "generate");
+    const setupReady = await store.finalizeSceneBackgroundLifecycle({
+      generationId: setupBg.generationId,
+      providerResult: {
+        ok: true,
+        image: { bytes: png },
+        metadata: { providerStatus: 200, latencyMs: 2 },
+      },
+    });
+    assert.equal(setupReady.ok, true);
+    assert.equal(setupReady.advancedCurrentPointer, true);
+
+    const beforeHead = await store.loadHybridPersistence({ frameId: "frame-1" });
+    const previousCharHead = beforeHead.panels[0].currentCharacterGenerationId;
+    const assetCountBefore = await pool.query(`SELECT count(*)::int AS count FROM visual_asset`);
+
+    const opA = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(opA.ok, true);
+    let aCalls = 0;
+    let begunPanels = [];
+    let aGenerationId = null;
+    let aRecordId = null;
+
+    const resultA = await store.orchestrateHybridFrameOperation({
+      operationId: opA.operationId,
+      providerConfig,
+      env: {},
+      onAfterCharacterBegin: async (started) => {
+        begunPanels.push(started.panelIndex);
+        aGenerationId = started.generationId;
+        aRecordId = started.generationRecordId;
+        const opB = await store.createFrameOperation({ frameId: "frame-1" });
+        assert.equal(opB.ok, true);
+      },
+      generateImage: async () => {
+        aCalls += 1;
+        return {
+          ok: true,
+          image: { bytes: chromakeySubjectPng() },
+          metadata: { providerStatus: 200, latencyMs: 1 },
+        };
+      },
+    });
+
+    assert.equal(resultA.ok, false);
+    assert.equal(resultA.kind, "conflict");
+    assert.equal(aCalls, 0, "stale operation A must make zero provider calls");
+    assert.deepEqual(begunPanels, [0], "no later panel generation begins");
+    assert.ok(aGenerationId);
+    assert.ok(aRecordId);
+
+    const gen = await pool.query(
+      `SELECT status, error_kind, raw_asset_id, output_asset_id
+       FROM character_visual_state_generation WHERE id = $1`,
+      [aGenerationId],
+    );
+    assert.equal(gen.rows[0].status, "failed");
+    assert.equal(gen.rows[0].error_kind, "conflict");
+    assert.equal(gen.rows[0].raw_asset_id, null);
+    assert.equal(gen.rows[0].output_asset_id, null);
+    const record = await pool.query(
+      `SELECT status, error_kind FROM generation_record WHERE id = $1`,
+      [aRecordId],
+    );
+    assert.equal(record.rows[0].status, "failed");
+    assert.equal(record.rows[0].error_kind, "conflict");
+
+    const assetCountAfter = await pool.query(`SELECT count(*)::int AS count FROM visual_asset`);
+    assert.equal(assetCountAfter.rows[0].count, assetCountBefore.rows[0].count);
+
+    const afterHead = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(afterHead.panels[0].currentCharacterGenerationId, previousCharHead);
+
+    const opARow = await pool.query(
+      `SELECT status, error_kind FROM visual_frame_operation WHERE id = $1`,
+      [opA.operationId],
+    );
+    assert.equal(opARow.rows[0].status, "failed");
+    assert.equal(opARow.rows[0].error_kind, "conflict");
+
+    const pending = await pool.query(`
+      SELECT count(*)::int AS count FROM (
+        SELECT id FROM character_visual_state_generation
+         WHERE status = 'pending' AND operation_id = $1
+        UNION ALL
+        SELECT id FROM generation_record
+         WHERE status = 'pending' AND operation_id = $1
+      ) pending_rows
+    `, [opA.operationId]);
+    assert.equal(pending.rows[0].count, 0, "A leaves no pending character generation or provenance");
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+test("persisted provider settings exactly control the actual provider request", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-09T17:00:00Z", splitDialogueFrames());
+    const store = createVisualStore(pool);
+    await approveStyleAndAnchor(store);
+    await store.ensureHybridHeads({ frameId: "frame-1" });
+
+    const providerConfig = { model: "persisted-model-v1", timeoutMs: 45678 };
+    const mutableEnv = {
+      IMAGE_MODEL: "persisted-model-v1",
+      IMAGE_TIMEOUT_MS: "45678",
+      CONTEST_API_TOKEN: "secret-token-must-not-persist",
+      BASE_URL: "https://provider.example/v1",
+    };
+    const op = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(op.ok, true);
+
+    const invocations = [];
+    let backgroundRecordId = null;
+    let characterRecordId = null;
+
+    const result = await store.orchestrateHybridFrameOperation({
+      operationId: op.operationId,
+      providerConfig,
+      env: mutableEnv,
+      onAfterBackgroundBegin: async (begun) => {
+        backgroundRecordId = begun.generationRecordId;
+        mutableEnv.IMAGE_MODEL = "mutated-after-begin";
+        mutableEnv.IMAGE_TIMEOUT_MS = "1";
+      },
+      onAfterCharacterBegin: async (begun) => {
+        if (begun.panelIndex === 0) characterRecordId = begun.generationRecordId;
+        mutableEnv.IMAGE_MODEL = "mutated-after-character-begin";
+        mutableEnv.IMAGE_TIMEOUT_MS = "2";
+      },
+      generateImage: async (args) => {
+        invocations.push({
+          model: args.model,
+          timeoutMs: args.timeoutMs,
+          aspectRatio: args.aspectRatio,
+          component: args.component,
+          panelIndex: args.panelIndex,
+        });
+        return {
+          ok: true,
+          image: { bytes: args.component === "scene-background" ? png : chromakeySubjectPng() },
+          metadata: { providerStatus: 200, latencyMs: 4 },
+        };
+      },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(invocations.length, 3);
+
+    const bgRecord = await pool.query(
+      `SELECT model, generation_settings_json FROM generation_record WHERE id = $1`,
+      [backgroundRecordId],
+    );
+    assert.equal(bgRecord.rows[0].model, "persisted-model-v1");
+    assert.equal(bgRecord.rows[0].generation_settings_json.timeoutMs, 45678);
+    assert.equal(bgRecord.rows[0].generation_settings_json.aspectRatio, "21:9");
+    assert.equal(bgRecord.rows[0].generation_settings_json.component, "scene-background");
+    assert.equal(bgRecord.rows[0].generation_settings_json.panelIndex, undefined);
+    const bgSettingsText = JSON.stringify(bgRecord.rows[0].generation_settings_json);
+    assert.equal(bgSettingsText.includes("secret"), false);
+    assert.equal(bgSettingsText.includes("https://"), false);
+    assert.equal(bgSettingsText.includes("provider.example"), false);
+
+    assert.deepEqual(invocations[0], {
+      model: "persisted-model-v1",
+      timeoutMs: 45678,
+      aspectRatio: "21:9",
+      component: "scene-background",
+      panelIndex: undefined,
+    });
+
+    const charRecord = await pool.query(
+      `SELECT model, generation_settings_json FROM generation_record WHERE id = $1`,
+      [characterRecordId],
+    );
+    assert.equal(charRecord.rows[0].model, "persisted-model-v1");
+    assert.equal(charRecord.rows[0].generation_settings_json.timeoutMs, 45678);
+    assert.equal(charRecord.rows[0].generation_settings_json.aspectRatio, "4:5");
+    assert.equal(charRecord.rows[0].generation_settings_json.component, "character-state");
+    assert.equal(charRecord.rows[0].generation_settings_json.panelIndex, 0);
+    const charSettingsText = JSON.stringify(charRecord.rows[0].generation_settings_json);
+    assert.equal(charSettingsText.includes("secret"), false);
+    assert.equal(charSettingsText.includes("https://"), false);
+
+    assert.deepEqual(invocations[1], {
+      model: "persisted-model-v1",
+      timeoutMs: 45678,
+      aspectRatio: "4:5",
+      component: "character-state",
+      panelIndex: 0,
+    });
+    assert.deepEqual(invocations[2], {
+      model: "persisted-model-v1",
+      timeoutMs: 45678,
+      aspectRatio: "4:5",
+      component: "character-state",
+      panelIndex: 1,
+    });
+    assert.equal(
+      invocations.every((call) => call.model === "persisted-model-v1" && call.timeoutMs === 45678),
+      true,
+      "env mutation after begin must not alter model or timeout",
+    );
+    assert.equal(
+      invocations.filter((call) => call.component === "scene-background").every((call) => call.panelIndex === undefined),
+      true,
+    );
+    assert.equal(
+      invocations.filter((call) => call.component === "character-state").every((call) => Number.isInteger(call.panelIndex)),
+      true,
+    );
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
