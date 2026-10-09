@@ -198,6 +198,249 @@ test("keeps the same panel assets on every dialogue overflow piece", () => {
   }
 });
 
+function hybridReadyFrame(overrides = {}) {
+  const dialogue = overrides.dialogue ?? "аб вг де";
+  return {
+    id: "f-hybrid",
+    layout: "split2",
+    origin: "source",
+    sourceItemId: "u-hybrid",
+    sourceRole: "utterance",
+    speakerPanel: 1,
+    dialogue,
+    displayBlock: { sourceItemId: "u-hybrid", start: 0, end: dialogue.length },
+    fitMode: "manual",
+    visualReady: true,
+    hybrid: {
+      sceneKey: "primary",
+      compositionMode: "near-frontal-pair",
+      assemblyStatus: "ready",
+      activeOperationId: null,
+      background: {
+        status: "ready",
+        assetId: "bg-shared",
+        asset: "/api/visual/assets/bg-shared",
+        generationId: "bg-gen-1",
+      },
+      panels: [
+        {
+          panelIndex: 0,
+          subject: "Путин",
+          status: "ready",
+          assetId: "char-0",
+          generationId: "char-gen-0",
+          zoom: 1.25,
+          positionX: 40,
+          positionY: 20,
+          fitMode: "manual",
+        },
+        {
+          panelIndex: 1,
+          subject: "Дуров",
+          status: "ready",
+          assetId: "char-1",
+          generationId: "char-gen-1",
+          zoom: 1.1,
+          positionX: 55,
+          positionY: 25,
+          fitMode: "fit",
+        },
+      ],
+      operation: { status: "complete", phase: "complete", operationId: "op-done" },
+    },
+    panels: [
+      {
+        description: "Путин",
+        subject: "Путин",
+        characterAssetId: "char-0",
+        characterAsset: "/api/visual/assets/char-0",
+        zoom: 1.25,
+        positionX: 40,
+        positionY: 20,
+        position: "40% 20%",
+        align: "40% 20%",
+        fitMode: "manual",
+        hybrid: { status: "ready", assetId: "char-0", generationId: "char-gen-0" },
+      },
+      {
+        description: "Дуров",
+        subject: "Дуров",
+        characterAssetId: "char-1",
+        characterAsset: "/api/visual/assets/char-1",
+        zoom: 1.1,
+        positionX: 55,
+        positionY: 25,
+        position: "55% 25%",
+        align: "55% 25%",
+        fitMode: "fit",
+        hybrid: { status: "ready", assetId: "char-1", generationId: "char-gen-1" },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+test("fitting a ready hybrid frame preserves assembly identity, placement, and visualReady", () => {
+  const frame = hybridReadyFrame({ dialogue: "Нет." });
+  const result = compileOverflow([frame], () => true);
+  assert.equal(result.ok, true);
+  assert.equal(result.frames.length, 1);
+  const piece = result.frames[0];
+  assert.equal(piece.id, "f-hybrid");
+  assert.equal(piece.dialogue, "Нет.");
+  assert.equal(piece.speakerPanel, 1);
+  assert.equal(piece.sourceItemId, "u-hybrid");
+  assert.equal(piece.sourceRole, "utterance");
+  assert.equal(piece.fitMode, "manual");
+  assert.equal(piece.hybrid.sceneKey, "primary");
+  assert.equal(piece.hybrid.assemblyStatus, "ready");
+  assert.equal(piece.hybrid.background.assetId, "bg-shared");
+  assert.equal(piece.hybrid.background.generationId, "bg-gen-1");
+  assert.equal(piece.hybrid.panels[0].assetId, "char-0");
+  assert.equal(piece.hybrid.panels[1].assetId, "char-1");
+  assert.equal(piece.hybrid.panels[0].fitMode, "manual");
+  assert.equal(piece.hybrid.panels[1].fitMode, "fit");
+  assert.equal(piece.panels[0].characterAssetId, "char-0");
+  assert.equal(piece.panels[1].characterAssetId, "char-1");
+  assert.equal(piece.panels[0].fitMode, "manual");
+  assert.equal(piece.panels[1].fitMode, "fit");
+  assert.equal(piece.panels[0].zoom, 1.25);
+  assert.equal(piece.panels[1].positionX, 55);
+  assert.equal(piece.visualReady, true);
+});
+
+test("overflow pieces preserve hybrid state, shared background, character assets, and dialogue order", () => {
+  const dialogue = "аб вг де";
+  const frame = hybridReadyFrame({ dialogue });
+  const minimum = FONT_LADDER.split2.at(-1);
+  const result = compileOverflow([frame], (text, options) => {
+    if (text.length <= 2) return true;
+    return options.fontSize === minimum && text.length <= 3;
+  });
+  assert.equal(result.ok, true);
+  assert.ok(result.frames.length >= 2);
+  assert.equal(result.frames.map((piece) => piece.dialogue).join(""), dialogue);
+  assert.deepEqual(
+    result.frames.map((piece) => [piece.displayBlock.start, piece.displayBlock.end]),
+    result.frames.map((piece) => {
+      const start = piece.displayBlock.start;
+      return [start, start + piece.dialogue.length];
+    }),
+  );
+  for (const piece of result.frames) {
+    assert.equal(piece.layout, "split2");
+    assert.equal(piece.speakerPanel, 1);
+    assert.equal(piece.origin, "source");
+    assert.equal(piece.sourceItemId, "u-hybrid");
+    assert.equal(piece.hybrid.assemblyStatus, "ready");
+    assert.equal(piece.hybrid.background.assetId, "bg-shared");
+    assert.equal(piece.hybrid.background.generationId, "bg-gen-1");
+    assert.equal(piece.hybrid.panels[0].assetId, "char-0");
+    assert.equal(piece.hybrid.panels[0].generationId, "char-gen-0");
+    assert.equal(piece.hybrid.panels[1].assetId, "char-1");
+    assert.equal(piece.hybrid.panels[1].generationId, "char-gen-1");
+    assert.equal(piece.panels[0].characterAssetId, "char-0");
+    assert.equal(piece.panels[1].characterAssetId, "char-1");
+    assert.equal(piece.panels[0].fitMode, "manual");
+    assert.equal(piece.panels[1].fitMode, "fit");
+    assert.equal(piece.visualReady, true);
+    assert.equal(
+      piece.dialogue,
+      dialogue.slice(piece.displayBlock.start, piece.displayBlock.end),
+    );
+  }
+});
+
+test("incomplete or failed hybrid attempts stay non-Visual unless a ready assembly is retained", () => {
+  const incomplete = hybridReadyFrame({
+    dialogue: "Нет.",
+    visualReady: false,
+    hybrid: {
+      ...hybridReadyFrame().hybrid,
+      assemblyStatus: "not-ready",
+      background: { status: "ready", assetId: "bg-shared", generationId: "bg-gen-1" },
+      panels: [
+        { panelIndex: 0, subject: "Путин", status: "ready", assetId: "char-0", fitMode: "manual" },
+        { panelIndex: 1, subject: "Дуров", status: "pending", assetId: null, fitMode: "fit" },
+      ],
+      operation: { status: "running", phase: "character-states", operationId: "op-run" },
+      activeOperationId: "op-run",
+    },
+    panels: [
+      {
+        description: "Путин",
+        subject: "Путин",
+        characterAssetId: "char-0",
+        fitMode: "manual",
+        hybrid: { status: "ready", assetId: "char-0" },
+      },
+      {
+        description: "Дуров",
+        subject: "Дуров",
+        characterAssetId: null,
+        fitMode: "fit",
+        hybrid: { status: "pending", assetId: null },
+      },
+    ],
+  });
+  const incompleteFitted = compileOverflow([incomplete], () => true);
+  assert.equal(incompleteFitted.ok, true);
+  assert.equal(incompleteFitted.frames[0].visualReady, false);
+  assert.equal(incompleteFitted.frames[0].hybrid.assemblyStatus, "not-ready");
+  assert.equal(incompleteFitted.frames[0].hybrid.activeOperationId, "op-run");
+  assert.equal(incompleteFitted.frames[0].hybrid.background.assetId, "bg-shared");
+
+  const failedWithPrior = hybridReadyFrame({
+    dialogue: "Нет.",
+    visualReady: true,
+    hybrid: {
+      ...hybridReadyFrame().hybrid,
+      assemblyStatus: "ready",
+      operation: { status: "failed", phase: "failed", operationId: "op-fail", errorKind: "provider" },
+      activeOperationId: null,
+    },
+  });
+  const retained = compileOverflow([failedWithPrior], () => true);
+  assert.equal(retained.ok, true);
+  assert.equal(retained.frames[0].visualReady, true);
+  assert.equal(retained.frames[0].hybrid.assemblyStatus, "ready");
+  assert.equal(retained.frames[0].hybrid.background.assetId, "bg-shared");
+  assert.equal(retained.frames[0].hybrid.operation.status, "failed");
+  assert.equal(retained.frames[0].panels[0].characterAssetId, "char-0");
+  assert.equal(retained.frames[0].panels[1].characterAssetId, "char-1");
+
+  const historicalFullPanelOnly = {
+    id: "f-hist",
+    layout: "split2",
+    origin: "source",
+    sourceItemId: "u-hist",
+    sourceRole: "utterance",
+    speakerPanel: 0,
+    dialogue: "Да.",
+    displayBlock: { sourceItemId: "u-hist", start: 0, end: 3 },
+    visualReady: false,
+    hybrid: {
+      sceneKey: "primary",
+      assemblyStatus: "not-ready",
+      activeOperationId: "op-hist",
+      background: { status: "pending", assetId: null },
+      panels: [
+        { panelIndex: 0, status: "pending", assetId: null },
+        { panelIndex: 1, status: "pending", assetId: null },
+      ],
+    },
+    panels: [
+      { description: "A", subject: "Путин", assetId: "legacy-0", fitMode: "manual" },
+      { description: "B", subject: "Дуров", assetId: "legacy-1", fitMode: "fit" },
+    ],
+  };
+  const histFitted = compileOverflow([historicalFullPanelOnly], () => true);
+  assert.equal(histFitted.ok, true);
+  assert.equal(histFitted.frames[0].visualReady, false, "hybrid attempt must not fall back to full-panel assetId readiness");
+  assert.equal(histFitted.frames[0].hybrid.assemblyStatus, "not-ready");
+  assert.equal(histFitted.frames[0].panels[0].assetId, "legacy-0");
+});
+
 test("does not split an emoji grapheme and leaves a silent frame without a font size", () => {
   const dialogue = "а😀";
   const silent = {

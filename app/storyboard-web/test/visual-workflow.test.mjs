@@ -1973,3 +1973,332 @@ test("structural edit applies the Putin full-frame command and maps conflicts to
     await close(server);
   }
 });
+
+test("feature 006 compatibility: identity, anchors, style seed, edit/undo, structure, overflow, gating, and full-panel precedence", async () => {
+  const providerCalls = [];
+  const counters = {
+    identity: 0,
+    beginAnchor: 0,
+    finishAnchor: 0,
+    approveAnchor: 0,
+    undo: 0,
+    hybridOps: 0,
+    beginPanel: 0,
+  };
+  let styleSeedAssetId = null;
+  let structureFrames = putinBoard().frames;
+  let canUndo = false;
+  const historicalHybrid = hybridEligibleState({
+    frames: [{
+      ...hybridEligibleState().frames[0],
+      id: "f-hybrid",
+      visualReady: false,
+      hybrid: {
+        ...hybridEligibleState().frames[0].hybrid,
+        assemblyStatus: "not-ready",
+        activeOperationId: "op-started",
+        background: { status: "pending", assetId: null },
+      },
+      panels: [
+        {
+          description: "Путин слева",
+          subject: "Путин",
+          assetId: "legacy-full-0",
+          asset: "/api/visual/assets/legacy-full-0",
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+          generationStatus: "ready",
+        },
+        {
+          description: "Дуров справа",
+          subject: "Дуров",
+          assetId: "legacy-full-1",
+          asset: "/api/visual/assets/legacy-full-1",
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+          generationStatus: "ready",
+        },
+      ],
+    }],
+  });
+  const store = {
+    load: async () => {
+      const display = expandStoryboardFrames(structureFrames).map((frame) => ({
+        ...frame,
+        visualReady: false,
+      }));
+      // Overlay hybrid/historical and non-eligible samples used by gating checks.
+      const byId = new Map(display.map((frame) => [frame.id, frame]));
+      byId.set("f-hybrid", historicalHybrid.frames[0]);
+      byId.set("f-action", {
+        id: "f-action",
+        layout: "single",
+        dialogue: "",
+        silent: true,
+        sourceRole: "action",
+        visualReady: false,
+        panels: [{ description: "Жест", subject: "Путин", assetId: null }],
+      });
+      byId.set("f-single", {
+        id: "f-single",
+        layout: "single",
+        dialogue: "Один.",
+        speakerPanel: 0,
+        sourceRole: "utterance",
+        visualReady: false,
+        panels: [{ description: "Путин", subject: "Путин", assetId: null }],
+      });
+      return {
+        ...hybridEligibleState({ styleSeedAssetId }),
+        canUndo,
+        frames: [...byId.values()],
+      };
+    },
+    saveIdentity: async ({ characterName, image }) => {
+      counters.identity += 1;
+      assert.equal(characterName, "Путин");
+      assert.equal(image.mime, "image/png");
+      assert.deepEqual(image.bytes, png);
+      return { ok: true };
+    },
+    beginAnchor: async ({ characterName }) => {
+      counters.beginAnchor += 1;
+      return {
+        ok: true,
+        id: `anchor-${characterName}`,
+        identityComment: "",
+        instruction: "match project style",
+        identity: { id: "id-1", mime: "image/png", bytes: png },
+        previous: null,
+        style: styleSeedAssetId ? { id: styleSeedAssetId, mime: "image/png", bytes: png } : null,
+      };
+    },
+    finishAnchor: async () => {
+      counters.finishAnchor += 1;
+      return { ok: true };
+    },
+    approveAnchor: async ({ characterName }) => {
+      counters.approveAnchor += 1;
+      if (!styleSeedAssetId) styleSeedAssetId = "style-seed-first";
+      return { ok: true, styleSeedAssetId };
+    },
+    loadStructure: async () => ({ ok: true, frames: structureFrames }),
+    saveStoryboardEdit: async ({ frames }) => {
+      structureFrames = frames;
+      canUndo = true;
+      return { ok: true };
+    },
+    undoStoryboardEdit: async () => {
+      counters.undo += 1;
+      structureFrames = putinBoard().frames;
+      canUndo = false;
+      return { ok: true, canUndo: false };
+    },
+    ensureHybridHeads: async () => ({ ok: true }),
+    createFrameOperation: async ({ frameId }) => {
+      counters.hybridOps += 1;
+      return {
+        ok: true,
+        operationId: "00000000-0000-4000-8000-0000000000c1",
+        frameId,
+        storyboardResultId: "result-1",
+        storyboardVersionId: "version-1",
+        writeVersion: 1,
+        phase: "queued",
+        status: "running",
+      };
+    },
+    orchestrateHybridFrameOperation: async () => ({ ok: true }),
+    beginPanelGeneration: async ({ frameId }) => {
+      counters.beginPanel += 1;
+      return {
+        ok: true,
+        id: `gen-${frameId}`,
+        storyboardVersionId: "version-1",
+        frame: { id: frameId, layout: "single", speakerPanel: 0 },
+        panel: { description: "Путин", subject: "Путин" },
+        panelIndex: 0,
+        subject: "Путин",
+        instruction: "",
+        refs: {
+          anchor: { id: "anchor", mime: "image/png", bytes: png },
+          previous: null,
+          performance: null,
+          style: styleSeedAssetId ? { id: styleSeedAssetId, mime: "image/png", bytes: png } : null,
+        },
+      };
+    },
+    finishPanelGeneration: async () => ({ ok: true }),
+  };
+  const server = createServer({
+    migrate: false,
+    env: {
+      BASE_URL: "https://provider.example.test",
+      CONTEST_API_TOKEN: "test-token",
+      CONTEST_MODEL: "test-model",
+    },
+    fetchImpl: async () => ({
+      status: 200,
+      ok: true,
+      headers: { get: () => "application/json" },
+      async text() {
+        const board = putinBoard();
+        const frames = board.frames.map((frame, index) => {
+          if (index !== 13) return frame;
+          return {
+            ...frame,
+            layout: "single",
+            panels: [{ description: "Путин на весь кадр" }],
+            speakerPanel: 0,
+          };
+        });
+        return JSON.stringify({
+          choices: [{
+            index: 0,
+            message: {
+              role: "assistant",
+              content: JSON.stringify({ frames, review: [] }),
+            },
+            finish_reason: "stop",
+          }],
+        });
+      },
+    }),
+    projectStore: {
+      loadProject: async () => ({
+        draft: { text: putinBoard().draft },
+        material: { cast: putinBoard().cast },
+        activeMaterialStateId: "ms-1",
+        storyboards: [{ materialStateId: "ms-1", sourceItems: putinBoard().sourceItems }],
+      }),
+    },
+    visualStore: store,
+    imageGenerator: async (input) => {
+      providerCalls.push(input);
+      return { ok: true, image: { bytes: png, mime: "image/png", width: 1, height: 1, byteLength: png.length }, metadata: { model: "test-model" } };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const beforeProvider = providerCalls.length;
+    const identity = await request(port, {
+      method: "POST",
+      path: `/api/visual/characters/${encodeURIComponent("Путин")}/identity`,
+      body: { imageDataUrl: dataUrl, comment: "local identity" },
+    });
+    assert.equal(identity.status, 200);
+    assert.equal(counters.identity, 1);
+    assert.equal(providerCalls.length, beforeProvider, "identity-photo storage must not call the image provider");
+
+    const firstAnchor = await request(port, {
+      method: "POST",
+      path: `/api/visual/characters/${encodeURIComponent("Путин")}/anchor`,
+      body: { instruction: "first base anchor" },
+    });
+    assert.equal(firstAnchor.status, 200);
+    assert.equal(counters.beginAnchor, 1);
+    assert.equal(counters.finishAnchor, 1);
+    assert.equal(providerCalls.length, beforeProvider + 1);
+
+    const approveFirst = await request(port, {
+      method: "POST",
+      path: `/api/visual/characters/${encodeURIComponent("Путин")}/anchors/00000000-0000-4000-8000-000000000222/approve`,
+      body: {},
+    });
+    assert.equal(approveFirst.status, 200);
+    assert.equal(approveFirst.body.styleSeedAssetId, "style-seed-first");
+    assert.equal(styleSeedAssetId, "style-seed-first");
+
+    const secondAnchor = await request(port, {
+      method: "POST",
+      path: `/api/visual/characters/${encodeURIComponent("Дуров")}/anchor`,
+      body: { instruction: "later anchor keeps seed" },
+    });
+    assert.equal(secondAnchor.status, 200);
+    const approveSecond = await request(port, {
+      method: "POST",
+      path: `/api/visual/characters/${encodeURIComponent("Дуров")}/anchors/00000000-0000-4000-8000-000000000223/approve`,
+      body: {},
+    });
+    assert.equal(approveSecond.status, 200);
+    assert.equal(approveSecond.body.styleSeedAssetId, "style-seed-first", "first approved project style seed stays stable");
+
+    const visual = await request(port, { path: "/api/visual" });
+    assert.equal(visual.status, 200);
+    assert.equal(visual.body.canUndo, false);
+    assert.ok(Array.isArray(visual.body.frames));
+    assert.ok(visual.body.frames.some((frame) => frame.layout === "split2" || frame.layout === "single"));
+
+    const edited = await request(port, {
+      method: "POST",
+      path: "/api/visual/storyboard/edit",
+      body: { instruction: "в кадре 14 должен быть только Путин на весь кадр" },
+    });
+    assert.equal(edited.status, 200);
+    const undo = await request(port, {
+      method: "POST",
+      path: "/api/visual/storyboard/undo",
+      body: {},
+    });
+    assert.equal(undo.status, 200);
+    assert.equal(counters.undo, 1);
+
+    const dialogueFrame = {
+      id: "fit-1",
+      layout: "split2",
+      dialogue: "Короткий текст.",
+      speakerPanel: 0,
+      sourceItemId: "u-fit",
+      sourceRole: "utterance",
+      displayBlock: { sourceItemId: "u-fit", start: 0, end: 15 },
+      panels: [
+        { description: "A", subject: "Путин" },
+        { description: "B", subject: "Дуров" },
+      ],
+    };
+    const fitted = compileOverflow([dialogueFrame], () => true);
+    assert.equal(fitted.ok, true);
+    assert.equal(fitted.frames[0].dialogue, "Короткий текст.");
+    assert.equal(fitted.frames[0].speakerPanel, 0);
+
+    const hist = await request(port, { path: "/api/visual" });
+    const histFrame = hist.body.frames.find((frame) => frame.id === "f-hybrid");
+    assert.ok(histFrame);
+    assert.equal(histFrame.visualReady, false, "historical full-panel assets must not imply hybrid Visual readiness");
+    assert.equal(histFrame.hybrid.assemblyStatus, "not-ready");
+    assert.equal(histFrame.panels[0].assetId, "legacy-full-0");
+
+    const hybridOpsBefore = counters.hybridOps;
+    const actionGen = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f-action/generate",
+      body: {},
+    });
+    assert.equal(actionGen.status, 200);
+    assert.equal(counters.hybridOps, hybridOpsBefore, "action/silent frames must not enter hybrid accept");
+    assert.equal(Object.hasOwn(actionGen.body, "operationId"), false);
+
+    const singleGen = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f-single/generate",
+      body: {},
+    });
+    assert.equal(singleGen.status, 200);
+    assert.equal(counters.hybridOps, hybridOpsBefore, "single-panel ordinary frames remain non-hybrid");
+    assert.equal(Object.hasOwn(singleGen.body, "operationId"), false);
+    assert.ok(counters.beginPanel >= 1);
+
+    const eligible = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f-hybrid/generate",
+      body: {},
+    });
+    assert.equal(eligible.status, 202);
+    assert.equal(counters.hybridOps, hybridOpsBefore + 1);
+    assert.ok(eligible.body.operationId);
+  } finally {
+    await close(server);
+  }
+});
