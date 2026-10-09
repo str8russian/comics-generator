@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { inspectImage } from "./image-info.mjs";
+import { normalizeProviderOutcome, resolveImageProviderConfig } from "./image-provider.mjs";
 import { extractChromakeyMatte } from "./image-matte.mjs";
 import { buildHybridVisualIntent } from "./visual-intent.mjs";
 import {
@@ -446,6 +447,7 @@ async function loadVisualWithClient(client) {
         ? {
           sceneKey: PRIMARY_SCENE_KEY,
           compositionMode,
+          assemblyStatus,
           activeOperationId: hybridRow?.active_operation_id ?? null,
           operation: operation ? {
             operationId: operation.id,
@@ -1157,97 +1159,111 @@ export async function createSceneBackgroundGeneration(pool, {
   if (!operationId || !styleAssetId || !Number.isInteger(capturedSceneWriteVersion)) {
     return failed("invalid-request");
   }
-  if (!provenance?.compiledPrompt || !provenance?.promptCompilerVersion) {
+  if (!provenance?.compiledPrompt || !provenance?.promptCompilerVersion || !provenance?.model) {
     return failed("invalid-request");
   }
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
-      const operation = await client.query(
-        `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
-        [operationId],
-      );
-      if (operation.rowCount !== 1) {
-        await client.query("ROLLBACK");
-        return failed("not-found", 404);
-      }
-      const op = operation.rows[0];
-      const context = await ensureVersion(client);
-      if (!context
-          || context.version.id !== op.storyboard_version_id
-          || context.result.id !== op.storyboard_result_id) {
-        await client.query("ROLLBACK");
-        return failed("not-found", 404);
-      }
-      const scene = await ensureSceneBackgroundState(client, op.storyboard_version_id);
-      const locked = await client.query(
-        `SELECT * FROM scene_background_state WHERE id = $1 FOR UPDATE`,
-        [scene.id],
-      );
-      const state = locked.rows[0];
-      const claimMatches = state.active_operation_id === operationId
-        && Number(state.write_version) === Number(capturedSceneWriteVersion);
-      if (!claimMatches) {
-        await client.query("ROLLBACK");
-        return failed("conflict", 409);
-      }
-      const generationId = randomUUID();
-      const recordId = randomUUID();
-      await client.query(`
-        INSERT INTO generation_record (
-          id, operation_type, storyboard_result_id, storyboard_version_id,
-          frame_id, scene_key, component_generation_id, operation_id,
-          visual_intent_json, compiled_prompt, prompt_compiler_version,
-          model, generation_settings_json, reference_manifest_json,
-          omitted_references_json, app_git_commit, status
-        ) VALUES (
-          $1, 'scene-background', $2, $3, $4, $5, $6, $7,
-          $8::jsonb, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb, $15, 'pending'
-        )
-      `, [
-        recordId,
-        op.storyboard_result_id,
-        op.storyboard_version_id,
-        op.frame_id,
-        PRIMARY_SCENE_KEY,
-        generationId,
+      const created = await insertSceneBackgroundGeneration(client, {
         operationId,
-        JSON.stringify(provenance.visualIntent ?? {}),
-        String(provenance.compiledPrompt),
-        String(provenance.promptCompilerVersion),
-        provenance.model ?? null,
-        JSON.stringify(provenance.generationSettings ?? {}),
-        JSON.stringify(provenance.referenceManifest ?? []),
-        JSON.stringify(provenance.omittedReferences ?? []),
-        provenance.appGitCommit ?? null,
-      ]);
-      await client.query(`
-        INSERT INTO scene_background_generation (
-          id, scene_background_state_id, parent_generation_id, status,
-          style_asset_id, captured_scene_write_version, generation_record_id, operation_id
-        ) VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)
-      `, [
-        generationId,
-        scene.id,
-        parentGenerationId,
         styleAssetId,
         capturedSceneWriteVersion,
-        recordId,
-        operationId,
-      ]);
+        parentGenerationId,
+        provenance,
+      });
+      if (!created.ok) {
+        await client.query("ROLLBACK");
+        return created;
+      }
       await client.query("COMMIT");
-      return {
-        ok: true,
-        generationId,
-        generationRecordId: recordId,
-        sceneBackgroundStateId: scene.id,
-        capturedSceneWriteVersion,
-        status: "pending",
-      };
+      return created;
     });
   } catch {
     return failed("database", 503);
   }
+}
+
+async function insertSceneBackgroundGeneration(client, {
+  operationId,
+  styleAssetId,
+  capturedSceneWriteVersion,
+  parentGenerationId = null,
+  provenance,
+}) {
+  const operation = await client.query(
+    `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
+    [operationId],
+  );
+  if (operation.rowCount !== 1) return failed("not-found", 404);
+  const op = operation.rows[0];
+  const context = await ensureVersion(client);
+  if (!context
+      || context.version.id !== op.storyboard_version_id
+      || context.result.id !== op.storyboard_result_id) {
+    return failed("not-found", 404);
+  }
+  const scene = await ensureSceneBackgroundState(client, op.storyboard_version_id);
+  const locked = await client.query(
+    `SELECT * FROM scene_background_state WHERE id = $1 FOR UPDATE`,
+    [scene.id],
+  );
+  const state = locked.rows[0];
+  const claimMatches = state.active_operation_id === operationId
+    && Number(state.write_version) === Number(capturedSceneWriteVersion);
+  if (!claimMatches) return failed("conflict", 409);
+  const generationId = randomUUID();
+  const recordId = randomUUID();
+  await client.query(`
+    INSERT INTO generation_record (
+      id, operation_type, storyboard_result_id, storyboard_version_id,
+      frame_id, scene_key, component_generation_id, operation_id,
+      visual_intent_json, compiled_prompt, prompt_compiler_version,
+      model, generation_settings_json, reference_manifest_json,
+      omitted_references_json, app_git_commit, status
+    ) VALUES (
+      $1, 'scene-background', $2, $3, $4, $5, $6, $7,
+      $8::jsonb, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb, $15, 'pending'
+    )
+  `, [
+    recordId,
+    op.storyboard_result_id,
+    op.storyboard_version_id,
+    op.frame_id,
+    PRIMARY_SCENE_KEY,
+    generationId,
+    operationId,
+    JSON.stringify(provenance.visualIntent ?? {}),
+    String(provenance.compiledPrompt),
+    String(provenance.promptCompilerVersion),
+    String(provenance.model),
+    JSON.stringify(provenance.generationSettings ?? {}),
+    JSON.stringify(provenance.referenceManifest ?? []),
+    JSON.stringify(provenance.omittedReferences ?? []),
+    provenance.appGitCommit ?? null,
+  ]);
+  await client.query(`
+    INSERT INTO scene_background_generation (
+      id, scene_background_state_id, parent_generation_id, status,
+      style_asset_id, captured_scene_write_version, generation_record_id, operation_id
+    ) VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)
+  `, [
+    generationId,
+    scene.id,
+    parentGenerationId,
+    styleAssetId,
+    capturedSceneWriteVersion,
+    recordId,
+    operationId,
+  ]);
+  return {
+    ok: true,
+    generationId,
+    generationRecordId: recordId,
+    sceneBackgroundStateId: scene.id,
+    capturedSceneWriteVersion,
+    status: "pending",
+  };
 }
 
 export async function finalizeSceneBackgroundGeneration(pool, {
@@ -1296,24 +1312,33 @@ export async function finalizeSceneBackgroundGeneration(pool, {
       `, [generationId, terminal, errorKind, outputAssetId]);
 
       let advanced = false;
-      if (terminal === "ready") {
-        const scene = await client.query(
-          `SELECT * FROM scene_background_state WHERE id = $1 FOR UPDATE`,
-          [row.scene_background_state_id],
-        );
-        const state = scene.rows[0];
-        const authorityMatches = state.active_operation_id === row.operation_id
-          && Number(state.write_version) === Number(row.captured_scene_write_version);
-        if (authorityMatches) {
-          await client.query(`
-            UPDATE scene_background_state
-            SET current_generation_id = $2,
-                active_operation_id = NULL,
-                updated_at = clock_timestamp()
-            WHERE id = $1
-          `, [state.id, generationId]);
-          advanced = true;
-        }
+      let clearedSceneClaim = false;
+      const scene = await client.query(
+        `SELECT * FROM scene_background_state WHERE id = $1 FOR UPDATE`,
+        [row.scene_background_state_id],
+      );
+      const state = scene.rows[0];
+      const authorityMatches = state.active_operation_id === row.operation_id
+        && Number(state.write_version) === Number(row.captured_scene_write_version);
+      if (terminal === "ready" && authorityMatches) {
+        await client.query(`
+          UPDATE scene_background_state
+          SET current_generation_id = $2,
+              active_operation_id = NULL,
+              updated_at = clock_timestamp()
+          WHERE id = $1
+        `, [state.id, generationId]);
+        advanced = true;
+        clearedSceneClaim = true;
+      } else if (terminal === "failed" && authorityMatches) {
+        // Authoritative failure clears the scene claim but preserves any previous ready pointer.
+        await client.query(`
+          UPDATE scene_background_state
+          SET active_operation_id = NULL,
+              updated_at = clock_timestamp()
+          WHERE id = $1
+        `, [state.id]);
+        clearedSceneClaim = true;
       }
       await client.query("COMMIT");
       return {
@@ -1323,6 +1348,7 @@ export async function finalizeSceneBackgroundGeneration(pool, {
         errorKind,
         outputAssetId,
         advancedCurrentPointer: advanced,
+        clearedSceneClaim,
       };
     });
   } catch (error) {
@@ -1344,7 +1370,7 @@ export async function createCharacterStateGeneration(pool, {
     return failed("invalid-request");
   }
   if (!anchorVersionId || !styleAssetId) return failed("invalid-request");
-  if (!provenance?.compiledPrompt || !provenance?.promptCompilerVersion) {
+  if (!provenance?.compiledPrompt || !provenance?.promptCompilerVersion || !provenance?.model) {
     return failed("invalid-request");
   }
   try {
@@ -1399,7 +1425,7 @@ export async function createCharacterStateGeneration(pool, {
         JSON.stringify(provenance.visualIntent ?? {}),
         String(provenance.compiledPrompt),
         String(provenance.promptCompilerVersion),
-        provenance.model ?? null,
+        String(provenance.model),
         JSON.stringify(provenance.generationSettings ?? {}),
         JSON.stringify(provenance.referenceManifest ?? []),
         JSON.stringify(provenance.omittedReferences ?? []),
@@ -1831,6 +1857,7 @@ async function buildHybridOperationSummary(client, context, frameId, operationRo
     hybrid: {
       sceneKey: PRIMARY_SCENE_KEY,
       compositionMode: hybrid.rows[0]?.composition_mode || "near-frontal-pair",
+      assemblyStatus,
       background: {
         status: backgroundReady
           ? "ready"
@@ -1852,98 +1879,190 @@ async function buildHybridOperationSummary(client, context, frameId, operationRo
   };
 }
 
+async function assertActiveFrameOperation(client, { operationId, frameId = null } = {}) {
+  if (!operationId) return failed("invalid-request");
+  const operation = await client.query(
+    `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
+    [operationId],
+  );
+  if (operation.rowCount !== 1) return failed("not-found", 404);
+  const op = operation.rows[0];
+  const context = await ensureVersion(client);
+  if (!context
+      || context.version.id !== op.storyboard_version_id
+      || context.result.id !== op.storyboard_result_id) {
+    return failed("not-found", 404);
+  }
+  if (frameId && op.frame_id !== frameId) return failed("conflict", 409);
+  if (op.status !== "running") return failed("conflict", 409);
+  const hybrid = await lockFrameHybridState(client, op.storyboard_version_id, op.frame_id);
+  if (hybrid.active_operation_id !== operationId) return failed("conflict", 409);
+  return {
+    ok: true,
+    operation: op,
+    context,
+    writeVersion: Number(op.write_version),
+    frameHybridState: hybrid,
+  };
+}
+
+export async function assertFrameOperationAuthority(pool, { operationId, frameId = null } = {}) {
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      const result = await assertActiveFrameOperation(client, { operationId, frameId });
+      if (!result.ok) {
+        await client.query("ROLLBACK");
+        return result;
+      }
+      await client.query("COMMIT");
+      return {
+        ok: true,
+        operationId,
+        frameId: result.operation.frame_id,
+        writeVersion: result.writeVersion,
+        storyboardVersionId: result.operation.storyboard_version_id,
+        storyboardResultId: result.operation.storyboard_result_id,
+      };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
 /** T017 sole owner: begin background component (provenance before provider I/O). */
 export async function beginSceneBackgroundLifecycle(pool, {
   operationId,
   sceneContinuity = "shared dialogue interior",
   compositionMode = "near-frontal-pair",
   visualIntent = null,
+  env = process.env,
+  providerConfig = null,
+  preferReuse = true,
+  onBeforeCreateGeneration = null,
 } = {}) {
   if (!operationId) return failed("invalid-request");
-  const claim = await claimOrReuseSceneBackground(pool, { operationId, preferReuse: true });
-  if (!claim.ok) return claim;
-  if (claim.mode === "reuse") {
-    return {
-      ok: true,
-      mode: "reuse",
-      claimed: false,
-      currentGenerationId: claim.currentGenerationId,
-      writeVersion: claim.writeVersion,
-      sceneBackgroundStateId: claim.sceneBackgroundStateId,
-    };
-  }
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
-      const operation = await client.query(
-        `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
-        [operationId],
-      );
-      if (operation.rowCount !== 1) {
-        await client.query("ROLLBACK");
-        return failed("not-found", 404);
-      }
-      const op = operation.rows[0];
-      const context = await ensureVersion(client);
-      if (!context
-          || context.version.id !== op.storyboard_version_id
-          || context.result.id !== op.storyboard_result_id) {
-        await client.query("ROLLBACK");
-        return failed("not-found", 404);
-      }
-      const styleAsset = await loadStyleAsset(client, context.result.material_state_id);
-      if (!styleAsset) {
-        await client.query("ROLLBACK");
-        return failed("style-required", 409);
-      }
-      const compiled = compileSceneBackgroundPrompt({
-        sceneContinuity,
-        compositionMode,
-        styleAsset,
-      });
-      if (!compiled.ok) {
-        await client.query("ROLLBACK");
-        return failed(compiled.kind, 409);
-      }
-      const intent = visualIntent || buildHybridVisualIntent({
-        project: { styleSeedAssetId: styleAsset.id },
-        scene: { sceneKey: PRIMARY_SCENE_KEY, continuity: sceneContinuity },
-        frame: { id: op.frame_id, compositionMode, layout: "split2" },
-        panels: [],
-      }).intent;
-      await client.query("COMMIT");
+      try {
+        const authority = await assertActiveFrameOperation(client, { operationId });
+        if (!authority.ok) {
+          await client.query("ROLLBACK");
+          return authority;
+        }
+        const op = authority.operation;
+        const context = authority.context;
+        const styleAsset = await loadStyleAsset(client, context.result.material_state_id);
+        if (!styleAsset) {
+          await client.query("ROLLBACK");
+          return failed("style-required", 409);
+        }
+        const scene = await ensureSceneBackgroundState(client, op.storyboard_version_id);
+        const locked = await client.query(
+          `SELECT * FROM scene_background_state WHERE id = $1 FOR UPDATE`,
+          [scene.id],
+        );
+        const state = locked.rows[0];
+        const ready = preferReuse ? await readySceneBackground(client, state) : null;
+        if (ready) {
+          await client.query("COMMIT");
+          return {
+            ok: true,
+            mode: "reuse",
+            claimed: false,
+            currentGenerationId: ready.id,
+            writeVersion: Number(state.write_version),
+            sceneBackgroundStateId: state.id,
+          };
+        }
 
-      const created = await createSceneBackgroundGeneration(pool, {
-        operationId,
-        styleAssetId: styleAsset.id,
-        capturedSceneWriteVersion: claim.capturedSceneWriteVersion,
-        provenance: {
-          visualIntent: intent,
-          compiledPrompt: compiled.prompt,
-          promptCompilerVersion: compiled.promptCompilerVersion || HYBRID_PROMPT_COMPILER_VERSION,
-          model: null,
-          generationSettings: { aspectRatio: "21:9", component: "scene-background" },
-          referenceManifest: compiled.referenceManifest,
-          omittedReferences: compiled.omittedReferences,
-        },
-      });
-      if (!created.ok) return created;
-      return {
-        ok: true,
-        mode: "generate",
-        claimed: true,
-        generationId: created.generationId,
-        generationRecordId: created.generationRecordId,
-        capturedSceneWriteVersion: created.capturedSceneWriteVersion,
-        prompt: compiled.prompt,
-        images: compiled.images.map((image) => ({
-          id: image.id,
-          mime: image.mime,
-          bytes: image.bytes,
-        })),
-        aspectRatio: "21:9",
-        promptCompilerVersion: compiled.promptCompilerVersion,
-      };
+        const capturedSceneWriteVersion = Number(state.write_version) + 1;
+        await client.query(`
+          UPDATE scene_background_state
+          SET active_operation_id = $2,
+              write_version = $3,
+              updated_at = clock_timestamp()
+          WHERE id = $1
+        `, [state.id, operationId, capturedSceneWriteVersion]);
+
+        const config = resolveImageProviderConfig({
+          env,
+          aspectRatio: "21:9",
+          component: "scene-background",
+          model: providerConfig?.model ?? null,
+          timeoutMs: providerConfig?.timeoutMs ?? null,
+        });
+        if (!config.ok) {
+          await client.query("ROLLBACK");
+          return failed(config.kind, config.kind === "configuration" ? 500 : 400);
+        }
+        const compiled = compileSceneBackgroundPrompt({
+          sceneContinuity,
+          compositionMode,
+          styleAsset,
+        });
+        if (!compiled.ok) {
+          await client.query("ROLLBACK");
+          return failed(compiled.kind, 409);
+        }
+        const intent = visualIntent || buildHybridVisualIntent({
+          project: { styleSeedAssetId: styleAsset.id },
+          scene: { sceneKey: PRIMARY_SCENE_KEY, continuity: sceneContinuity },
+          frame: { id: op.frame_id, compositionMode, layout: "split2" },
+          panels: [],
+        }).intent;
+
+        if (typeof onBeforeCreateGeneration === "function") {
+          await onBeforeCreateGeneration({
+            client,
+            operationId,
+            capturedSceneWriteVersion,
+          });
+        }
+
+        const created = await insertSceneBackgroundGeneration(client, {
+          operationId,
+          styleAssetId: styleAsset.id,
+          capturedSceneWriteVersion,
+          provenance: {
+            visualIntent: intent,
+            compiledPrompt: compiled.prompt,
+            promptCompilerVersion: compiled.promptCompilerVersion || HYBRID_PROMPT_COMPILER_VERSION,
+            model: config.model,
+            generationSettings: config.generationSettings,
+            referenceManifest: compiled.referenceManifest,
+            omittedReferences: compiled.omittedReferences,
+          },
+        });
+        if (!created.ok) {
+          await client.query("ROLLBACK");
+          return created;
+        }
+        await client.query("COMMIT");
+        return {
+          ok: true,
+          mode: "generate",
+          claimed: true,
+          generationId: created.generationId,
+          generationRecordId: created.generationRecordId,
+          capturedSceneWriteVersion,
+          prompt: compiled.prompt,
+          images: compiled.images.map((image) => ({
+            id: image.id,
+            mime: image.mime,
+            bytes: image.bytes,
+          })),
+          aspectRatio: "21:9",
+          model: config.model,
+          generationSettings: config.generationSettings,
+          promptCompilerVersion: compiled.promptCompilerVersion,
+        };
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        if (error?.kind) return failed(error.kind, error.httpStatus || 400);
+        return failed("database", 503);
+      }
     });
   } catch {
     return failed("database", 503);
@@ -1956,18 +2075,19 @@ export async function finalizeSceneBackgroundLifecycle(pool, {
   providerResult,
 } = {}) {
   if (!generationId) return failed("invalid-request");
-  if (!providerResult?.ok) {
+  const outcome = normalizeProviderOutcome(providerResult);
+  if (!outcome.ok) {
     return finalizeSceneBackgroundGeneration(pool, {
       generationId,
       result: {
         ok: false,
-        kind: providerResult?.kind || "provider",
-        providerStatus: providerResult?.providerStatus ?? providerResult?.diagnostics?.providerStatus ?? null,
-        latencyMs: providerResult?.latencyMs ?? null,
+        kind: outcome.kind || "provider",
+        providerStatus: outcome.providerStatus,
+        latencyMs: outcome.latencyMs,
       },
     });
   }
-  if (!imageBytes(providerResult.image)) {
+  if (!imageBytes(outcome.image)) {
     return finalizeSceneBackgroundGeneration(pool, {
       generationId,
       result: { ok: false, kind: "invalid-output" },
@@ -1977,9 +2097,9 @@ export async function finalizeSceneBackgroundLifecycle(pool, {
     generationId,
     result: {
       ok: true,
-      image: providerResult.image,
-      providerStatus: providerResult.providerStatus ?? providerResult.diagnostics?.providerStatus ?? null,
-      latencyMs: providerResult.latencyMs ?? null,
+      image: outcome.image,
+      providerStatus: outcome.providerStatus,
+      latencyMs: outcome.latencyMs,
     },
   });
 }
@@ -1991,123 +2111,165 @@ export async function beginCharacterStateLifecycle(pool, {
   panelIndex,
   compositionMode = "near-frontal-pair",
   visualIntent = null,
+  env = process.env,
+  providerConfig = null,
 } = {}) {
   if (!operationId || !frameId || !Number.isInteger(panelIndex)) return failed("invalid-request");
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
-      const operation = await client.query(
-        `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
-        [operationId],
-      );
-      if (operation.rowCount !== 1) {
-        await client.query("ROLLBACK");
-        return failed("not-found", 404);
-      }
-      const op = operation.rows[0];
-      if (op.frame_id !== frameId) {
-        await client.query("ROLLBACK");
-        return failed("conflict", 409);
-      }
-      const context = await ensureVersion(client);
-      if (!context
-          || context.version.id !== op.storyboard_version_id
-          || context.result.id !== op.storyboard_result_id) {
-        await client.query("ROLLBACK");
-        return failed("not-found", 404);
-      }
-      const cast = await castFor(client, context.result.material_state_id);
-      await ensurePanelRows(client, context, cast);
-      const target = await panelContext(client, frameId, panelIndex);
-      if (!target) {
-        await client.query("ROLLBACK");
-        return failed("not-found", 404);
-      }
-      const subject = target.state.subject;
-      if (!subject) {
-        await client.query("ROLLBACK");
-        return failed("anchor-required", 409);
-      }
-      const styleAsset = await loadStyleAsset(client, context.result.material_state_id);
-      if (!styleAsset) {
-        await client.query("ROLLBACK");
-        return failed("style-required", 409);
-      }
-      const identity = await loadApprovedAnchorAsset(client, context.result.material_state_id, subject);
-      if (!identity) {
-        await client.query("ROLLBACK");
-        return failed("anchor-required", 409);
-      }
-      const frame = expandStoryboardFrames(context.version.frames).find((entry) => entry.id === frameId);
-      const panels = frame?.panels || [];
-      const otherSubjects = [];
-      for (let index = 0; index < panels.length; index += 1) {
-        if (index === panelIndex) continue;
-        const other = await panelContext(client, frameId, index);
-        if (other?.state?.subject && other.state.subject !== subject) {
-          otherSubjects.push(other.state.subject);
+      try {
+        const authority = await assertActiveFrameOperation(client, { operationId, frameId });
+        if (!authority.ok) {
+          await client.query("ROLLBACK");
+          return authority;
         }
-      }
-      const compiled = compileCharacterStatePrompt({
-        characterName: subject,
-        description: panels[panelIndex]?.description || subject,
-        compositionMode,
-        panelIndex,
-        speakerPanel: frame?.speakerPanel ?? null,
-        offscreenOthers: otherSubjects,
-        identityAsset: { id: identity.assetId, mime: identity.mime, bytes: identity.bytes },
-        styleAsset,
-      });
-      if (!compiled.ok) {
-        await client.query("ROLLBACK");
-        return failed(compiled.kind, 409);
-      }
-      const intent = visualIntent || buildHybridVisualIntent({
-        project: { styleSeedAssetId: styleAsset.id },
-        scene: { sceneKey: PRIMARY_SCENE_KEY },
-        frame: { ...frame, id: frameId, compositionMode },
-        panels: panels.map((panel, index) => ({
-          ...panel,
-          panelIndex: index,
-          subject: index === panelIndex ? subject : otherSubjects[0] || panel.subject,
-        })),
-      }).intent;
-      await client.query("COMMIT");
+        const op = authority.operation;
+        const context = authority.context;
+        if (op.scope === "panel" && Number(op.panel_index) !== Number(panelIndex)) {
+          await client.query("ROLLBACK");
+          return failed("conflict", 409);
+        }
+        const cast = await castFor(client, context.result.material_state_id);
+        await ensurePanelRows(client, context, cast);
+        const target = await panelContext(client, frameId, panelIndex);
+        if (!target
+            || target.context.version.id !== op.storyboard_version_id
+            || target.context.result.id !== op.storyboard_result_id) {
+          await client.query("ROLLBACK");
+          return failed("not-found", 404);
+        }
+        const subject = target.state.subject;
+        if (!subject) {
+          await client.query("ROLLBACK");
+          return failed("anchor-required", 409);
+        }
+        const styleAsset = await loadStyleAsset(client, context.result.material_state_id);
+        if (!styleAsset) {
+          await client.query("ROLLBACK");
+          return failed("style-required", 409);
+        }
+        const identity = await loadApprovedAnchorAsset(client, context.result.material_state_id, subject);
+        if (!identity) {
+          await client.query("ROLLBACK");
+          return failed("anchor-required", 409);
+        }
+        const frame = expandStoryboardFrames(context.version.frames).find((entry) => entry.id === frameId);
+        const panels = frame?.panels || [];
+        const otherSubjects = [];
+        for (let index = 0; index < panels.length; index += 1) {
+          if (index === panelIndex) continue;
+          const other = await panelContext(client, frameId, index);
+          if (other?.state?.subject && other.state.subject !== subject) {
+            otherSubjects.push(other.state.subject);
+          }
+        }
+        const config = resolveImageProviderConfig({
+          env,
+          aspectRatio: "4:5",
+          component: "character-state",
+          panelIndex,
+          model: providerConfig?.model ?? null,
+          timeoutMs: providerConfig?.timeoutMs ?? null,
+        });
+        if (!config.ok) {
+          await client.query("ROLLBACK");
+          return failed(config.kind, config.kind === "configuration" ? 500 : 400);
+        }
+        const compiled = compileCharacterStatePrompt({
+          characterName: subject,
+          description: panels[panelIndex]?.description || subject,
+          compositionMode,
+          panelIndex,
+          speakerPanel: frame?.speakerPanel ?? null,
+          offscreenOthers: otherSubjects,
+          identityAsset: { id: identity.assetId, mime: identity.mime, bytes: identity.bytes },
+          styleAsset,
+        });
+        if (!compiled.ok) {
+          await client.query("ROLLBACK");
+          return failed(compiled.kind, 409);
+        }
+        const intent = visualIntent || buildHybridVisualIntent({
+          project: { styleSeedAssetId: styleAsset.id },
+          scene: { sceneKey: PRIMARY_SCENE_KEY },
+          frame: { ...frame, id: frameId, compositionMode },
+          panels: panels.map((panel, index) => ({
+            ...panel,
+            panelIndex: index,
+            subject: index === panelIndex ? subject : otherSubjects[0] || panel.subject,
+          })),
+        }).intent;
 
-      const created = await createCharacterStateGeneration(pool, {
-        operationId,
-        frameId,
-        panelIndex,
-        anchorVersionId: identity.id,
-        styleAssetId: styleAsset.id,
-        parentGenerationId: target.state.current_character_generation_id,
-        provenance: {
-          visualIntent: intent,
-          compiledPrompt: compiled.prompt,
-          promptCompilerVersion: compiled.promptCompilerVersion || HYBRID_PROMPT_COMPILER_VERSION,
-          model: null,
-          generationSettings: { aspectRatio: "4:5", component: "character-state", panelIndex },
-          referenceManifest: compiled.referenceManifest,
-          omittedReferences: compiled.omittedReferences,
-        },
-      });
-      if (!created.ok) return created;
-      return {
-        ok: true,
-        mode: "generate",
-        generationId: created.generationId,
-        generationRecordId: created.generationRecordId,
-        panelIndex,
-        subject,
-        prompt: compiled.prompt,
-        images: compiled.images.map((image) => ({
-          id: image.id,
-          mime: image.mime,
-          bytes: image.bytes,
-        })),
-        aspectRatio: "4:5",
-        promptCompilerVersion: compiled.promptCompilerVersion,
-      };
+        const generationId = randomUUID();
+        const recordId = randomUUID();
+        await client.query(`
+          INSERT INTO generation_record (
+            id, operation_type, storyboard_result_id, storyboard_version_id,
+            frame_id, panel_index, scene_key, component_generation_id, operation_id,
+            visual_intent_json, compiled_prompt, prompt_compiler_version,
+            model, generation_settings_json, reference_manifest_json,
+            omitted_references_json, app_git_commit, status
+          ) VALUES (
+            $1, 'character-state', $2, $3, $4, $5, $6, $7, $8,
+            $9::jsonb, $10, $11, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16, 'pending'
+          )
+        `, [
+          recordId,
+          op.storyboard_result_id,
+          op.storyboard_version_id,
+          frameId,
+          panelIndex,
+          PRIMARY_SCENE_KEY,
+          generationId,
+          operationId,
+          JSON.stringify(intent),
+          String(compiled.prompt),
+          String(compiled.promptCompilerVersion || HYBRID_PROMPT_COMPILER_VERSION),
+          config.model,
+          JSON.stringify(config.generationSettings),
+          JSON.stringify(compiled.referenceManifest ?? []),
+          JSON.stringify(compiled.omittedReferences ?? []),
+          null,
+        ]);
+        await client.query(`
+          INSERT INTO character_visual_state_generation (
+            id, panel_visual_state_id, parent_generation_id, anchor_version_id,
+            style_asset_id, status, generation_record_id, operation_id
+          ) VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
+        `, [
+          generationId,
+          target.state.id,
+          target.state.current_character_generation_id,
+          identity.id,
+          styleAsset.id,
+          recordId,
+          operationId,
+        ]);
+        await client.query("COMMIT");
+        return {
+          ok: true,
+          mode: "generate",
+          generationId,
+          generationRecordId: recordId,
+          panelIndex,
+          subject,
+          prompt: compiled.prompt,
+          images: compiled.images.map((image) => ({
+            id: image.id,
+            mime: image.mime,
+            bytes: image.bytes,
+          })),
+          aspectRatio: "4:5",
+          model: config.model,
+          generationSettings: config.generationSettings,
+          promptCompilerVersion: compiled.promptCompilerVersion,
+        };
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        if (error?.kind) return failed(error.kind, error.httpStatus || 400);
+        return failed("database", 503);
+      }
     });
   } catch {
     return failed("database", 503);
@@ -2121,19 +2283,20 @@ export async function finalizeCharacterStateLifecycle(pool, {
   advanceWithOperationId = null,
 } = {}) {
   if (!generationId) return failed("invalid-request");
-  if (!providerResult?.ok) {
+  const outcome = normalizeProviderOutcome(providerResult);
+  if (!outcome.ok) {
     return finalizeCharacterStateGeneration(pool, {
       generationId,
       advanceWithOperationId,
       result: {
         ok: false,
-        kind: providerResult?.kind || "provider",
-        providerStatus: providerResult?.providerStatus ?? providerResult?.diagnostics?.providerStatus ?? null,
-        latencyMs: providerResult?.latencyMs ?? null,
+        kind: outcome.kind || "provider",
+        providerStatus: outcome.providerStatus,
+        latencyMs: outcome.latencyMs,
       },
     });
   }
-  const rawBytes = imageBytes(providerResult.image);
+  const rawBytes = imageBytes(outcome.image);
   if (!rawBytes) {
     return finalizeCharacterStateGeneration(pool, {
       generationId,
@@ -2150,8 +2313,8 @@ export async function finalizeCharacterStateLifecycle(pool, {
         ok: false,
         kind: "matte-failed",
         rawImage: { bytes: matte.rawBytes || rawBytes, mime: "image/png" },
-        providerStatus: providerResult.providerStatus ?? providerResult.diagnostics?.providerStatus ?? null,
-        latencyMs: providerResult.latencyMs ?? null,
+        providerStatus: outcome.providerStatus,
+        latencyMs: outcome.latencyMs,
       },
     });
   }
@@ -2162,8 +2325,8 @@ export async function finalizeCharacterStateLifecycle(pool, {
       ok: true,
       rawImage: { bytes: matte.rawBytes, mime: "image/png" },
       image: { bytes: matte.rgbaBytes, mime: "image/png" },
-      providerStatus: providerResult.providerStatus ?? providerResult.diagnostics?.providerStatus ?? null,
-      latencyMs: providerResult.latencyMs ?? null,
+      providerStatus: outcome.providerStatus,
+      latencyMs: outcome.latencyMs,
     },
   });
 }
@@ -2178,6 +2341,13 @@ export async function evaluateHybridAssembly(pool, { frameId, operationId = null
       if (!context) {
         await client.query("ROLLBACK");
         return failed("not-found", 404);
+      }
+      if (operationId) {
+        const authority = await assertActiveFrameOperation(client, { operationId, frameId });
+        if (!authority.ok) {
+          await client.query("ROLLBACK");
+          return authority;
+        }
       }
       const hybrid = await lockFrameHybridState(client, context.version.id, frameId);
       const scene = await ensureSceneBackgroundState(client, context.version.id);
@@ -2198,15 +2368,12 @@ export async function evaluateHybridAssembly(pool, { frameId, operationId = null
       const requiredCount = frame?.panels?.length ?? panels.rows.length;
       const charactersReady = panels.rows.length >= requiredCount
         && panels.rows.every((row) => row.status === "ready" && row.output_asset_id);
-      // visualReady follows current authoritative pointers. Failed replacements that leave
-      // previous ready pointers untouched keep assembly_status ready.
       const assemblyReady = Boolean(readyBackground && charactersReady);
       await client.query(`
         UPDATE frame_hybrid_state
         SET assembly_status = $3, updated_at = clock_timestamp()
         WHERE storyboard_version_id = $1 AND frame_id = $2
       `, [context.version.id, frameId, assemblyReady ? "ready" : "not-ready"]);
-      void operationId;
       void hybrid;
       await client.query("COMMIT");
       return {
@@ -2223,36 +2390,65 @@ export async function evaluateHybridAssembly(pool, { frameId, operationId = null
   }
 }
 
+async function failOperationConflict(pool, operationId, failures) {
+  await updateFrameOperation(pool, {
+    operationId,
+    phase: "failed",
+    status: "failed",
+    errorKind: "conflict",
+    componentFailures: failures,
+  }).catch(() => {});
+  return { ok: false, kind: "conflict", componentFailures: failures };
+}
+
 /** T019: orchestrate component lifecycles without creating provenance itself. */
 export async function orchestrateHybridFrameOperation(pool, {
   operationId,
   generateImage,
+  env = process.env,
+  providerConfig = null,
 } = {}) {
   if (!operationId || typeof generateImage !== "function") return failed("invalid-request");
   const failures = [];
   try {
-    const operation = await withClient(pool, async (client) => {
-      const result = await client.query(`SELECT * FROM visual_frame_operation WHERE id = $1`, [operationId]);
-      return result.rows[0] ?? null;
-    });
-    if (!operation) return failed("not-found", 404);
-    const frameId = operation.frame_id;
+    const authority = await assertFrameOperationAuthority(pool, { operationId });
+    if (!authority.ok) {
+      if (authority.kind === "conflict") {
+        return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+      }
+      return authority;
+    }
+    const frameId = authority.frameId;
 
     await updateFrameOperation(pool, { operationId, phase: "preparing-background", status: "running" });
-    const background = await beginSceneBackgroundLifecycle(pool, { operationId });
+    const stillPreparing = await assertFrameOperationAuthority(pool, { operationId, frameId });
+    if (!stillPreparing.ok) {
+      return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+    }
+
+    const background = await beginSceneBackgroundLifecycle(pool, {
+      operationId,
+      env,
+      providerConfig,
+    });
     if (!background.ok) {
-      failures.push({ component: "background", kind: background.kind || "provider" });
+      const kind = background.kind || "provider";
+      failures.push({ component: "background", kind });
       await updateFrameOperation(pool, {
         operationId,
         phase: "failed",
         status: "failed",
-        errorKind: background.kind || "provider",
+        errorKind: kind,
         componentFailures: failures,
       });
-      return { ok: false, kind: background.kind || "provider", componentFailures: failures };
+      return { ok: false, kind, componentFailures: failures };
     }
 
     if (background.mode === "generate") {
+      const beforeProvider = await assertFrameOperationAuthority(pool, { operationId, frameId });
+      if (!beforeProvider.ok) {
+        return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+      }
       await updateFrameOperation(pool, { operationId, phase: "generating-background", status: "running" });
       let providerResult;
       try {
@@ -2260,6 +2456,9 @@ export async function orchestrateHybridFrameOperation(pool, {
           prompt: background.prompt,
           images: background.images,
           aspectRatio: background.aspectRatio,
+          model: background.model,
+          component: "scene-background",
+          env,
         });
       } catch {
         providerResult = { ok: false, kind: "provider" };
@@ -2268,8 +2467,13 @@ export async function orchestrateHybridFrameOperation(pool, {
         generationId: background.generationId,
         providerResult,
       });
+      const afterProvider = await assertFrameOperationAuthority(pool, { operationId, frameId });
+      if (!afterProvider.ok) {
+        failures.push({ component: "operation", kind: "conflict" });
+        return failOperationConflict(pool, operationId, failures);
+      }
       if (!finalized.ok || finalized.status === "failed") {
-        const kind = finalized.errorKind || providerResult?.kind || "provider";
+        const kind = finalized.errorKind || normalizeProviderOutcome(providerResult).kind || "provider";
         failures.push({ component: "background", kind });
         await updateFrameOperation(pool, {
           operationId,
@@ -2282,6 +2486,10 @@ export async function orchestrateHybridFrameOperation(pool, {
       }
     }
 
+    const beforeCharacters = await assertFrameOperationAuthority(pool, { operationId, frameId });
+    if (!beforeCharacters.ok) {
+      return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+    }
     await updateFrameOperation(pool, {
       operationId,
       phase: "generating-character-states",
@@ -2295,25 +2503,32 @@ export async function orchestrateHybridFrameOperation(pool, {
     });
 
     for (let panelIndex = 0; panelIndex < panelCount; panelIndex += 1) {
+      const beforePanel = await assertFrameOperationAuthority(pool, { operationId, frameId });
+      if (!beforePanel.ok) {
+        return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+      }
       const started = await beginCharacterStateLifecycle(pool, {
         operationId,
         frameId,
         panelIndex,
+        env,
+        providerConfig,
       });
       if (!started.ok) {
+        const kind = started.kind || "provider";
         failures.push({
           component: "character-state",
           panelIndex,
-          kind: started.kind || "provider",
+          kind,
         });
         await updateFrameOperation(pool, {
           operationId,
           phase: "failed",
           status: "failed",
-          errorKind: started.kind || "provider",
+          errorKind: kind,
           componentFailures: failures,
         });
-        return { ok: false, kind: started.kind || "provider", componentFailures: failures };
+        return { ok: false, kind, componentFailures: failures };
       }
       let providerResult;
       try {
@@ -2321,6 +2536,10 @@ export async function orchestrateHybridFrameOperation(pool, {
           prompt: started.prompt,
           images: started.images,
           aspectRatio: started.aspectRatio,
+          model: started.model,
+          component: "character-state",
+          panelIndex,
+          env,
         });
       } catch {
         providerResult = { ok: false, kind: "provider" };
@@ -2330,8 +2549,12 @@ export async function orchestrateHybridFrameOperation(pool, {
         providerResult,
         advanceWithOperationId: operationId,
       });
+      const afterPanel = await assertFrameOperationAuthority(pool, { operationId, frameId });
+      if (!afterPanel.ok) {
+        return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+      }
       if (!finalized.ok || finalized.status === "failed") {
-        const kind = finalized.errorKind || providerResult?.kind || "provider";
+        const kind = finalized.errorKind || normalizeProviderOutcome(providerResult).kind || "provider";
         failures.push({ component: "character-state", panelIndex, kind });
         await evaluateHybridAssembly(pool, { frameId, operationId });
         await updateFrameOperation(pool, {
@@ -2345,9 +2568,27 @@ export async function orchestrateHybridFrameOperation(pool, {
       }
     }
 
+    const beforeAssemble = await assertFrameOperationAuthority(pool, { operationId, frameId });
+    if (!beforeAssemble.ok) {
+      return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+    }
     await updateFrameOperation(pool, { operationId, phase: "assembling", status: "running" });
     const assembly = await evaluateHybridAssembly(pool, { frameId, operationId });
-    if (!assembly.ok || !assembly.visualReady) {
+    if (!assembly.ok) {
+      if (assembly.kind === "conflict") {
+        return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+      }
+      failures.push({ component: "assembly", kind: assembly.kind || "assembly-failed" });
+      await updateFrameOperation(pool, {
+        operationId,
+        phase: "failed",
+        status: "failed",
+        errorKind: assembly.kind || "assembly-failed",
+        componentFailures: failures,
+      });
+      return { ok: false, kind: assembly.kind || "assembly-failed", componentFailures: failures };
+    }
+    if (!assembly.visualReady) {
       failures.push({ component: "assembly", kind: "assembly-failed" });
       await updateFrameOperation(pool, {
         operationId,
@@ -2359,6 +2600,10 @@ export async function orchestrateHybridFrameOperation(pool, {
       return { ok: false, kind: "assembly-failed", componentFailures: failures };
     }
 
+    const beforeComplete = await assertFrameOperationAuthority(pool, { operationId, frameId });
+    if (!beforeComplete.ok) {
+      return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
+    }
     await updateFrameOperation(pool, {
       operationId,
       phase: "complete",
@@ -2407,6 +2652,7 @@ export function createVisualStore(pool) {
     loadHybridPersistence: (input) => loadHybridPersistence(pool, input),
     updateFrameOperation: (input) => updateFrameOperation(pool, input),
     getFrameOperation: (input) => getFrameOperation(pool, input),
+    assertFrameOperationAuthority: (input) => assertFrameOperationAuthority(pool, input),
     beginSceneBackgroundLifecycle: (input) => beginSceneBackgroundLifecycle(pool, input),
     finalizeSceneBackgroundLifecycle: (input) => finalizeSceneBackgroundLifecycle(pool, input),
     beginCharacterStateLifecycle: (input) => beginCharacterStateLifecycle(pool, input),

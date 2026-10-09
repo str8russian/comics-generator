@@ -1357,6 +1357,7 @@ async function handleHybridFrameAcceptFromParsed({
       }
       await runtime.visualStore.orchestrateHybridFrameOperation({
         operationId,
+        env,
         generateImage: (input) => imageGenerator({
           ...input,
           env,

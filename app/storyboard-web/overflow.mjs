@@ -85,6 +85,8 @@ function panelHybridReady(panel) {
 }
 
 function frameHasHybridAssembly(frame, panels) {
+  const assemblyStatus = frame?.hybrid?.assemblyStatus ?? frame?.assemblyStatus;
+  if (assemblyStatus !== "ready") return false;
   if (frame?.hybrid?.background?.assetId || frame?.hybrid?.background?.asset) {
     return Array.isArray(panels) && panels.length > 0 && panels.every(panelHybridReady);
   }
@@ -96,8 +98,14 @@ function frameHasHybridAssembly(frame, panels) {
 
 function frameVisualReady(frame, panels) {
   if (frameHasHybridAssembly(frame, panels)) return true;
-  if (frame?.hybrid && (frame.hybrid.activeOperationId || frame.hybrid.background || frame.hybrid.panels)) {
-    // After hybrid work begins, do not fall back to historical full-panel assetId readiness.
+  if (frame?.hybrid && (
+    frame.hybrid.activeOperationId
+    || frame.hybrid.background
+    || frame.hybrid.panels
+    || frame.hybrid.assemblyStatus
+  )) {
+    // After hybrid work begins, do not fall back to historical full-panel assetId readiness,
+    // and do not infer success from asset presence alone without assemblyStatus=ready.
     return false;
   }
   return Array.isArray(panels) && panels.length > 0 && panels.every((panel) => Boolean(panel?.assetId));
