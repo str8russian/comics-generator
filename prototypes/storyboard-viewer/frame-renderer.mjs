@@ -40,14 +40,51 @@ function selectedFontSize(dialogue, split, requested) {
   return fontSizeFor(dialogue, split);
 }
 
+function hybridBackgroundUrl(frame) {
+  return frame?.hybrid?.background?.asset
+    || frame?.backgroundAsset
+    || null;
+}
+
+function usesHybridVisualLayers(frame) {
+  if (!frame) return false;
+  const background = hybridBackgroundUrl(frame);
+  if (!background) return false;
+  const panels = frame.panels || [];
+  return panels.length > 0 && panels.every((panel) => panel.characterAsset || panel.characterAssetId);
+}
+
+function characterLayerUrl(panel) {
+  return panel.characterAsset
+    || (panel.characterAssetId ? `/api/visual/assets/${panel.characterAssetId}` : null);
+}
+
+function placementPosition(panel) {
+  if (panel.position) return panel.position;
+  if (Number.isFinite(panel.positionX) && Number.isFinite(panel.positionY)) {
+    return `${panel.positionX}% ${panel.positionY}%`;
+  }
+  return "50% 30%";
+}
+
+function placementAlign(panel) {
+  if (panel.align) return panel.align;
+  return placementPosition(panel);
+}
+
 export function render(frame, options) {
   const mode = options && options.mode === "structure" ? "structure" : "visual";
   const ownerDocument = (options && options.document) || document;
   const panels = frame.panels;
   const split = panels.length > 1;
-  const canvas = el("div", "frame-canvas mode-" + mode, ownerDocument);
+  const hybridVisual = mode === "visual" && usesHybridVisualLayers(frame);
+  const canvas = el("div", "frame-canvas mode-" + mode + (hybridVisual ? " hybrid-visual" : ""), ownerDocument);
   canvas.dataset.layout = frame.layout;
   canvas.dataset.mode = mode;
+  const compositionMode = frame.compositionMode
+    || frame.hybrid?.compositionMode
+    || null;
+  if (compositionMode) canvas.dataset.compositionMode = compositionMode;
   canvas.style.width = FRAME_GEOMETRY.width + "px";
   canvas.style.height = FRAME_GEOMETRY.height + "px";
 
@@ -55,14 +92,34 @@ export function render(frame, options) {
   const dialogue = typeof frame.dialogue === "string" && frame.dialogue.trim() ? frame.dialogue : "";
   strip.style.bottom = dialogue ? (FRAME_GEOMETRY.dialogueBarHeight + "px") : "0";
 
+  if (hybridVisual) {
+    const background = el("img", "scene-background", ownerDocument);
+    background.src = hybridBackgroundUrl(frame);
+    background.alt = "";
+    background.style.bottom = dialogue ? (FRAME_GEOMETRY.dialogueBarHeight + "px") : "0";
+    canvas.append(background);
+  }
+
   panels.forEach((panel, index) => {
     const column = el("section", "panel", ownerDocument);
     column.dataset.panelIndex = String(index);
+    column.style.overflow = "hidden";
     if (index > 0) column.style.borderLeft = FRAME_GEOMETRY.panelGutter + "px solid " + FRAME_BG;
     if (mode === "structure") {
       const description = el("p", "panel-description", ownerDocument);
       description.textContent = panel.description || "";
       column.append(description);
+    } else if (hybridVisual) {
+      column.style.background = "transparent";
+      const character = el("img", "character-layer", ownerDocument);
+      character.src = characterLayerUrl(panel);
+      character.alt = panel.subject + ". " + panel.role + ". " + panel.description;
+      const position = placementPosition(panel);
+      const align = placementAlign(panel);
+      character.style.objectPosition = position;
+      character.style.transformOrigin = align;
+      character.style.transform = "scale(" + panel.zoom + ")";
+      column.append(character);
     } else {
       const image = el("img", "panel-asset", ownerDocument);
       image.src = panel.asset;

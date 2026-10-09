@@ -217,11 +217,23 @@ body:not(.show-metadata) .diagnostic { display: none; }
 
 .frame-canvas * { box-sizing: border-box; }
 
+.scene-background {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 0;
+  width: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
 .panel-strip {
   position: absolute;
   top: 0;
   right: 0;
   left: 0;
+  z-index: 1;
   display: flex;
 }
 
@@ -234,7 +246,12 @@ body:not(.show-metadata) .diagnostic { display: none; }
   background: #082b31;
 }
 
-.panel-asset {
+.frame-canvas.hybrid-visual .panel {
+  background: transparent;
+}
+
+.panel-asset,
+.character-layer {
   position: absolute;
   inset: 0;
   width: 100%;

@@ -66,7 +66,40 @@ function copyPanel(panel) {
   return { ...panel };
 }
 
-function frameVisualReady(panels) {
+function copyHybrid(hybrid) {
+  if (!hybrid || typeof hybrid !== "object") return hybrid ?? null;
+  return {
+    ...hybrid,
+    background: hybrid.background ? { ...hybrid.background } : hybrid.background,
+    panels: Array.isArray(hybrid.panels)
+      ? hybrid.panels.map((panel) => ({ ...panel }))
+      : hybrid.panels,
+    operation: hybrid.operation ? { ...hybrid.operation } : hybrid.operation,
+  };
+}
+
+function panelHybridReady(panel) {
+  if (panel?.characterAssetId || panel?.characterAsset) return true;
+  if (panel?.hybrid?.status === "ready" && (panel.hybrid.assetId || panel.hybrid.asset)) return true;
+  return false;
+}
+
+function frameHasHybridAssembly(frame, panels) {
+  if (frame?.hybrid?.background?.assetId || frame?.hybrid?.background?.asset) {
+    return Array.isArray(panels) && panels.length > 0 && panels.every(panelHybridReady);
+  }
+  if (Array.isArray(frame?.hybrid?.panels) && frame.hybrid.panels.length > 0) {
+    return frame.hybrid.panels.every((panel) => panel.status === "ready" && panel.assetId);
+  }
+  return false;
+}
+
+function frameVisualReady(frame, panels) {
+  if (frameHasHybridAssembly(frame, panels)) return true;
+  if (frame?.hybrid && (frame.hybrid.activeOperationId || frame.hybrid.background || frame.hybrid.panels)) {
+    // After hybrid work begins, do not fall back to historical full-panel assetId readiness.
+    return false;
+  }
   return Array.isArray(panels) && panels.length > 0 && panels.every((panel) => Boolean(panel?.assetId));
 }
 
@@ -86,7 +119,11 @@ function piece(frame, text, composition, offset, fontSize) {
       end: offset + text.length,
     },
     fontSize,
-    visualReady: frameVisualReady(panels),
+    fitMode: frame.fitMode,
+    hybrid: copyHybrid(frame.hybrid),
+    gridDescription: frame.gridDescription ?? null,
+    detailedBrief: frame.detailedBrief ?? null,
+    visualReady: frameVisualReady(frame, panels),
   };
 }
 
@@ -147,7 +184,8 @@ function copySilent(frame) {
   const copy = {
     ...frame,
     panels,
-    visualReady: frameVisualReady(panels),
+    hybrid: copyHybrid(frame.hybrid),
+    visualReady: frameVisualReady(frame, panels),
   };
   delete copy.fontSize;
   return copy;
