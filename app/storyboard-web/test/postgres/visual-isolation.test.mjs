@@ -35,7 +35,14 @@ function frames(description = "Абстрактный предмет на сто
 
 async function reset(pool) {
   await pool.query(`
-    TRUNCATE visual_approval, panel_generation, panel_visual_state,
+    TRUNCATE visual_approval,
+             character_visual_state_generation,
+             scene_background_generation,
+             frame_hybrid_state,
+             scene_background_state,
+             generation_record,
+             visual_frame_operation,
+             panel_generation, panel_visual_state,
              project_style_seed, character_anchor_version, character_identity, visual_asset,
              storyboard_head, storyboard_version CASCADE
   `);
@@ -170,6 +177,309 @@ test("panel assignments stay isolated between storyboard results with the same f
     assert.equal(initialB.frames[0].panels[0].assetId, null);
     assert.equal(initialB.frames[0].panels[0].instruction, "");
     assert.equal(initialB.allAnchorsApproved, true, "identity anchors belong to the material, not one storyboard result");
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+async function approveStyleAndAnchor(store) {
+  const identity = await store.saveIdentity({
+    characterName: "Персонаж",
+    image: { bytes: png },
+    comment: "identity",
+  });
+  assert.equal(identity.ok, true);
+  const pending = await store.beginAnchor({ characterName: "Персонаж", instruction: "seed" });
+  assert.equal(pending.ok, true);
+  const finished = await store.finishAnchor({
+    id: pending.id,
+    result: { ok: true, image: { bytes: png }, metadata: {} },
+  });
+  assert.equal(finished.ok, true);
+  const approved = await store.approveAnchor({
+    characterName: "Персонаж",
+    anchorId: pending.id,
+  });
+  assert.equal(approved.ok, true);
+  return {
+    styleAssetId: approved.styleSeedAssetId,
+    anchorVersionId: pending.id,
+  };
+}
+
+function provenance(label) {
+  return {
+    visualIntent: { label },
+    compiledPrompt: `compiled-${label}`,
+    promptCompilerVersion: "hybrid-v1",
+    model: "test-model",
+    generationSettings: { aspectRatio: "5:4" },
+    referenceManifest: [{ role: "style", assetId: "style" }],
+    omittedReferences: [],
+    appGitCommit: "test",
+  };
+}
+
+test("hybrid persistence is additive, isolated, and protects shared primary-scene writes", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-09T11:00:00Z");
+
+    const store = createVisualStore(pool);
+    const authorities = await approveStyleAndAnchor(store);
+    const historical = await store.beginPanelGeneration({
+      frameId: "frame-1",
+      panelIndex: 0,
+      instruction: "historical full panel",
+    });
+    assert.equal(historical.ok, true);
+    const historicalDone = await store.finishPanelGeneration({
+      id: historical.id,
+      result: { ok: true, image: { bytes: png }, metadata: {} },
+    });
+    assert.equal(historicalDone.ok, true);
+    const beforeHybrid = await store.load();
+    assert.equal(beforeHybrid.frames[0].panels[0].assetId, historicalDone.assetId);
+
+    const heads = await store.ensureHybridHeads({
+      frameId: "frame-1",
+      compositionMode: "near-frontal-pair",
+    });
+    assert.equal(heads.ok, true);
+    assert.equal(heads.sceneBackgroundState.sceneKey, "primary");
+    assert.equal(heads.sceneBackgroundState.currentGenerationId, null);
+    assert.equal(heads.frameHybridState.assemblyStatus, "not-ready");
+
+    const kindCheck = await pool.query(`
+      SELECT conname, pg_get_constraintdef(oid) AS def
+      FROM pg_constraint
+      WHERE conrelid = 'visual_asset'::regclass AND conname = 'visual_asset_kind_check'
+    `);
+    assert.match(kindCheck.rows[0].def, /scene-background/);
+    assert.match(kindCheck.rows[0].def, /character-state-raw/);
+    assert.match(kindCheck.rows[0].def, /character-state/);
+
+    const fitDefault = await pool.query(`
+      SELECT fit_mode, current_character_generation_id
+      FROM panel_visual_state
+      WHERE storyboard_version_id = $1 AND frame_id = 'frame-1' AND panel_index = 0
+    `, [heads.storyboardVersionId]);
+    assert.equal(fitDefault.rows[0].fit_mode, "manual");
+    assert.equal(fitDefault.rows[0].current_character_generation_id, null);
+
+    const historicalCount = await pool.query(
+      `SELECT count(*)::int AS count FROM panel_generation WHERE id = $1`,
+      [historical.id],
+    );
+    assert.equal(historicalCount.rows[0].count, 1);
+
+    const opA = await store.createFrameOperation({ frameId: "frame-1", scope: "frame" });
+    assert.equal(opA.ok, true);
+    assert.equal(opA.writeVersion, 1);
+    const claimA = await store.claimOrReuseSceneBackground({
+      operationId: opA.operationId,
+      preferReuse: true,
+    });
+    assert.equal(claimA.ok, true);
+    assert.equal(claimA.mode, "claim");
+    assert.equal(claimA.claimed, true);
+    assert.equal(claimA.writeVersion, 1);
+    assert.equal(claimA.capturedSceneWriteVersion, 1);
+
+    const bgA = await store.createSceneBackgroundGeneration({
+      operationId: opA.operationId,
+      styleAssetId: authorities.styleAssetId,
+      capturedSceneWriteVersion: claimA.capturedSceneWriteVersion,
+      provenance: provenance("bg-a"),
+    });
+    assert.equal(bgA.ok, true);
+    const recordBefore = await pool.query(
+      `SELECT status, compiled_prompt FROM generation_record WHERE id = $1`,
+      [bgA.generationRecordId],
+    );
+    assert.equal(recordBefore.rows[0].status, "pending");
+    assert.equal(recordBefore.rows[0].compiled_prompt, "compiled-bg-a");
+
+    const bgReady = await store.finalizeSceneBackgroundGeneration({
+      generationId: bgA.generationId,
+      result: { ok: true, image: { bytes: png }, latencyMs: 12 },
+    });
+    assert.equal(bgReady.ok, true);
+    assert.equal(bgReady.advancedCurrentPointer, true);
+    const sceneAfterA = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(sceneAfterA.sceneBackgroundState.currentGenerationId, bgA.generationId);
+    assert.equal(sceneAfterA.sceneBackgroundState.activeOperationId, null);
+    assert.equal(sceneAfterA.sceneBackgroundState.writeVersion, 1);
+
+    const secondFinalize = await store.finalizeGenerationRecord({
+      id: bgA.generationRecordId,
+      status: "failed",
+      errorKind: "provider",
+    });
+    assert.equal(secondFinalize.ok, false);
+    assert.equal(secondFinalize.kind, "conflict");
+    const recordAfter = await pool.query(
+      `SELECT status, compiled_prompt FROM generation_record WHERE id = $1`,
+      [bgA.generationRecordId],
+    );
+    assert.equal(recordAfter.rows[0].status, "ready");
+    assert.equal(recordAfter.rows[0].compiled_prompt, "compiled-bg-a");
+
+    const charPending = await store.createCharacterStateGeneration({
+      operationId: opA.operationId,
+      frameId: "frame-1",
+      panelIndex: 0,
+      anchorVersionId: authorities.anchorVersionId,
+      styleAssetId: authorities.styleAssetId,
+      provenance: provenance("char-a"),
+    });
+    assert.equal(charPending.ok, true);
+    const charReady = await store.finalizeCharacterStateGeneration({
+      generationId: charPending.generationId,
+      result: { ok: true, image: { bytes: png }, rawImage: { bytes: png } },
+      advanceWithOperationId: opA.operationId,
+    });
+    assert.equal(charReady.ok, true);
+    assert.equal(charReady.advancedCurrentPointer, true);
+
+    const failedReplacement = await store.createCharacterStateGeneration({
+      operationId: opA.operationId,
+      frameId: "frame-1",
+      panelIndex: 0,
+      anchorVersionId: authorities.anchorVersionId,
+      styleAssetId: authorities.styleAssetId,
+      parentGenerationId: charPending.generationId,
+      provenance: provenance("char-fail"),
+    });
+    assert.equal(failedReplacement.ok, true);
+    const failedDone = await store.finalizeCharacterStateGeneration({
+      generationId: failedReplacement.generationId,
+      result: { ok: false, kind: "matte-failed" },
+      advanceWithOperationId: opA.operationId,
+    });
+    assert.equal(failedDone.ok, true);
+    assert.equal(failedDone.advancedCurrentPointer, false);
+    const afterFail = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(afterFail.panels[0].currentCharacterGenerationId, charPending.generationId);
+    assert.equal(afterFail.panels[0].currentGenerationId, historical.id);
+
+    await insertResult(pool, ids.resultB, "2026-10-09T11:01:00Z");
+    const loadedB = await store.load();
+    assert.equal(loadedB.storyboardResultId, ids.resultB);
+    const headsB = await store.ensureHybridHeads({ frameId: "frame-1" });
+    assert.equal(headsB.ok, true);
+    assert.notEqual(headsB.storyboardVersionId, heads.storyboardVersionId);
+    assert.equal(headsB.sceneBackgroundState.currentGenerationId, null);
+    const persistenceB = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(persistenceB.storyboardResultId, ids.resultB);
+    assert.equal(persistenceB.sceneBackgroundState.currentGenerationId, null);
+    assert.equal(persistenceB.panels[0].currentCharacterGenerationId, null);
+    assert.equal(persistenceB.panels[0].currentGenerationId, null);
+
+    // Shared-background concurrency for two frame operations on the same version-scoped primary scene.
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-09T12:00:00Z");
+    const store2 = createVisualStore(pool);
+    const auth2 = await approveStyleAndAnchor(store2);
+    await store2.ensureHybridHeads({ frameId: "frame-1" });
+    await store2.ensureHybridHeads({ frameId: "frame-2" });
+
+    const opFrame1 = await store2.createFrameOperation({ frameId: "frame-1" });
+    const claim1 = await store2.claimOrReuseSceneBackground({
+      operationId: opFrame1.operationId,
+      preferReuse: false,
+    });
+    assert.equal(claim1.mode, "claim");
+    assert.equal(claim1.writeVersion, 1);
+    const gen1 = await store2.createSceneBackgroundGeneration({
+      operationId: opFrame1.operationId,
+      styleAssetId: auth2.styleAssetId,
+      capturedSceneWriteVersion: claim1.capturedSceneWriteVersion,
+      provenance: provenance("frame1-bg"),
+    });
+    assert.equal(gen1.ok, true);
+    assert.equal(gen1.capturedSceneWriteVersion, 1);
+
+    const opFrame2 = await store2.createFrameOperation({ frameId: "frame-2" });
+    const claim2 = await store2.claimOrReuseSceneBackground({
+      operationId: opFrame2.operationId,
+      preferReuse: false,
+    });
+    assert.equal(claim2.mode, "claim");
+    assert.equal(claim2.writeVersion, 2);
+    assert.equal(claim2.capturedSceneWriteVersion, 2);
+    const gen2 = await store2.createSceneBackgroundGeneration({
+      operationId: opFrame2.operationId,
+      styleAssetId: auth2.styleAssetId,
+      capturedSceneWriteVersion: claim2.capturedSceneWriteVersion,
+      provenance: provenance("frame2-bg"),
+    });
+    assert.equal(gen2.ok, true);
+
+    const staleDone = await store2.finalizeSceneBackgroundGeneration({
+      generationId: gen1.generationId,
+      result: { ok: true, image: { bytes: png } },
+    });
+    assert.equal(staleDone.ok, true);
+    assert.equal(staleDone.status, "ready");
+    assert.equal(staleDone.advancedCurrentPointer, false, "stale scene write must not advance current_generation_id");
+    const staleRecord = await pool.query(
+      `SELECT status FROM generation_record WHERE id = $1`,
+      [gen1.generationRecordId],
+    );
+    assert.equal(staleRecord.rows[0].status, "ready", "stale attempt still finalizes its own provenance");
+
+    const sceneAfterStale = await store2.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(sceneAfterStale.sceneBackgroundState.currentGenerationId, null);
+    assert.equal(sceneAfterStale.sceneBackgroundState.writeVersion, 2);
+    assert.equal(sceneAfterStale.sceneBackgroundState.activeOperationId, opFrame2.operationId);
+
+    const winner = await store2.finalizeSceneBackgroundGeneration({
+      generationId: gen2.generationId,
+      result: { ok: true, image: { bytes: png } },
+    });
+    assert.equal(winner.ok, true);
+    assert.equal(winner.advancedCurrentPointer, true);
+    const sceneAfterWinner = await store2.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(sceneAfterWinner.sceneBackgroundState.currentGenerationId, gen2.generationId);
+    assert.equal(sceneAfterWinner.sceneBackgroundState.activeOperationId, null);
+
+    const reuseOp = await store2.createFrameOperation({ frameId: "frame-1" });
+    const reuse = await store2.claimOrReuseSceneBackground({
+      operationId: reuseOp.operationId,
+      preferReuse: true,
+    });
+    assert.equal(reuse.ok, true);
+    assert.equal(reuse.mode, "reuse");
+    assert.equal(reuse.claimed, false);
+    assert.equal(reuse.currentGenerationId, gen2.generationId);
+    const sceneAfterReuse = await store2.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(sceneAfterReuse.sceneBackgroundState.writeVersion, 2);
+    assert.equal(sceneAfterReuse.sceneBackgroundState.activeOperationId, null);
+
+    const frameOnlyOp = await store2.createFrameOperation({ frameId: "frame-2" });
+    assert.equal(frameOnlyOp.ok, true);
+    const sceneAfterFrameOnly = await store2.loadHybridPersistence({ frameId: "frame-2" });
+    assert.equal(
+      sceneAfterFrameOnly.sceneBackgroundState.currentGenerationId,
+      gen2.generationId,
+      "frame-level operation authority alone must not update the shared background pointer",
+    );
+    assert.equal(sceneAfterFrameOnly.sceneBackgroundState.activeOperationId, null);
+    assert.equal(sceneAfterFrameOnly.frameHybridState.activeOperationId, frameOnlyOp.operationId);
   } finally {
     await reset(pool).catch(() => {});
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
