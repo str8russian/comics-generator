@@ -147,6 +147,23 @@ body[data-busy="true"] button {
   white-space: pre-wrap;
 }
 
+.diagnostics-controls {
+  display: grid;
+  gap: 6px;
+  max-width: 420px;
+}
+
+.diagnostics-status {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #17333a;
+}
+
+.diagnostics-status.is-error {
+  color: #7a1f1f;
+}
+
 .outside-frame[role="status"] {
   font-weight: 600;
   color: #17333a;

@@ -768,6 +768,10 @@ function visualFramePath(pathname) {
       kind: "operation",
     };
   }
+  const diagnostics = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/diagnostics$/);
+  if (diagnostics) {
+    return { frameId: decodeURIComponent(diagnostics[1]), kind: "diagnostics" };
+  }
   const frame = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/generate$/);
   if (frame) return { frameId: decodeURIComponent(frame[1]), kind: "frame" };
   const panel = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/panels\/(\d+)\/(generate|placement)$/);
@@ -813,6 +817,7 @@ function mapHybridFailureKind(kind) {
     "database",
     "conflict",
     "not-found",
+    "stale-version",
   ]);
   return allowed.has(kind) ? kind : "provider";
 }
@@ -1164,6 +1169,82 @@ async function handleHybridOperationPoll(req, res, {
   });
 }
 
+function safeDiagnosticsFilename(frameId, provided) {
+  const sanitized = String(frameId || "frame")
+    .replace(/\.\./g, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/^[._]+/, "")
+    .replace(/\.\./g, "")
+    .slice(0, 80) || "frame";
+  const fallback = `frame-${sanitized}-diagnostics.zip`;
+  if (typeof provided !== "string") return fallback;
+  if (!/^frame-[A-Za-z0-9._-]+-diagnostics\.zip$/.test(provided)) return fallback;
+  if (provided.includes("..")) return fallback;
+  return provided;
+}
+
+async function handleVisualDiagnostics(req, res, {
+  runtime,
+  target,
+  logger,
+  request,
+}) {
+  const started = Date.now();
+  if (req.method !== "GET") {
+    sendEmpty(res, 405, { Allow: "GET" });
+    req.resume();
+    return;
+  }
+  if (typeof runtime.visualStore?.exportFrameDiagnostics !== "function") {
+    logVisual(logger, request, "visual-diagnostics-export", {
+      status: "failed",
+      kind: "not-found",
+      frameId: target.frameId,
+      latencyMs: Date.now() - started,
+    });
+    sendJson(res, 404, { status: "failed", kind: "not-found" });
+    return;
+  }
+  let result;
+  try {
+    result = await runtime.visualStore.exportFrameDiagnostics({ frameId: target.frameId });
+  } catch {
+    result = { ok: false, status: "failed", kind: "database", httpStatus: 503 };
+  }
+  if (!result?.ok) {
+    const kind = mapHybridFailureKind(result?.kind || "not-found");
+    logVisual(logger, request, "visual-diagnostics-export", {
+      status: "failed",
+      kind,
+      frameId: target.frameId,
+      storyboardResultId: result?.storyboardResultId,
+      storyboardVersionId: result?.storyboardVersionId,
+      latencyMs: Date.now() - started,
+    });
+    sendJson(res, result?.httpStatus || 404, { status: "failed", kind });
+    return;
+  }
+  const filename = safeDiagnosticsFilename(target.frameId, result.filename);
+  const bytes = Buffer.isBuffer(result.bytes) ? result.bytes : Buffer.from(result.bytes || []);
+  logVisual(logger, request, "visual-diagnostics-export", {
+    status: "ok",
+    frameId: target.frameId,
+    storyboardResultId: result.storyboardResultId,
+    storyboardVersionId: result.storyboardVersionId,
+    byteLength: bytes.length,
+    entryCount: Number.isInteger(result.entryCount) ? result.entryCount : undefined,
+    latencyMs: Date.now() - started,
+  });
+  res.writeHead(200, {
+    "Content-Type": "application/zip",
+    "Content-Disposition": `attachment; filename="${filename}"`,
+    "Content-Length": bytes.length,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  res.end(bytes);
+}
+
 async function handleVisualGeneration(req, res, {
   runtime,
   target,
@@ -1176,6 +1257,10 @@ async function handleVisualGeneration(req, res, {
   const request = nextRequest ? nextRequest() : undefined;
   if (target.kind === "operation") {
     await handleHybridOperationPoll(req, res, { runtime, target });
+    return;
+  }
+  if (target.kind === "diagnostics") {
+    await handleVisualDiagnostics(req, res, { runtime, target, logger, request });
     return;
   }
   if (target.kind === "placement") {
@@ -1193,6 +1278,7 @@ async function handleVisualGeneration(req, res, {
       positionX: body.payload?.positionX,
       positionY: body.payload?.positionY,
       fitMode: body.payload?.fitMode,
+      expectedStoryboardVersionId: body.payload?.expectedStoryboardVersionId || null,
     });
     logVisual(logger, request, "visual-placement", {
       status: result.ok ? "ok" : "failed",

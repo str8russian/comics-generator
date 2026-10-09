@@ -26,6 +26,8 @@ const detailHost = document.querySelector("#detail-frame");
 const detailOutside = document.querySelector("#detail-outside");
 const closeDetail = document.querySelector("#close-detail");
 const detailPanelControls = document.querySelector("#detail-panel-controls");
+const downloadDiagnostics = document.querySelector("#download-diagnostics");
+const diagnosticsStatus = document.querySelector("#diagnostics-status");
 const nextFrame = document.querySelector("#next-frame");
 const structureTools = document.querySelector("#structure-tools");
 const structureEditForm = document.querySelector("#structure-edit-form");
@@ -88,27 +90,42 @@ const operationPoller = createCanonicalOperationPoller({
 const placementWriter = createPlacementWriter({
   debounceMs: 200,
   send: async (key, placement) => {
-    const [frameId, panelIndexText] = key.split(":");
-    const panelIndex = Number(panelIndexText);
+    const { versionId, frameId, panelIndex } = parsePlacementKey(key);
+    if (versionId && visual?.storyboardVersionId && versionId !== visual.storyboardVersionId) {
+      const error = new Error("stale-version");
+      error.kind = "stale-version";
+      throw error;
+    }
     return fetchJson(
       `/api/visual/frames/${encodeURIComponent(frameId)}/panels/${panelIndex}/placement`,
       {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(placement),
+        body: JSON.stringify({
+          ...placement,
+          expectedStoryboardVersionId: versionId && versionId !== "none" ? versionId : undefined,
+        }),
       },
     );
   },
   onSettled: (outcome) => {
     if (outcome.superseded) return;
-    const [frameId, panelIndexText] = outcome.key.split(":");
-    const panelIndex = Number(panelIndexText);
+    const { versionId, frameId, panelIndex } = parsePlacementKey(outcome.key);
+    if (versionId && visual?.storyboardVersionId && versionId !== visual.storyboardVersionId) {
+      return;
+    }
     const frame = readyFrames.find((entry) => entry.id === frameId);
     if (outcome.ok) {
       CONFIRMED_PLACEMENT.set(outcome.key, { ...outcome.placement });
       if (outcome.shouldApplyResponse && outcome.result?.status === "ready") {
-        applyVisual(outcome.result);
-        showActionNotice("Размещение сохранено без новой генерации.");
+        if (
+          !versionId
+          || !outcome.result.storyboardVersionId
+          || versionId === outcome.result.storyboardVersionId
+        ) {
+          applyVisual(outcome.result);
+          showActionNotice("Размещение сохранено без новой генерации.");
+        }
       }
       return;
     }
@@ -320,6 +337,27 @@ function renderDetailChrome(frame, index) {
   detailOutside.setAttribute("aria-live", "polite");
   detailOutside.setAttribute("role", "status");
   renderPanelControls(frame);
+  if (downloadDiagnostics) {
+    downloadDiagnostics.disabled = false;
+    downloadDiagnostics.dataset.frameId = frame.id;
+  }
+}
+
+if (downloadDiagnostics) {
+  downloadDiagnostics.addEventListener("click", async () => {
+    const frame = readyFrames[detailIndex];
+    const frameId = frame?.id || downloadDiagnostics.dataset.frameId;
+    if (!frameId) {
+      showDiagnosticsStatus("Для этого кадра ещё нет данных генерации для диагностики.", "error");
+      return;
+    }
+    downloadDiagnostics.disabled = true;
+    try {
+      await downloadFrameDiagnostics(frameId);
+    } finally {
+      downloadDiagnostics.disabled = false;
+    }
+  });
 }
 
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
@@ -464,10 +502,20 @@ async function resumeHybridPollingFromVisual(next) {
 
 async function watchHybridOperation(frameId, operationId, index) {
   showActionNotice(hybridPhaseMessage("queued"));
+  const expectedStoryboardVersionId = visual?.storyboardVersionId || null;
   let pollResult;
   try {
     pollResult = await operationPoller.poll(frameId, operationId, {
+      expectedStoryboardVersionId,
+      getCurrentStoryboardVersionId: () => visual?.storyboardVersionId || null,
       onPhase: (payload) => {
+        if (
+          expectedStoryboardVersionId
+          && visual?.storyboardVersionId
+          && expectedStoryboardVersionId !== visual.storyboardVersionId
+        ) {
+          return;
+        }
         if (payload.status === "running") {
           showActionNotice(hybridPhaseMessage(payload.phase));
           const frame = readyFrames.find((entry) => entry.id === frameId);
@@ -643,6 +691,16 @@ function renderCharacterCards() {
 
 function applyVisual(next) {
   if (!next || next.status !== "ready") return;
+  const previousResultId = visual?.storyboardResultId;
+  const previousVersionId = visual?.storyboardVersionId;
+  const identityChanged = previousResultId !== next.storyboardResultId
+    || previousVersionId !== next.storyboardVersionId;
+  if (identityChanged) {
+    CONFIRMED_PLACEMENT.clear();
+    if (typeof placementWriter.clearAll === "function") placementWriter.clearAll();
+    if (typeof operationPoller.stopAll === "function") operationPoller.stopAll();
+    showDiagnosticsStatus("");
+  }
   visual = next;
   const fitted = fitFrames(next.frames || []);
   showReady(fitted, "ready");
@@ -735,7 +793,71 @@ async function generateFrame(frameId, button, index) {
 }
 
 function placementKey(frameId, panelIndex) {
-  return `${frameId}:${panelIndex}`;
+  const versionId = visual?.storyboardVersionId || "none";
+  return `${versionId}::${frameId}::${panelIndex}`;
+}
+
+function parsePlacementKey(key) {
+  const parts = String(key || "").split("::");
+  if (parts.length < 3) {
+    const [frameId, panelIndexText] = String(key || "").split(":");
+    return { versionId: null, frameId, panelIndex: Number(panelIndexText) };
+  }
+  return {
+    versionId: parts[0],
+    frameId: parts[1],
+    panelIndex: Number(parts[2]),
+  };
+}
+
+function showDiagnosticsStatus(text, kind = "info") {
+  if (!diagnosticsStatus) return;
+  diagnosticsStatus.hidden = !text;
+  diagnosticsStatus.textContent = text || "";
+  diagnosticsStatus.classList.toggle("is-error", kind === "error");
+}
+
+function safeDiagnosticsDownloadName(frameId, headerValue) {
+  const fallback = `frame-${String(frameId || "frame").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80) || "frame"}-diagnostics.zip`;
+  if (!headerValue) return fallback;
+  const match = /filename="(frame-[A-Za-z0-9._-]+-diagnostics\.zip)"/i.exec(headerValue);
+  return match?.[1] || fallback;
+}
+
+async function downloadFrameDiagnostics(frameId) {
+  showDiagnosticsStatus("Готовим диагностический архив…");
+  let objectUrl = null;
+  try {
+    const response = await fetch(`/api/visual/frames/${encodeURIComponent(frameId)}/diagnostics`);
+    if (!response.ok) {
+      let payload = null;
+      try { payload = await response.json(); } catch { payload = null; }
+      if (response.status === 404 || payload?.kind === "not-found") {
+        showDiagnosticsStatus("Для этого кадра ещё нет данных генерации для диагностики.", "error");
+        return;
+      }
+      showDiagnosticsStatus(actionMessage(payload?.kind || "request-failed"), "error");
+      return;
+    }
+    const blob = await response.blob();
+    const filename = safeDiagnosticsDownloadName(
+      frameId,
+      response.headers.get("content-disposition"),
+    );
+    objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    link.rel = "noopener";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    showDiagnosticsStatus("Диагностика кадра скачана локально.");
+  } catch {
+    showDiagnosticsStatus(actionMessage("request-failed"), "error");
+  } finally {
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function readPlacement(panel) {

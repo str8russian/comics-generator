@@ -262,6 +262,31 @@ export function createPlacementWriter({
     hasQueued(key) {
       return Boolean(channel(key).queued);
     },
+    clearAll() {
+      for (const [key, entry] of channels) {
+        if (entry.debounceId != null) {
+          cancelSchedule(entry.debounceId);
+          entry.debounceId = null;
+        }
+        settle(entry.debounceWaiters, {
+          ok: false,
+          superseded: true,
+          key,
+          shouldApplyResponse: false,
+          shouldRevert: false,
+        });
+        if (entry.queued?.waiters) {
+          settle(entry.queued.waiters, {
+            ok: false,
+            superseded: true,
+            key,
+            shouldApplyResponse: false,
+            shouldRevert: false,
+          });
+        }
+      }
+      channels.clear();
+    },
   };
 }
 
@@ -288,6 +313,10 @@ export function createCanonicalOperationPoller({
     active.delete(frameId);
   }
 
+  function stopAll() {
+    for (const frameId of [...active.keys()]) stop(frameId);
+  }
+
   function has(frameId) {
     return active.has(frameId);
   }
@@ -296,14 +325,31 @@ export function createCanonicalOperationPoller({
     return active.get(frameId) ?? null;
   }
 
-  async function poll(frameId, operationId, { onPhase } = {}) {
+  async function poll(frameId, operationId, {
+    onPhase,
+    expectedStoryboardVersionId = null,
+    getCurrentStoryboardVersionId = null,
+  } = {}) {
     stop(frameId);
     generationSeq += 1;
     const generation = generationSeq;
     const controller = new AbortController();
-    active.set(frameId, { operationId, controller, generation });
+    active.set(frameId, {
+      operationId,
+      controller,
+      generation,
+      expectedStoryboardVersionId,
+    });
     try {
       while (!controller.signal.aborted) {
+        if (
+          expectedStoryboardVersionId
+          && typeof getCurrentStoryboardVersionId === "function"
+          && getCurrentStoryboardVersionId() !== expectedStoryboardVersionId
+        ) {
+          if (active.get(frameId)?.generation === generation) active.delete(frameId);
+          return { kind: "stale" };
+        }
         let payload;
         try {
           payload = await fetchOperation(frameId, operationId, { signal: controller.signal });
@@ -314,6 +360,14 @@ export function createCanonicalOperationPoller({
         }
         const current = active.get(frameId);
         if (!current || current.generation !== generation || current.operationId !== operationId) {
+          return { kind: "stale" };
+        }
+        if (
+          expectedStoryboardVersionId
+          && payload?.storyboardVersionId
+          && payload.storyboardVersionId !== expectedStoryboardVersionId
+        ) {
+          if (active.get(frameId)?.generation === generation) active.delete(frameId);
           return { kind: "stale" };
         }
         if (payload?.ok === false && payload?.transportError) {
@@ -335,5 +389,5 @@ export function createCanonicalOperationPoller({
     }
   }
 
-  return { stop, has, get, poll, active };
+  return { stop, stopAll, has, get, poll, active };
 }
