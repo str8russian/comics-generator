@@ -95,11 +95,36 @@ async function seedMaterial(pool) {
   `, [ids.source, ids.material]);
 }
 
-async function insertResult(pool, id, createdAt) {
+async function insertResult(pool, id, createdAt, stageFrames = frames()) {
   await pool.query(`
     INSERT INTO storyboard_result (id, material_state_id, status, stage_payload, created_at)
     VALUES ($1, $2, 'checked', $3::jsonb, $4::timestamptz)
-  `, [id, ids.material, JSON.stringify({ frames: frames() }), createdAt]);
+  `, [id, ids.material, JSON.stringify({ frames: stageFrames }), createdAt]);
+}
+
+function splitDialogueFrames() {
+  return [
+    {
+      id: "frame-1",
+      layout: "split2",
+      origin: "source",
+      panels: [{ description: "Персонаж слева" }, { description: "Персонаж справа" }],
+      dialogue: "Раз",
+      speakerPanel: 0,
+      sourceItemId: "item-1",
+      sourceRole: "utterance",
+    },
+    {
+      id: "frame-2",
+      layout: "split2",
+      origin: "source",
+      panels: [{ description: "Персонаж слева снова" }, { description: "Персонаж справа снова" }],
+      dialogue: "Два",
+      speakerPanel: 1,
+      sourceItemId: "item-2",
+      sourceRole: "utterance",
+    },
+  ];
 }
 
 test("panel assignments stay isolated between storyboard results with the same frame and panel keys", {
@@ -480,6 +505,252 @@ test("hybrid persistence is additive, isolated, and protects shared primary-scen
     );
     assert.equal(sceneAfterFrameOnly.sceneBackgroundState.activeOperationId, null);
     assert.equal(sceneAfterFrameOnly.frameHybridState.activeOperationId, frameOnlyOp.operationId);
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+test("hybrid foundation repairs: concurrent heads, atomic write versions, finalize-once, and operation scoping", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-09T13:00:00Z", splitDialogueFrames());
+
+    const store = createVisualStore(pool);
+    const authorities = await approveStyleAndAnchor(store);
+
+    const concurrentHeads = await Promise.all([
+      store.ensureHybridHeads({ frameId: "frame-1" }),
+      store.ensureHybridHeads({ frameId: "frame-2" }),
+      store.ensureHybridHeads({ frameId: "frame-1" }),
+      store.ensureHybridHeads({ frameId: "frame-1" }),
+    ]);
+    for (const head of concurrentHeads) {
+      assert.equal(head.ok, true, "concurrent scene-head initialization must not fail as database");
+      assert.equal(head.sceneBackgroundState.sceneKey, "primary");
+    }
+    const sceneIds = new Set(concurrentHeads.map((head) => head.sceneBackgroundState.id));
+    assert.equal(sceneIds.size, 1);
+    const sceneCount = await pool.query(`
+      SELECT count(*)::int AS count
+      FROM scene_background_state
+      WHERE storyboard_version_id = $1 AND scene_key = 'primary'
+    `, [concurrentHeads[0].storyboardVersionId]);
+    assert.equal(sceneCount.rows[0].count, 1);
+
+    const [opEarly, opLate] = await Promise.all([
+      store.createFrameOperation({ frameId: "frame-1", scope: "frame" }),
+      store.createFrameOperation({ frameId: "frame-1", scope: "frame" }),
+    ]);
+    assert.equal(opEarly.ok, true);
+    assert.equal(opLate.ok, true);
+    assert.notEqual(opEarly.operationId, opLate.operationId);
+    assert.notEqual(opEarly.writeVersion, opLate.writeVersion);
+    const ordered = [opEarly, opLate].sort((a, b) => a.writeVersion - b.writeVersion);
+    assert.equal(ordered[0].writeVersion + 1, ordered[1].writeVersion);
+    const hybridAfterOps = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(hybridAfterOps.frameHybridState.activeOperationId, ordered[1].operationId);
+    assert.notEqual(
+      hybridAfterOps.frameHybridState.activeOperationId,
+      ordered[0].operationId,
+      "earlier operation must not stay authoritative after a later write version wins",
+    );
+
+    const claim = await store.claimOrReuseSceneBackground({
+      operationId: ordered[1].operationId,
+      preferReuse: false,
+    });
+    assert.equal(claim.ok, true);
+    assert.equal(claim.mode, "claim");
+    const pendingBg = await store.createSceneBackgroundGeneration({
+      operationId: ordered[1].operationId,
+      styleAssetId: authorities.styleAssetId,
+      capturedSceneWriteVersion: claim.capturedSceneWriteVersion,
+      provenance: provenance("finalize-once"),
+    });
+    assert.equal(pendingBg.ok, true);
+    const beforeInvalid = await pool.query(
+      `SELECT status, compiled_prompt, prompt_compiler_version, visual_intent_json
+       FROM generation_record WHERE id = $1`,
+      [pendingBg.generationRecordId],
+    );
+    assert.equal(beforeInvalid.rows[0].status, "pending");
+
+    const rejectPending = await store.finalizeGenerationRecord({
+      id: pendingBg.generationRecordId,
+      status: "pending",
+    });
+    assert.equal(rejectPending.ok, false);
+    assert.equal(rejectPending.kind, "invalid-request");
+    const rejectUnknown = await store.finalizeGenerationRecord({
+      id: pendingBg.generationRecordId,
+      status: "complete",
+    });
+    assert.equal(rejectUnknown.ok, false);
+    assert.equal(rejectUnknown.kind, "invalid-request");
+    const rejectMissing = await store.finalizeGenerationRecord({
+      id: pendingBg.generationRecordId,
+    });
+    assert.equal(rejectMissing.ok, false);
+    assert.equal(rejectMissing.kind, "invalid-request");
+    const stillPending = await pool.query(
+      `SELECT status, compiled_prompt, prompt_compiler_version, visual_intent_json
+       FROM generation_record WHERE id = $1`,
+      [pendingBg.generationRecordId],
+    );
+    assert.equal(stillPending.rows[0].status, "pending");
+    assert.equal(stillPending.rows[0].compiled_prompt, beforeInvalid.rows[0].compiled_prompt);
+    assert.equal(
+      stillPending.rows[0].prompt_compiler_version,
+      beforeInvalid.rows[0].prompt_compiler_version,
+    );
+    assert.deepEqual(
+      stillPending.rows[0].visual_intent_json,
+      beforeInvalid.rows[0].visual_intent_json,
+    );
+
+    const readyOnce = await store.finalizeGenerationRecord({
+      id: pendingBg.generationRecordId,
+      status: "ready",
+      outputAssetId: null,
+      latencyMs: 5,
+    });
+    assert.equal(readyOnce.ok, true);
+    assert.equal(readyOnce.record.status, "ready");
+    const secondReady = await store.finalizeGenerationRecord({
+      id: pendingBg.generationRecordId,
+      status: "failed",
+      errorKind: "provider",
+    });
+    assert.equal(secondReady.ok, false);
+    assert.equal(secondReady.kind, "conflict");
+    const immutable = await pool.query(
+      `SELECT status, compiled_prompt, prompt_compiler_version, visual_intent_json::text AS intent
+       FROM generation_record WHERE id = $1`,
+      [pendingBg.generationRecordId],
+    );
+    assert.equal(immutable.rows[0].status, "ready");
+    assert.equal(immutable.rows[0].compiled_prompt, "compiled-finalize-once");
+    assert.equal(immutable.rows[0].prompt_compiler_version, "hybrid-v1");
+
+    const failedOp = await store.createFrameOperation({ frameId: "frame-2" });
+    const failedClaim = await store.claimOrReuseSceneBackground({
+      operationId: failedOp.operationId,
+      preferReuse: false,
+    });
+    assert.equal(failedClaim.ok, true);
+    const pendingFail = await store.createSceneBackgroundGeneration({
+      operationId: failedOp.operationId,
+      styleAssetId: authorities.styleAssetId,
+      capturedSceneWriteVersion: failedClaim.capturedSceneWriteVersion,
+      provenance: provenance("fail-once"),
+    });
+    assert.equal(pendingFail.ok, true);
+    const failOnce = await store.finalizeGenerationRecord({
+      id: pendingFail.generationRecordId,
+      status: "failed",
+      errorKind: "provider",
+    });
+    assert.equal(failOnce.ok, true);
+    assert.equal(failOnce.record.status, "failed");
+    const failAgain = await store.finalizeGenerationRecord({
+      id: pendingFail.generationRecordId,
+      status: "ready",
+    });
+    assert.equal(failAgain.ok, false);
+    assert.equal(failAgain.kind, "conflict");
+
+    // Component-operation scoping
+    const opFrame1 = await store.createFrameOperation({ frameId: "frame-1" });
+    const opFrame2 = await store.createFrameOperation({ frameId: "frame-2" });
+    const wrongFrame = await store.createCharacterStateGeneration({
+      operationId: opFrame1.operationId,
+      frameId: "frame-2",
+      panelIndex: 0,
+      anchorVersionId: authorities.anchorVersionId,
+      styleAssetId: authorities.styleAssetId,
+      provenance: provenance("wrong-frame"),
+    });
+    assert.equal(wrongFrame.ok, false);
+    assert.equal(wrongFrame.kind, "conflict");
+    const noRowsWrongFrame = await pool.query(
+      `SELECT count(*)::int AS count FROM generation_record WHERE compiled_prompt = 'compiled-wrong-frame'`,
+    );
+    assert.equal(noRowsWrongFrame.rows[0].count, 0);
+
+    const panelOp = await store.createFrameOperation({
+      frameId: "frame-1",
+      scope: "panel",
+      panelIndex: 0,
+    });
+    const wrongPanel = await store.createCharacterStateGeneration({
+      operationId: panelOp.operationId,
+      frameId: "frame-1",
+      panelIndex: 1,
+      anchorVersionId: authorities.anchorVersionId,
+      styleAssetId: authorities.styleAssetId,
+      provenance: provenance("wrong-panel"),
+    });
+    assert.equal(wrongPanel.ok, false);
+    assert.equal(wrongPanel.kind, "conflict");
+    const noRowsWrongPanel = await pool.query(
+      `SELECT count(*)::int AS count FROM generation_record WHERE compiled_prompt = 'compiled-wrong-panel'`,
+    );
+    assert.equal(noRowsWrongPanel.rows[0].count, 0);
+
+    const staleClaim = await store.createSceneBackgroundGeneration({
+      operationId: opFrame1.operationId,
+      styleAssetId: authorities.styleAssetId,
+      capturedSceneWriteVersion: 1,
+      provenance: provenance("stale-claim"),
+    });
+    assert.equal(staleClaim.ok, false);
+    assert.equal(staleClaim.kind, "conflict");
+    const noRowsStale = await pool.query(
+      `SELECT count(*)::int AS count FROM generation_record WHERE compiled_prompt = 'compiled-stale-claim'`,
+    );
+    assert.equal(noRowsStale.rows[0].count, 0);
+
+    const matchingClaim = await store.claimOrReuseSceneBackground({
+      operationId: opFrame2.operationId,
+      preferReuse: false,
+    });
+    assert.equal(matchingClaim.ok, true);
+    const mismatchedCapture = await store.createSceneBackgroundGeneration({
+      operationId: opFrame2.operationId,
+      styleAssetId: authorities.styleAssetId,
+      capturedSceneWriteVersion: matchingClaim.capturedSceneWriteVersion + 1,
+      provenance: provenance("mismatched-capture"),
+    });
+    assert.equal(mismatchedCapture.ok, false);
+    assert.equal(mismatchedCapture.kind, "conflict");
+
+    await insertResult(pool, ids.resultB, "2026-10-09T13:01:00Z", splitDialogueFrames());
+    const foreignVersion = await store.createCharacterStateGeneration({
+      operationId: opFrame2.operationId,
+      frameId: "frame-2",
+      panelIndex: 0,
+      anchorVersionId: authorities.anchorVersionId,
+      styleAssetId: authorities.styleAssetId,
+      provenance: provenance("foreign-version"),
+    });
+    assert.equal(foreignVersion.ok, false);
+    assert.equal(foreignVersion.kind, "not-found");
+    const noRowsForeign = await pool.query(
+      `SELECT count(*)::int AS count FROM generation_record WHERE compiled_prompt = 'compiled-foreign-version'`,
+    );
+    assert.equal(noRowsForeign.rows[0].count, 0);
   } finally {
     await reset(pool).catch(() => {});
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});

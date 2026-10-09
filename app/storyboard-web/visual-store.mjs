@@ -780,20 +780,18 @@ const HYBRID_COMPOSITION_MODES = new Set([
 ]);
 
 async function ensureSceneBackgroundState(client, storyboardVersionId) {
+  await client.query(`
+    INSERT INTO scene_background_state (
+      id, storyboard_version_id, scene_key, write_version
+    ) VALUES ($1, $2, $3, 0)
+    ON CONFLICT (storyboard_version_id, scene_key) DO NOTHING
+  `, [randomUUID(), storyboardVersionId, PRIMARY_SCENE_KEY]);
   const existing = await client.query(
     `SELECT * FROM scene_background_state
      WHERE storyboard_version_id = $1 AND scene_key = $2`,
     [storyboardVersionId, PRIMARY_SCENE_KEY],
   );
-  if (existing.rowCount === 1) return existing.rows[0];
-  const id = randomUUID();
-  await client.query(`
-    INSERT INTO scene_background_state (
-      id, storyboard_version_id, scene_key, write_version
-    ) VALUES ($1, $2, $3, 0)
-  `, [id, storyboardVersionId, PRIMARY_SCENE_KEY]);
-  const created = await client.query(`SELECT * FROM scene_background_state WHERE id = $1`, [id]);
-  return created.rows[0];
+  return existing.rows[0];
 }
 
 async function ensureFrameHybridState(client, {
@@ -815,6 +813,16 @@ async function ensureFrameHybridState(client, {
     WHERE storyboard_version_id = $1 AND frame_id = $2
   `, [storyboardVersionId, frameId]);
   return result.rows[0];
+}
+
+async function lockFrameHybridState(client, storyboardVersionId, frameId, compositionMode) {
+  await ensureFrameHybridState(client, { storyboardVersionId, frameId, compositionMode });
+  const locked = await client.query(`
+    SELECT * FROM frame_hybrid_state
+    WHERE storyboard_version_id = $1 AND frame_id = $2
+    FOR UPDATE
+  `, [storyboardVersionId, frameId]);
+  return locked.rows[0];
 }
 
 async function nextFrameOperationWriteVersion(client, storyboardVersionId, frameId) {
@@ -879,10 +887,7 @@ export async function createFrameOperation(pool, {
         await client.query("ROLLBACK");
         return failed("not-found", 404);
       }
-      await ensureFrameHybridState(client, {
-        storyboardVersionId: context.version.id,
-        frameId,
-      });
+      await lockFrameHybridState(client, context.version.id, frameId);
       const writeVersion = await nextFrameOperationWriteVersion(client, context.version.id, frameId);
       const id = randomUUID();
       await client.query(`
@@ -1012,7 +1017,7 @@ export async function createSceneBackgroundGeneration(pool, {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
       const operation = await client.query(
-        `SELECT * FROM visual_frame_operation WHERE id = $1`,
+        `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
         [operationId],
       );
       if (operation.rowCount !== 1) {
@@ -1020,7 +1025,25 @@ export async function createSceneBackgroundGeneration(pool, {
         return failed("not-found", 404);
       }
       const op = operation.rows[0];
+      const context = await ensureVersion(client);
+      if (!context
+          || context.version.id !== op.storyboard_version_id
+          || context.result.id !== op.storyboard_result_id) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
       const scene = await ensureSceneBackgroundState(client, op.storyboard_version_id);
+      const locked = await client.query(
+        `SELECT * FROM scene_background_state WHERE id = $1 FOR UPDATE`,
+        [scene.id],
+      );
+      const state = locked.rows[0];
+      const claimMatches = state.active_operation_id === operationId
+        && Number(state.write_version) === Number(capturedSceneWriteVersion);
+      if (!claimMatches) {
+        await client.query("ROLLBACK");
+        return failed("conflict", 409);
+      }
       const generationId = randomUUID();
       const recordId = randomUUID();
       await client.query(`
@@ -1181,7 +1204,7 @@ export async function createCharacterStateGeneration(pool, {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
       const operation = await client.query(
-        `SELECT * FROM visual_frame_operation WHERE id = $1`,
+        `SELECT * FROM visual_frame_operation WHERE id = $1 FOR UPDATE`,
         [operationId],
       );
       if (operation.rowCount !== 1) {
@@ -1189,8 +1212,18 @@ export async function createCharacterStateGeneration(pool, {
         return failed("not-found", 404);
       }
       const op = operation.rows[0];
+      if (op.frame_id !== frameId) {
+        await client.query("ROLLBACK");
+        return failed("conflict", 409);
+      }
+      if (op.scope === "panel" && Number(op.panel_index) !== Number(panelIndex)) {
+        await client.query("ROLLBACK");
+        return failed("conflict", 409);
+      }
       const target = await panelContext(client, frameId, panelIndex);
-      if (!target || target.context.version.id !== op.storyboard_version_id) {
+      if (!target
+          || target.context.version.id !== op.storyboard_version_id
+          || target.context.result.id !== op.storyboard_result_id) {
         await client.query("ROLLBACK");
         return failed("not-found", 404);
       }
@@ -1354,6 +1387,9 @@ async function finalizeGenerationRecordRow(client, {
   latencyMs = null,
 }) {
   if (!id) return failed("not-found", 404);
+  if (status !== "ready" && status !== "failed") {
+    return failed("invalid-request");
+  }
   const bytes = imageBytes(output);
   const inspected = bytes ? inspectImage(bytes) : null;
   const updated = await client.query(`
@@ -1370,7 +1406,9 @@ async function finalizeGenerationRecordRow(client, {
         output_byte_length = $11,
         finished_at = clock_timestamp()
     WHERE id = $1 AND status = 'pending'
-    RETURNING id, status, compiled_prompt, visual_intent_json, reference_manifest_json
+    RETURNING id, status, compiled_prompt, visual_intent_json, reference_manifest_json,
+              prompt_compiler_version, model, generation_settings_json, omitted_references_json,
+              app_git_commit, operation_type, storyboard_version_id, frame_id
   `, [
     id,
     status,
