@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { inflateSync } from "node:zlib";
 
 const PNG_SIG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 export const IDENTITY_MAX_BYTES = 12 * 1024 * 1024;
@@ -91,6 +92,146 @@ export function inspectImage(value) {
     byteLength: buffer.length,
     sha256: createHash("sha256").update(buffer).digest("hex"),
   };
+}
+
+function readPngChunks(buffer) {
+  const chunks = [];
+  let offset = 8;
+  while (offset + 8 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd + 4 > buffer.length) break;
+    chunks.push({ type, data: buffer.subarray(dataStart, dataEnd) });
+    if (type === "IEND") break;
+    offset = dataEnd + 4;
+  }
+  return chunks;
+}
+
+function paethPredictor(a, b, c) {
+  const p = a + b - c;
+  const pa = Math.abs(p - a);
+  const pb = Math.abs(p - b);
+  const pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+function unfilterRows(raw, width, height, bpp) {
+  const stride = width * bpp;
+  let pos = 0;
+  let prev = Buffer.alloc(stride);
+  const rows = [];
+  for (let y = 0; y < height; y += 1) {
+    if (pos + 1 + stride > raw.length) throw new Error("truncated-idat");
+    const filter = raw[pos];
+    pos += 1;
+    const row = Buffer.from(raw.subarray(pos, pos + stride));
+    pos += stride;
+    if (filter === 1) {
+      for (let i = 0; i < stride; i += 1) row[i] = (row[i] + (i >= bpp ? row[i - bpp] : 0)) & 255;
+    } else if (filter === 2) {
+      for (let i = 0; i < stride; i += 1) row[i] = (row[i] + prev[i]) & 255;
+    } else if (filter === 3) {
+      for (let i = 0; i < stride; i += 1) {
+        const left = i >= bpp ? row[i - bpp] : 0;
+        row[i] = (row[i] + Math.floor((left + prev[i]) / 2)) & 255;
+      }
+    } else if (filter === 4) {
+      for (let i = 0; i < stride; i += 1) {
+        const left = i >= bpp ? row[i - bpp] : 0;
+        const up = prev[i];
+        const upLeft = i >= bpp ? prev[i - bpp] : 0;
+        row[i] = (row[i] + paethPredictor(left, up, upLeft)) & 255;
+      }
+    } else if (filter !== 0) {
+      throw new Error(`unsupported-filter:${filter}`);
+    }
+    rows.push(row);
+    prev = row;
+  }
+  return rows;
+}
+
+/** Inspect PNG IHDR / alpha / transparent samples. MIME alone is never treated as transparency. */
+export function inspectPngAlpha(value) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  const base = inspectImage(buffer);
+  const empty = {
+    ...base,
+    isPng: false,
+    colorType: null,
+    bitDepth: null,
+    hasTrns: false,
+    hasAlphaChannel: false,
+    transparentSampleCount: 0,
+    opaqueSampleCount: 0,
+    partialAlphaSampleCount: 0,
+    minAlpha: null,
+    maxAlpha: null,
+    decodeError: null,
+  };
+  if (base.mime !== "image/png" || !buffer.subarray(0, 8).equals(PNG_SIG)) return empty;
+  if (buffer.length < 33 || buffer.subarray(12, 16).toString("ascii") !== "IHDR") {
+    return { ...empty, isPng: false, decodeError: "missing-ihdr" };
+  }
+  const bitDepth = buffer[24];
+  const colorType = buffer[25];
+  const chunks = readPngChunks(buffer);
+  const hasTrns = chunks.some((chunk) => chunk.type === "tRNS");
+  const hasAlphaChannel = colorType === 4 || colorType === 6;
+  const info = {
+    ...base,
+    isPng: true,
+    colorType,
+    bitDepth,
+    hasTrns,
+    hasAlphaChannel,
+    transparentSampleCount: 0,
+    opaqueSampleCount: 0,
+    partialAlphaSampleCount: 0,
+    minAlpha: null,
+    maxAlpha: null,
+    decodeError: null,
+  };
+  if (!hasAlphaChannel || bitDepth !== 8) return info;
+  try {
+    const idat = Buffer.concat(chunks.filter((chunk) => chunk.type === "IDAT").map((chunk) => chunk.data));
+    const raw = inflateSync(idat);
+    const bpp = colorType === 6 ? 4 : 2;
+    const rows = unfilterRows(raw, base.width, base.height, bpp);
+    let minAlpha = 255;
+    let maxAlpha = 0;
+    for (const row of rows) {
+      for (let x = 0; x < base.width; x += 1) {
+        const alpha = row[x * bpp + (bpp - 1)];
+        if (alpha < minAlpha) minAlpha = alpha;
+        if (alpha > maxAlpha) maxAlpha = alpha;
+        if (alpha === 0) info.transparentSampleCount += 1;
+        else if (alpha === 255) info.opaqueSampleCount += 1;
+        else info.partialAlphaSampleCount += 1;
+      }
+    }
+    info.minAlpha = minAlpha;
+    info.maxAlpha = maxAlpha;
+  } catch (error) {
+    info.decodeError = String(error.message || error);
+  }
+  return info;
+}
+
+export function pngHasUsableAlpha(value) {
+  const info = inspectPngAlpha(value);
+  return Boolean(
+    info.isPng
+    && info.hasAlphaChannel
+    && (info.colorType === 4 || info.colorType === 6)
+    && info.transparentSampleCount > 0
+    && info.decodeError == null,
+  );
 }
 
 function failedImage(kind) {
