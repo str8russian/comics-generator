@@ -1,6 +1,22 @@
 import { createHash } from "node:crypto";
 
 const PNG_SIG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+export const IDENTITY_MAX_BYTES = 12 * 1024 * 1024;
+export const IDENTITY_MAX_BODY_BYTES = Math.ceil(IDENTITY_MAX_BYTES * 4 / 3) + 8192;
+
+const HEIC_BRANDS = new Set(["heic", "heif", "heix", "heim", "heis", "mif1", "msf1"]);
+const DECLARED_MIME = {
+  "image/png": "image/png",
+  "image/jpeg": "image/jpeg",
+  "image/jpg": "image/jpeg",
+  "image/webp": "image/webp",
+};
+const UNSUPPORTED_DECLARED = new Set([
+  "image/heic",
+  "image/heif",
+  "image/heic-sequence",
+  "image/heif-sequence",
+]);
 
 function png(buffer) {
   if (buffer.length < 24 || !buffer.subarray(0, 8).equals(PNG_SIG)) return null;
@@ -54,6 +70,18 @@ function webp(buffer) {
   return { mime: "image/webp", width: null, height: null };
 }
 
+export function isHeicLike(value) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  if (buffer.length < 12) return false;
+  if (buffer.subarray(4, 8).toString("ascii") !== "ftyp") return false;
+  const brand = buffer.subarray(8, 12).toString("ascii").toLowerCase();
+  if (HEIC_BRANDS.has(brand)) return true;
+  for (let offset = 16; offset + 4 <= Math.min(buffer.length, 64); offset += 4) {
+    if (HEIC_BRANDS.has(buffer.subarray(offset, offset + 4).toString("ascii").toLowerCase())) return true;
+  }
+  return false;
+}
+
 export function inspectImage(value) {
   const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
   const info = png(buffer) || jpeg(buffer) || webp(buffer);
@@ -65,21 +93,46 @@ export function inspectImage(value) {
   };
 }
 
-export function parseImageDataUrl(value, maxBytes = 12 * 1024 * 1024) {
-  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$/i.exec(String(value ?? ""));
-  if (!match) return null;
+function failedImage(kind) {
+  return { ok: false, kind };
+}
+
+export function parseIdentityImage(value, maxBytes = IDENTITY_MAX_BYTES) {
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/i.exec(String(value ?? ""));
+  if (!match) return failedImage("invalid-image");
+  const declared = match[1].toLowerCase();
+  if (UNSUPPORTED_DECLARED.has(declared)) return failedImage("unsupported-image-format");
+  const expectedMime = DECLARED_MIME[declared];
+  if (!expectedMime) return failedImage("unsupported-image-format");
   const encoded = match[2].replace(/\s/g, "");
-  if (encoded.length > Math.ceil(maxBytes * 4 / 3) + 8) return null;
+  if (encoded.length > Math.ceil(maxBytes * 4 / 3) + 8) return failedImage("image-too-large");
   let buffer;
   try {
     buffer = Buffer.from(encoded, "base64");
   } catch {
-    return null;
+    return failedImage("invalid-image");
   }
-  if (!buffer.length || buffer.length > maxBytes) return null;
+  if (!buffer.length) return failedImage("invalid-image");
+  if (buffer.length > maxBytes) return failedImage("image-too-large");
+  if (isHeicLike(buffer)) return failedImage("unsupported-image-format");
   const info = inspectImage(buffer);
-  if (!info.mime || info.mime !== match[1].toLowerCase()) return null;
-  return { buffer, ...info };
+  if (!info.mime || info.mime !== expectedMime) return failedImage("invalid-image");
+  return {
+    ok: true,
+    bytes: buffer,
+    buffer,
+    mime: info.mime,
+    width: info.width,
+    height: info.height,
+    byteLength: info.byteLength,
+    sha256: info.sha256,
+  };
+}
+
+export function parseImageDataUrl(value, maxBytes = IDENTITY_MAX_BYTES) {
+  const parsed = parseIdentityImage(value, maxBytes);
+  if (!parsed.ok) return null;
+  return parsed;
 }
 
 export function extensionForMime(mime) {

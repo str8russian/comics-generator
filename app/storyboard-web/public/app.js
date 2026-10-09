@@ -248,8 +248,11 @@ async function fetchJson(path, options = {}) {
     payload = null;
   }
   if (!response.ok) {
-    const error = new Error(payload?.kind || "request-failed");
-    error.kind = payload?.kind || "request-failed";
+    const kind = payload?.kind
+      || (response.status === 413 ? "image-too-large" : null)
+      || (response.status === 409 && payload?.status === "blocked" ? "structure-rejected" : "request-failed");
+    const error = new Error(kind);
+    error.kind = kind;
     error.payload = payload;
     throw error;
   }
@@ -260,7 +263,11 @@ function actionMessage(kind) {
   const messages = {
     "identity-required": "Сначала выберите реальную фотографию персонажа.",
     "anchor-required": "Сначала утвердите базовый образ этого персонажа.",
-    "invalid-image": "Не удалось прочитать изображение. Выберите PNG, JPEG или WebP.",
+    "invalid-image": "Не удалось прочитать изображение. Выберите JPEG, PNG или WebP.",
+    "unsupported-image-format": "Этот формат пока не поддерживается. Выберите JPEG, PNG или WebP.",
+    "image-too-large": "Файл слишком большой. Выберите фото меньшего размера.",
+    "structure-rejected": "Не удалось применить эту правку, не меняя реплики. Опишите изменение кадра иначе.",
+    "invalid-request": "Не удалось прочитать запрос. Проверьте файл или формулировку правки и попробуйте ещё раз.",
     "visual-incomplete": "Сначала создайте изображения для всех панелей.",
     timeout: "Генерация заняла слишком много времени. Попробуйте ещё раз.",
     provider: "Провайдер не завершил генерацию. Уже готовые результаты сохранены.",
@@ -286,10 +293,30 @@ async function runBusy(message, operation) {
   }
 }
 
+const IDENTITY_MAX_BYTES = 12 * 1024 * 1024;
+const IDENTITY_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
+
+function identityFileKind(file) {
+  const name = String(file?.name || "").toLowerCase();
+  const type = String(file?.type || "").toLowerCase();
+  if (type.includes("heic") || type.includes("heif") || /\.(heic|heif)$/.test(name)) {
+    return "unsupported-image-format";
+  }
+  if (Number(file?.size) > IDENTITY_MAX_BYTES) return "image-too-large";
+  if (type && !IDENTITY_TYPES.has(type) && !/\.(jpe?g|png|webp)$/.test(name)) {
+    return "unsupported-image-format";
+  }
+  return null;
+}
+
 function fileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("invalid-image"));
+    reader.onerror = () => {
+      const error = new Error("invalid-image");
+      error.kind = "invalid-image";
+      reject(error);
+    };
     reader.onload = () => resolve(String(reader.result));
     reader.readAsDataURL(file);
   });
@@ -350,7 +377,7 @@ function renderCharacterCards() {
     identityLabel.textContent = character.identity ? "Заменить реальное фото" : "Выбрать реальное фото";
     const identityInput = document.createElement("input");
     identityInput.type = "file";
-    identityInput.accept = "image/png,image/jpeg,image/webp";
+    identityInput.accept = "image/png,image/jpeg,image/jpg,image/webp,.jpg,.jpeg,.png,.webp";
     identityLabel.append(identityInput);
     const comment = document.createElement("textarea");
     comment.placeholder = "Комментарий к внешности и базовому образу";
@@ -363,6 +390,11 @@ function renderCharacterCards() {
       const file = identityInput.files?.[0];
       if (!file) {
         showActionNotice("Выберите локальную фотографию.", "error");
+        return;
+      }
+      const fileKind = identityFileKind(file);
+      if (fileKind) {
+        showActionNotice(actionMessage(fileKind), "error");
         return;
       }
       await runBusy(`Сохраняю фотографию для ${character.name}…`, async () => {

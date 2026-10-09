@@ -9,14 +9,14 @@ import { isEmptyDraft } from "./fidelity.mjs";
 import { interpretDraft } from "./interpret.mjs";
 import { draftInputError, createProjectStore } from "./project-store.mjs";
 import { stageStoryboard } from "./stage.mjs";
-import { parseImageDataUrl } from "./image-info.mjs";
+import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
 import { generateImage } from "./image-provider.mjs";
 import { editStoryboard } from "./storyboard-edit.mjs";
 import { anchorPrompt, aspectRatioForFrame, panelPrompt } from "./visual-model.mjs";
 import { createVisualStore } from "./visual-store.mjs";
 
 export const DEFAULT_MAX_BODY_BYTES = 262144;
-export const IMAGE_MAX_BODY_BYTES = 16 * 1024 * 1024;
+export const IMAGE_MAX_BODY_BYTES = IDENTITY_MAX_BODY_BYTES;
 
 export const routes = [
   { method: "GET", path: "/", file: "app/storyboard-web/public/index.html" },
@@ -782,9 +782,13 @@ async function handleVisualIdentity(req, res, { runtime, characterName }) {
   }
   const body = await readVisualBody(req, res, IMAGE_MAX_BODY_BYTES);
   if (body.done) return;
-  const image = !body.invalid ? parseImageDataUrl(body.payload?.imageDataUrl) : null;
-  if (!image) {
-    sendJson(res, 400, { status: "failed", kind: "invalid-image" });
+  if (body.invalid) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const image = parseIdentityImage(body.payload?.imageDataUrl);
+  if (!image.ok) {
+    sendJson(res, 400, { status: "failed", kind: image.kind });
     return;
   }
   const result = await runtime.visualStore.saveIdentity({
@@ -988,12 +992,13 @@ async function handleVisualGeneration(req, res, {
   sendJson(res, 200, { ...refreshed, generationFailures: failures });
 }
 
-async function handleVisualEdit(req, res, { runtime, env, fetchImpl }) {
+async function handleVisualEdit(req, res, { runtime, env, fetchImpl, logger, nextRequest }) {
   if (req.method !== "POST") {
     sendEmpty(res, 405, { Allow: "POST" });
     req.resume();
     return;
   }
+  const request = nextRequest ? nextRequest() : "visual-edit";
   const body = await readVisualBody(req, res);
   if (body.done) return;
   const instruction = body.invalid ? "" : String(body.payload?.instruction ?? "").trim();
@@ -1022,9 +1027,24 @@ async function handleVisualEdit(req, res, { runtime, env, fetchImpl }) {
     fetchImpl,
   });
   if (!edited.ok) {
-    if (edited.status === "blocked") {
-      sendJson(res, 409, { status: "blocked", failures: publicFailures(edited.failures) });
+    if (edited.status === "blocked" || edited.kind === "structure-rejected") {
+      logLine(logger, {
+        request,
+        event: "visual-edit",
+        status: "blocked",
+        kind: "structure-rejected",
+        http: 409,
+        codes: formatCodes(edited.failures),
+      });
+      sendJson(res, 409, { status: "failed", kind: "structure-rejected" });
     } else {
+      logLine(logger, {
+        request,
+        event: "visual-edit",
+        status: "failed",
+        kind: safeKind(edited.kind),
+        http: edited.httpStatus,
+      });
       sendVisualFailure(res, edited);
     }
     return;
@@ -1151,7 +1171,7 @@ async function handle(req, res, {
     return;
   }
   if (pathname === "/api/visual/storyboard/edit") {
-    await handleVisualEdit(req, res, { runtime, env, fetchImpl });
+    await handleVisualEdit(req, res, { runtime, env, fetchImpl, logger, nextRequest });
     return;
   }
   if (pathname === "/api/visual/storyboard/undo") {

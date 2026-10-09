@@ -108,16 +108,27 @@ async function assetRow(client, assetId) {
   return result.rows[0] ?? null;
 }
 
+function imageBytes(image) {
+  return image?.bytes ?? image?.buffer ?? null;
+}
+
+function invalidImageError() {
+  const error = new Error("invalid-image");
+  error.kind = "invalid-image";
+  return error;
+}
+
 async function insertAsset(client, kind, image) {
-  const inspected = inspectImage(image.bytes ?? image.buffer);
+  const bytes = imageBytes(image);
+  const inspected = bytes ? inspectImage(bytes) : { mime: null };
   if (!inspected.mime || !["image/png", "image/jpeg", "image/webp"].includes(inspected.mime)) {
-    throw new Error("invalid-image");
+    throw invalidImageError();
   }
   const id = randomUUID();
   await client.query(`
     INSERT INTO visual_asset (id, kind, mime, width, height, byte_length, sha256, bytes)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-  `, [id, kind, inspected.mime, inspected.width, inspected.height, inspected.byteLength, inspected.sha256, image.bytes ?? image.buffer]);
+  `, [id, kind, inspected.mime, inspected.width, inspected.height, inspected.byteLength, inspected.sha256, bytes]);
   return { id, ...inspected };
 }
 
@@ -332,7 +343,7 @@ export async function loadVisual(pool) {
 }
 
 export async function saveIdentity(pool, { characterName, image, comment = "" }) {
-  if (!characterName || !image?.bytes || String(comment).length > 4000) return failed("invalid-request");
+  if (!characterName || !imageBytes(image) || String(comment).length > 4000) return failed("invalid-request");
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
@@ -358,7 +369,8 @@ export async function saveIdentity(pool, { characterName, image, comment = "" })
       await client.query("COMMIT");
       return { ok: true, assetId: asset.id };
     });
-  } catch {
+  } catch (error) {
+    if (error?.kind === "invalid-image") return failed("invalid-image");
     return failed("database", 503);
   }
 }
