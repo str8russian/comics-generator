@@ -1,10 +1,14 @@
 import { bindDraftAutosave } from "/draft-autosave.mjs";
 import {
   actionMessage as hybridActionMessage,
+  createCanonicalOperationPoller,
+  createPlacementWriter,
   DEFAULT_PLACEMENT,
   fitPlacement,
   hybridFailureMessage,
   hybridPhaseMessage,
+  POLL_STATUS_RETRIEVAL_FAILURE,
+  startContainedTask,
 } from "/hybrid-ui.mjs";
 import { assessDialogue, compileOverflow, pageState } from "/overflow.mjs";
 import * as FrameRenderer from "/frame-renderer.mjs";
@@ -54,12 +58,73 @@ let castChain = Promise.resolve();
 let visual = null;
 let detailIndex = -1;
 let busy = false;
-/** @type {Map<string, { operationId: string, controller: AbortController, generation: number }>} */
-const activePolls = new Map();
-let pollGeneration = 0;
-/** Debounced placement persistence tokens by frame:panel */
-const placementPersistTimers = new Map();
 const CONFIRMED_PLACEMENT = new Map();
+
+const operationPoller = createCanonicalOperationPoller({
+  fetchOperation: async (frameId, operationId, { signal }) => {
+    const response = await fetch(
+      `/api/visual/frames/${encodeURIComponent(frameId)}/operations/${encodeURIComponent(operationId)}`,
+      { signal },
+    );
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    if (!response.ok) {
+      return {
+        status: "failed",
+        kind: payload?.kind || "not-found",
+        errorKind: payload?.kind || "not-found",
+        operationId,
+        ok: false,
+      };
+    }
+    return payload;
+  },
+});
+
+const placementWriter = createPlacementWriter({
+  debounceMs: 200,
+  send: async (key, placement) => {
+    const [frameId, panelIndexText] = key.split(":");
+    const panelIndex = Number(panelIndexText);
+    return fetchJson(
+      `/api/visual/frames/${encodeURIComponent(frameId)}/panels/${panelIndex}/placement`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(placement),
+      },
+    );
+  },
+  onSettled: (outcome) => {
+    if (outcome.superseded) return;
+    const [frameId, panelIndexText] = outcome.key.split(":");
+    const panelIndex = Number(panelIndexText);
+    const frame = readyFrames.find((entry) => entry.id === frameId);
+    if (outcome.ok) {
+      CONFIRMED_PLACEMENT.set(outcome.key, { ...outcome.placement });
+      if (outcome.shouldApplyResponse && outcome.result?.status === "ready") {
+        applyVisual(outcome.result);
+        showActionNotice("Размещение сохранено без новой генерации.");
+      }
+      return;
+    }
+    if (outcome.shouldRevert) {
+      const confirmed = outcome.confirmed || CONFIRMED_PLACEMENT.get(outcome.key);
+      if (confirmed && frame) {
+        applyLocalPlacement(frame, panelIndex, confirmed);
+        if (detail.open && readyFrames[detailIndex]?.id === frameId) {
+          mountFrame(detailHost, frame, 0.5);
+          renderPanelControls(frame);
+        }
+      }
+      showActionNotice(actionMessage(outcome.error?.kind || "request-failed"), "error");
+    }
+  },
+});
 
 export const draftAutosave = bindDraftAutosave({
   textarea: draftField,
@@ -376,56 +441,7 @@ function fitFrames(frames) {
 }
 
 function stopPoll(frameId) {
-  const entry = activePolls.get(frameId);
-  if (!entry) return;
-  entry.controller.abort();
-  activePolls.delete(frameId);
-}
-
-function stopAllPolls() {
-  for (const frameId of [...activePolls.keys()]) stopPoll(frameId);
-}
-
-async function pollHybridOperation(frameId, operationId, { onPhase } = {}) {
-  stopPoll(frameId);
-  pollGeneration += 1;
-  const generation = pollGeneration;
-  const controller = new AbortController();
-  activePolls.set(frameId, { operationId, controller, generation });
-  try {
-    while (!controller.signal.aborted) {
-      const response = await fetch(
-        `/api/visual/frames/${encodeURIComponent(frameId)}/operations/${encodeURIComponent(operationId)}`,
-        { signal: controller.signal },
-      );
-      let payload = null;
-      try {
-        payload = await response.json();
-      } catch {
-        payload = null;
-      }
-      const current = activePolls.get(frameId);
-      if (!current || current.generation !== generation || current.operationId !== operationId) {
-        return null;
-      }
-      if (!response.ok) {
-        const kind = payload?.kind || "not-found";
-        return { ok: false, kind, status: "failed", operationId };
-      }
-      if (typeof onPhase === "function") onPhase(payload);
-      if (payload.status === "complete" || payload.status === "failed") {
-        return payload;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  } catch (error) {
-    if (error?.name === "AbortError") return null;
-    throw error;
-  } finally {
-    const current = activePolls.get(frameId);
-    if (current?.generation === generation) activePolls.delete(frameId);
-  }
-  return null;
+  operationPoller.stop(frameId);
 }
 
 async function resumeHybridPollingFromVisual(next) {
@@ -433,34 +449,59 @@ async function resumeHybridPollingFromVisual(next) {
     const operationId = frame.hybrid?.activeOperationId;
     const status = frame.hybrid?.operation?.status;
     if (!operationId || status !== "running") continue;
-    if (activePolls.has(frame.id)) continue;
+    if (operationPoller.has(frame.id)) continue;
     const index = (next.frames || []).findIndex((entry) => entry.id === frame.id);
-    void watchHybridOperation(frame.id, operationId, index);
+    startContainedTask(
+      () => watchHybridOperation(frame.id, operationId, index),
+      {
+        onError: () => {
+          showActionNotice(POLL_STATUS_RETRIEVAL_FAILURE, "error");
+        },
+      },
+    );
   }
 }
 
 async function watchHybridOperation(frameId, operationId, index) {
   showActionNotice(hybridPhaseMessage("queued"));
-  const terminal = await pollHybridOperation(frameId, operationId, {
-    onPhase: (payload) => {
-      if (payload.status === "running") {
-        showActionNotice(hybridPhaseMessage(payload.phase));
-        const frame = readyFrames.find((entry) => entry.id === frameId);
-        if (frame?.hybrid) {
-          frame.hybrid.operation = {
-            operationId: payload.operationId,
-            phase: payload.phase,
-            status: payload.status,
-            errorKind: payload.errorKind,
-            writeVersion: payload.writeVersion,
-          };
+  let pollResult;
+  try {
+    pollResult = await operationPoller.poll(frameId, operationId, {
+      onPhase: (payload) => {
+        if (payload.status === "running") {
+          showActionNotice(hybridPhaseMessage(payload.phase));
+          const frame = readyFrames.find((entry) => entry.id === frameId);
+          if (frame?.hybrid) {
+            frame.hybrid.operation = {
+              operationId: payload.operationId,
+              phase: payload.phase,
+              status: payload.status,
+              errorKind: payload.errorKind,
+              writeVersion: payload.writeVersion,
+            };
+          }
+          if (detail.open && detailIndex >= 0 && readyFrames[detailIndex]?.id === frameId) {
+            renderDetailChrome(readyFrames[detailIndex], detailIndex);
+          }
         }
-        if (detail.open && detailIndex >= 0 && readyFrames[detailIndex]?.id === frameId) {
-          renderDetailChrome(readyFrames[detailIndex], detailIndex);
-        }
-      }
-    },
-  });
+      },
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    operationPoller.stop(frameId);
+    showActionNotice(POLL_STATUS_RETRIEVAL_FAILURE, "error");
+    return;
+  }
+
+  if (!pollResult || pollResult.kind === "aborted" || pollResult.kind === "stale") return;
+
+  if (pollResult.kind === "transport-error") {
+    // Client could not poll; do not mark the persisted generation failed.
+    showActionNotice(POLL_STATUS_RETRIEVAL_FAILURE, "error");
+    return;
+  }
+
+  const terminal = pollResult.payload;
   if (!terminal) return;
   try {
     const refreshed = await fetchJson("/api/visual");
@@ -726,40 +767,16 @@ function applyLocalPlacement(frame, panelIndex, placement) {
 
 async function persistPlacement(frameId, panelIndex, placement) {
   const key = placementKey(frameId, panelIndex);
-  const existing = placementPersistTimers.get(key);
-  if (existing) clearTimeout(existing.timer);
-  return new Promise((resolve) => {
-    const timer = setTimeout(async () => {
-      placementPersistTimers.delete(key);
-      try {
-        const next = await fetchJson(
-          `/api/visual/frames/${encodeURIComponent(frameId)}/panels/${panelIndex}/placement`,
-          {
-            method: "PATCH",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(placement),
-          },
-        );
-        CONFIRMED_PLACEMENT.set(key, { ...placement });
-        applyVisual(next);
-        showActionNotice("Размещение сохранено без новой генерации.");
-        resolve(true);
-      } catch (error) {
-        const confirmed = CONFIRMED_PLACEMENT.get(key);
-        const frame = readyFrames.find((entry) => entry.id === frameId);
-        if (confirmed && frame) {
-          applyLocalPlacement(frame, panelIndex, confirmed);
-          if (detail.open && readyFrames[detailIndex]?.id === frameId) {
-            mountFrame(detailHost, frame, 0.5);
-            renderPanelControls(frame);
-          }
-        }
-        showActionNotice(actionMessage(error?.kind || "request-failed"), "error");
-        resolve(false);
-      }
-    }, 200);
-    placementPersistTimers.set(key, { timer });
-  });
+  if (!CONFIRMED_PLACEMENT.has(key)) {
+    placementWriter.setConfirmed(key, placement);
+    CONFIRMED_PLACEMENT.set(key, { ...placement });
+  }
+  const outcome = await placementWriter.enqueue(key, placement);
+  if (outcome.shouldRevert && outcome.error) {
+    // Notice/revert handled in onSettled; surface boolean for callers.
+    return false;
+  }
+  return Boolean(outcome.ok);
 }
 
 function renderPanelControls(frame) {
