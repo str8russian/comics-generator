@@ -1295,6 +1295,597 @@ test("deferred hybrid provider rejection finalizes failed without unhandled reje
   }
 });
 
+test("hybrid UI copy maps phases and actionable Russian failure kinds", async () => {
+  const {
+    hybridPhaseMessage,
+    hybridFailureMessage,
+    actionMessage,
+  } = await import("../public/hybrid-ui.mjs");
+  assert.equal(hybridPhaseMessage("queued"), "Подготавливаем кадр…");
+  assert.equal(hybridPhaseMessage("preparing-background"), "Подготавливаем кадр…");
+  assert.equal(hybridPhaseMessage("generating-background"), "Создаём фон…");
+  assert.equal(hybridPhaseMessage("generating-character-states"), "Создаём персонажей…");
+  assert.equal(hybridPhaseMessage("assembling"), "Собираем кадр…");
+  assert.equal(hybridPhaseMessage("complete"), "Изображения готовы.");
+  assert.match(hybridFailureMessage("matte-failed"), /персонаж/i);
+  assert.match(hybridFailureMessage("style-required"), /стиль/i);
+  assert.match(hybridFailureMessage("anchor-required"), /образ/i);
+  assert.match(hybridFailureMessage("frame-generation-required"), /кадр/i);
+  assert.match(hybridFailureMessage("assembly-failed"), /собрать|частей/i);
+  assert.match(hybridFailureMessage("timeout"), /повторите/i);
+  assert.match(hybridFailureMessage("conflict"), /новая генерация|актуальное/i);
+  assert.equal(actionMessage("provider"), hybridFailureMessage("provider"));
+  assert.equal(hybridFailureMessage("matte-failed").includes("try again"), false);
+});
+
+test("reload restore resumes only running hybrid operations without inventing progress", async () => {
+  const operationId = "00000000-0000-4000-8000-0000000000a1";
+  let loadCalls = 0;
+  const loadState = hybridEligibleState({
+    frames: [{
+      ...hybridEligibleState().frames[0],
+      visualReady: false,
+      hybrid: {
+        ...hybridEligibleState().frames[0].hybrid,
+        activeOperationId: operationId,
+        assemblyStatus: "not-ready",
+        background: { status: "ready", assetId: "bg-1", asset: "/api/visual/assets/bg-1" },
+        operation: {
+          operationId,
+          phase: "generating-character-states",
+          status: "running",
+          errorKind: null,
+          writeVersion: 2,
+        },
+        panels: [
+          {
+            panelIndex: 0,
+            subject: "Путин",
+            status: "ready",
+            assetId: "char-0",
+            zoom: 1,
+            positionX: 50,
+            positionY: 30,
+            fitMode: "manual",
+          },
+          {
+            panelIndex: 1,
+            subject: "Дуров",
+            status: "pending",
+            assetId: null,
+            zoom: 1,
+            positionX: 50,
+            positionY: 30,
+            fitMode: "manual",
+          },
+        ],
+      },
+      panels: hybridEligibleState().frames[0].panels.map((panel, index) => ({
+        ...panel,
+        characterAssetId: index === 0 ? "char-0" : null,
+        characterAsset: index === 0 ? "/api/visual/assets/char-0" : null,
+      })),
+    }],
+  });
+  assert.equal(loadState.frames[0].visualReady, false, "partial hybrid must not be Visual-ready");
+  const op = {
+    operationId,
+    frameId: "f-hybrid",
+    storyboardVersionId: "version-1",
+    writeVersion: 2,
+    phase: "generating-character-states",
+    status: "running",
+    errorKind: null,
+    componentFailures: [],
+    visualReady: false,
+    hybrid: loadState.frames[0].hybrid,
+  };
+  const store = {
+    load: async () => {
+      loadCalls += 1;
+      return loadState;
+    },
+    createFrameOperation: async () => {
+      throw new Error("reload must not create a new operation");
+    },
+    getFrameOperation: async () => ({ ok: true, ...op }),
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async () => {
+      throw new Error("reload path must not call the image provider");
+    },
+  });
+  const port = await listen(server);
+  try {
+    const visual = await request(port, { path: "/api/visual" });
+    assert.equal(visual.status, 200);
+    assert.equal(visual.body.frames[0].hybrid.activeOperationId, operationId);
+    assert.equal(visual.body.frames[0].hybrid.operation.status, "running");
+    assert.equal(visual.body.frames[0].visualReady, false);
+    assert.equal(loadCalls, 1);
+
+    const polled = await request(port, {
+      path: `/api/visual/frames/f-hybrid/operations/${operationId}`,
+    });
+    assert.equal(polled.status, 200);
+    assert.equal(polled.body.phase, "generating-character-states");
+    assert.equal(Object.hasOwn(polled.body, "percent"), false);
+    assert.equal(Object.hasOwn(polled.body, "progress"), false);
+
+    // Terminal failed operation stays terminal; GET /api/visual must not restart work.
+    op.status = "failed";
+    op.phase = "failed";
+    op.errorKind = "matte-failed";
+    loadState.frames[0].hybrid.operation = {
+      operationId,
+      phase: "failed",
+      status: "failed",
+      errorKind: "matte-failed",
+      writeVersion: 2,
+    };
+    loadState.frames[0].hybrid.background = {
+      status: "ready",
+      assetId: "bg-prev",
+      asset: "/api/visual/assets/bg-prev",
+    };
+    const afterFail = await request(port, { path: "/api/visual" });
+    assert.equal(afterFail.body.frames[0].hybrid.operation.status, "failed");
+    assert.equal(afterFail.body.frames[0].hybrid.background.assetId, "bg-prev");
+  } finally {
+    await close(server);
+  }
+});
+
+test("hybrid allowlisted logs exclude prompts dialogue credentials and image bytes", async () => {
+  const logs = [];
+  const operationId = "00000000-0000-4000-8000-0000000000l1";
+  const op = {
+    operationId,
+    frameId: "f-hybrid",
+    storyboardVersionId: "version-1",
+    writeVersion: 1,
+    phase: "queued",
+    status: "running",
+    errorKind: null,
+    componentFailures: [],
+    visualReady: false,
+    hybrid: hybridEligibleState().frames[0].hybrid,
+  };
+  const store = {
+    load: async () => hybridEligibleState(),
+    ensureHybridHeads: async () => ({ ok: true }),
+    createFrameOperation: async () => ({
+      ok: true,
+      operationId,
+      frameId: "f-hybrid",
+      storyboardResultId: "result-1",
+      storyboardVersionId: "version-1",
+      writeVersion: 1,
+      phase: "queued",
+      status: "running",
+      scope: "frame",
+    }),
+    getFrameOperation: async () => ({ ok: true, ...op }),
+    updateFrameOperation: async ({ phase, status, errorKind }) => {
+      if (phase) op.phase = phase;
+      if (status) op.status = status;
+      if (errorKind !== undefined) op.errorKind = errorKind;
+      return { ok: true, ...op };
+    },
+    orchestrateHybridFrameOperation: async ({ generateImage, onHybridLog }) => {
+      op.phase = "generating-background";
+      onHybridLog?.("visual-hybrid-operation-phase", {
+        operationId,
+        frameId: "f-hybrid",
+        phase: "generating-background",
+        status: "running",
+      });
+      onHybridLog?.("visual-background-start", {
+        operationId,
+        frameId: "f-hybrid",
+        component: "scene-background",
+        model: "test-model",
+      });
+      await generateImage({
+        prompt: "SECRET PROMPT with Привет, коллега.",
+        images: [{ mime: "image/png", bytes: png }],
+        aspectRatio: "21:9",
+        model: "test-model",
+        component: "scene-background",
+      });
+      onHybridLog?.("visual-background-provider", {
+        operationId,
+        frameId: "f-hybrid",
+        status: "ok",
+        providerStatus: 200,
+        latencyMs: 3,
+        model: "test-model",
+      });
+      onHybridLog?.("visual-background-storage", {
+        operationId,
+        frameId: "f-hybrid",
+        status: "ready",
+      });
+      op.phase = "complete";
+      op.status = "complete";
+      op.visualReady = true;
+      return { ok: true, phase: "complete", visualReady: true };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    logger: { log: (line) => logs.push(line) },
+    imageGenerator: async () => ({
+      ok: true,
+      image: { bytes: png },
+      metadata: { providerStatus: 200, latencyMs: 3 },
+    }),
+  });
+  const port = await listen(server);
+  try {
+    const accepted = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f-hybrid/generate",
+      body: {},
+    });
+    assert.equal(accepted.status, 202);
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (op.status === "complete") break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(op.status, "complete");
+    const joined = logs.join("\n");
+    assert.match(joined, /visual-hybrid-frame-start/);
+    assert.match(joined, /visual-hybrid-operation-phase/);
+    assert.match(joined, /visual-background-start/);
+    assert.match(joined, /visual-background-provider/);
+    assert.match(joined, /visual-background-storage/);
+    assert.match(joined, /visual-hybrid-frame-outcome/);
+    assert.equal(joined.includes("SECRET PROMPT"), false);
+    assert.equal(joined.includes("Привет, коллега"), false);
+    assert.equal(joined.includes(dataUrl), false);
+    assert.equal(joined.includes(png.toString("base64")), false);
+    assert.equal(joined.includes("Authorization"), false);
+    assert.equal(joined.includes("Bearer"), false);
+    assert.equal(joined.includes("CONTEST_API_TOKEN"), false);
+  } finally {
+    await close(server);
+  }
+});
+
+test("hybrid placement updates fitMode zoom pan without provider or background mutation", async () => {
+  const calls = [];
+  let placement = {
+    zoom: 1,
+    positionX: 50,
+    positionY: 30,
+    fitMode: "manual",
+  };
+  let backgroundAssetId = "bg-ready";
+  let loadCount = 0;
+  const store = {
+    load: async () => {
+      loadCount += 1;
+      const state = hybridEligibleState();
+      state.frames[0].visualReady = true;
+      state.frames[0].hybrid.background = {
+        status: "ready",
+        assetId: backgroundAssetId,
+        asset: `/api/visual/assets/${backgroundAssetId}`,
+      };
+      state.frames[0].hybrid.assemblyStatus = "ready";
+      state.frames[0].hybrid.panels = state.frames[0].hybrid.panels.map((panel) => ({
+        ...panel,
+        ...placement,
+        status: "ready",
+        assetId: `char-${panel.panelIndex}`,
+      }));
+      state.frames[0].panels = state.frames[0].panels.map((panel, index) => ({
+        ...panel,
+        ...placement,
+        characterAssetId: `char-${index}`,
+        characterAsset: `/api/visual/assets/char-${index}`,
+        assetId: null,
+      }));
+      return state;
+    },
+    updatePlacement: async (input) => {
+      assert.equal(input.frameId, "f-hybrid");
+      assert.equal(input.panelIndex, 0);
+      placement = {
+        zoom: input.zoom,
+        positionX: input.positionX,
+        positionY: input.positionY,
+        fitMode: input.fitMode || "manual",
+      };
+      return { ok: true, fitMode: placement.fitMode };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png } };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const before = await request(port, { path: "/api/visual" });
+    assert.equal(before.status, 200);
+    assert.equal(before.body.frames[0].hybrid.background.assetId, "bg-ready");
+
+    const patched = await request(port, {
+      method: "PATCH",
+      path: "/api/visual/frames/f-hybrid/panels/0/placement",
+      body: { zoom: 1.75, positionX: 40, positionY: 25, fitMode: "fit" },
+    });
+    assert.equal(patched.status, 200);
+    assert.equal(patched.body.frames[0].panels[0].zoom, 1.75);
+    assert.equal(patched.body.frames[0].panels[0].positionX, 40);
+    assert.equal(patched.body.frames[0].panels[0].positionY, 25);
+    assert.equal(patched.body.frames[0].panels[0].fitMode, "fit");
+    assert.equal(patched.body.frames[0].hybrid.background.assetId, "bg-ready");
+    assert.equal(calls.length, 0);
+
+    const reloaded = await request(port, { path: "/api/visual" });
+    assert.equal(reloaded.body.frames[0].panels[0].zoom, 1.75);
+    assert.equal(reloaded.body.frames[0].panels[0].fitMode, "fit");
+    assert.equal(reloaded.body.frames[0].hybrid.background.assetId, "bg-ready");
+    assert.equal(calls.length, 0);
+    assert.ok(loadCount >= 3);
+  } finally {
+    await close(server);
+  }
+});
+
+test("hybrid panel regenerate requires ready background and regenerates only one character", async () => {
+  const calls = [];
+  const operationId = "00000000-0000-4000-8000-0000000000c1";
+  let readyBackground = false;
+  let createdOps = [];
+  let charHeads = ["char-old-0", "char-old-1"];
+  let sceneWriteClaims = 0;
+  const op = {
+    operationId,
+    frameId: "f-hybrid",
+    storyboardVersionId: "version-1",
+    writeVersion: 3,
+    phase: "queued",
+    status: "running",
+    errorKind: null,
+    componentFailures: [],
+    visualReady: true,
+    scope: "panel",
+    panelIndex: 1,
+    hybrid: null,
+  };
+  const base = () => {
+    const state = hybridEligibleState();
+    state.frames[0].visualReady = readyBackground;
+    state.frames[0].hybrid.background = readyBackground
+      ? { status: "ready", assetId: "bg-1", asset: "/api/visual/assets/bg-1" }
+      : { status: "missing", assetId: null, asset: null };
+    state.frames[0].hybrid.assemblyStatus = readyBackground ? "ready" : "not-ready";
+    state.frames[0].hybrid.panels = state.frames[0].hybrid.panels.map((panel, index) => ({
+      ...panel,
+      status: "ready",
+      assetId: charHeads[index],
+    }));
+    state.frames[0].panels = state.frames[0].panels.map((panel, index) => ({
+      ...panel,
+      characterAssetId: charHeads[index],
+      characterAsset: `/api/visual/assets/${charHeads[index]}`,
+    }));
+    state.frames[0].hybrid.activeOperationId = op.status === "running" ? operationId : null;
+    op.hybrid = state.frames[0].hybrid;
+    return state;
+  };
+  const store = {
+    load: async () => base(),
+    ensureHybridHeads: async () => ({ ok: true }),
+    hasReadyPrimaryBackground: async () => ({ ok: true, ready: readyBackground }),
+    createFrameOperation: async (input) => {
+      createdOps.push(input);
+      assert.equal(input.scope, "panel");
+      assert.equal(input.panelIndex, 1);
+      return {
+        ok: true,
+        operationId,
+        frameId: "f-hybrid",
+        storyboardResultId: "result-1",
+        storyboardVersionId: "version-1",
+        writeVersion: 3,
+        phase: "queued",
+        status: "running",
+        scope: "panel",
+        panelIndex: 1,
+      };
+    },
+    getFrameOperation: async () => ({ ok: true, ...op, visualReady: true, hybrid: base().frames[0].hybrid }),
+    claimOrReuseSceneBackground: async () => {
+      sceneWriteClaims += 1;
+      return { ok: true };
+    },
+    beginSceneBackgroundLifecycle: async () => {
+      sceneWriteClaims += 1;
+      return { ok: true, mode: "reuse" };
+    },
+    orchestrateHybridFrameOperation: async ({ generateImage, operationId: id }) => {
+      assert.equal(id, operationId);
+      op.phase = "generating-character-states";
+      op.status = "running";
+      const result = await generateImage({
+        prompt: "character only",
+        images: [],
+        aspectRatio: "4:5",
+        model: "m",
+        component: "character-state",
+        panelIndex: 1,
+      });
+      assert.equal(result.ok, true);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].component, "character-state");
+      assert.equal(calls[0].panelIndex, 1);
+      charHeads[1] = "char-new-1";
+      op.phase = "complete";
+      op.status = "complete";
+      op.visualReady = true;
+      return { ok: true, phase: "complete", visualReady: true, scope: "panel", panelIndex: 1 };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: { providerStatus: 200, latencyMs: 2 } };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const blocked = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f-hybrid/panels/1/generate",
+      body: {},
+    });
+    assert.equal(blocked.status, 409);
+    assert.deepEqual(blocked.body, { status: "failed", kind: "frame-generation-required" });
+    assert.equal(createdOps.length, 0);
+    assert.equal(calls.length, 0);
+
+    readyBackground = true;
+    const accepted = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f-hybrid/panels/1/generate",
+      body: { instruction: "must-not-be-required", performanceImageDataUrl: dataUrl },
+    });
+    assert.equal(accepted.status, 202);
+    assert.equal(accepted.body.scope, "panel");
+    assert.equal(accepted.body.panelIndex, 1);
+    assert.equal(accepted.body.operationId, operationId);
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (op.status === "complete") break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(op.status, "complete");
+    assert.equal(calls.length, 1);
+    assert.equal(sceneWriteClaims, 0, "panel regen must not claim scene write authority");
+    assert.equal(charHeads[0], "char-old-0", "other panel head must stay unchanged");
+    assert.equal(charHeads[1], "char-new-1");
+
+    const visual = await request(port, { path: "/api/visual" });
+    assert.equal(visual.body.frames[0].panels[0].characterAssetId, "char-old-0");
+    assert.equal(visual.body.frames[0].panels[1].characterAssetId, "char-new-1");
+  } finally {
+    await close(server);
+  }
+});
+
+test("stale hybrid panel operation cannot advance the selected character head", async () => {
+  const operationId = "00000000-0000-4000-8000-0000000000b2";
+  let head = "char-keep";
+  let advanced = false;
+  let opStatus = "running";
+  let opPhase = "queued";
+  let opError = null;
+  const loadState = () => {
+    const state = hybridEligibleState();
+    state.frames[0].visualReady = true;
+    state.frames[0].hybrid.background = {
+      status: "ready",
+      assetId: "bg-1",
+      asset: "/api/visual/assets/bg-1",
+    };
+    state.frames[0].hybrid.assemblyStatus = "ready";
+    state.frames[0].panels[0].characterAssetId = head;
+    state.frames[0].hybrid.panels[0].assetId = head;
+    state.frames[0].hybrid.panels[0].status = "ready";
+    return state;
+  };
+  const store = {
+    load: async () => loadState(),
+    ensureHybridHeads: async () => ({ ok: true }),
+    hasReadyPrimaryBackground: async () => ({ ok: true, ready: true }),
+    createFrameOperation: async () => ({
+      ok: true,
+      operationId,
+      frameId: "f-hybrid",
+      storyboardVersionId: "version-1",
+      writeVersion: 4,
+      phase: "queued",
+      status: "running",
+      scope: "panel",
+      panelIndex: 0,
+    }),
+    getFrameOperation: async () => ({
+      ok: true,
+      operationId,
+      frameId: "f-hybrid",
+      storyboardVersionId: "version-1",
+      writeVersion: 4,
+      phase: opPhase,
+      status: opStatus,
+      errorKind: opError,
+      scope: "panel",
+      panelIndex: 0,
+      visualReady: true,
+      componentFailures: opError ? [{ component: "operation", kind: opError }] : [],
+      hybrid: loadState().frames[0].hybrid,
+    }),
+    orchestrateHybridFrameOperation: async () => {
+      // Simulate stale finalize of own evidence without advancing the head.
+      advanced = false;
+      opPhase = "failed";
+      opStatus = "failed";
+      opError = "conflict";
+      return { ok: false, kind: "conflict" };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async () => ({ ok: true, image: { bytes: png } }),
+  });
+  const port = await listen(server);
+  try {
+    const accepted = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f-hybrid/panels/0/generate",
+      body: {},
+    });
+    assert.equal(accepted.status, 202);
+    let sawFailed = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const polled = await request(port, {
+        path: `/api/visual/frames/f-hybrid/operations/${operationId}`,
+      });
+      assert.equal(polled.status, 200);
+      if (polled.body.status === "failed") {
+        assert.equal(polled.body.errorKind, "conflict");
+        sawFailed = true;
+        break;
+      }
+    }
+    assert.equal(sawFailed, true);
+    const visual = await request(port, { path: "/api/visual" });
+    assert.equal(visual.body.frames[0].panels[0].characterAssetId, "char-keep");
+    assert.equal(advanced, false);
+    assert.equal(head, "char-keep");
+  } finally {
+    await close(server);
+  }
+});
+
 test("structural edit applies the Putin full-frame command and maps conflicts to structure-rejected", async () => {
   const board = putinBoard();
   let savedFrames = null;
