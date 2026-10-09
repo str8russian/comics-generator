@@ -8,10 +8,10 @@
 
 Replace ordinary split-dialogue full-scene panel generation with a hybrid selected-frame path:
 
-1. create or reuse one people-free scene background;
-2. create or reuse one single-character RGBA visual state per panel (provider chromakey + local matting);
+1. create or reuse one people-free scene background for the version-scoped `"primary"` scene;
+2. create or reuse one single-character RGBA visual state per panel (provider chromakey + local matting with acceptance checks);
 3. assemble both through the existing shared frame renderer with deterministic clipping, gutter, dialogue, zoom, and pan;
-4. persist immutable generation provenance and support explicit local diagnostic export.
+4. persist finalize-once generation provenance and support explicit local diagnostic ZIP download.
 
 Acceptance may use the current visible frame 1, but no design hardcodes frame 1, character names, dialogue, or database ids.
 
@@ -31,7 +31,7 @@ Acceptance may use the current visible frame 1, but no design hardcodes frame 1,
 
 **Performance Goals**: sequential selected-frame generation only; typically 1 background + N character provider requests per first successful frame; placement/zoom with zero provider calls; diagnostic export local and on-demand
 
-**Constraints**: no silent full-scene fallback for ordinary dialogue; no batch generation; no second renderer/pipeline; no product-memory / main-checkout / image-spike edits; safe logs; result/version isolation; no mandatory background-approval gate
+**Constraints**: no silent full-scene fallback for ordinary dialogue; no batch generation; no second renderer/pipeline; no product-memory / main-checkout / image-spike edits; safe logs; result/version isolation; no mandatory background-approval gate; honest async phases via persisted operations (no timer-simulated progress)
 
 **Scale/Scope**: one vertical hybrid-frame slice; additive schema; compiler + store + server + renderer + UI + provenance/export + tests
 
@@ -39,7 +39,7 @@ Acceptance may use the current visible frame 1, but no design hardcodes frame 1,
 
 The repository constitution template remains unfilled. This plan follows the approved 006 spec and product principles from specs 003–005 / product memory: progressive fidelity, deterministic assembly, authority separation, honest async feedback, recoverable versions, and tests that distinguish contract correctness from probabilistic provider adherence.
 
-Post-design re-check: one app, additive tables, one renderer extension, no remote matting service, no full-scene fallback escape hatch for ordinary dialogue panels.
+Post-design re-check: one app, additive tables, one renderer extension, no remote matting service, no full-scene fallback escape hatch for ordinary dialogue panels, single background pointer ownership, persisted async operations.
 
 ## Project Structure
 
@@ -58,7 +58,7 @@ specs/006-reproducible-hybrid-dialogue-frame/
 ├── research/
 │   ├── existing-png-alpha-audit.json
 │   └── provider-alpha-probe/
-└── tasks.md                    # NOT created by /speckit-plan
+└── tasks.md                    # created later by /speckit-tasks, not this plan
 ```
 
 ### Source Code (implementation targets)
@@ -67,15 +67,15 @@ specs/006-reproducible-hybrid-dialogue-frame/
 app/storyboard-web/
 ├── db/migrations/005_hybrid_dialogue_frame.sql
 ├── image-info.mjs                 # extend: PNG color-type / alpha inspection
-├── image-matte.mjs                # new: chromakey + edge cleanup + RGBA encode
+├── image-matte.mjs                # new: chromakey + edge cleanup + acceptance checks + RGBA encode
 ├── visual-intent.mjs              # new: layered intent + human briefs
 ├── visual-model.mjs               # hybrid prompt compilers; retire split-layout wording for ordinary dialogue
-├── visual-store.mjs               # background/character-state lifecycle, provenance, export assembly
+├── visual-store.mjs               # background/character-state lifecycle, operations, provenance
 ├── visual-diagnostics.mjs         # new: local ZIP diagnostic bundle builder
 ├── image-provider.mjs             # reuse as-is for provider transport
-├── server.mjs                     # hybrid frame orchestration, diagnostics export route, safe logs
+├── server.mjs                     # 202 operation accept, poll routes, diagnostics GET, safe logs
 ├── overflow.mjs                   # preserve hybrid fields through fitting
-├── public/app.js                  # frame-level async phases, hybrid readiness, export action, pan/fit
+├── public/app.js                  # poll operation phases, hybrid readiness, diagnostics download, pan/fit
 ├── public/app.css                 # controls remain outside canvas
 └── test/
     ├── image-info.test.mjs
@@ -95,169 +95,200 @@ prototypes/storyboard-viewer/
 ## Architecture Summary
 
 ```text
-Selected split frame
-  → build layered visual intent (scene + frame composition + per-panel)
-  → ensure scene background (reuse ready / create / retry failed)
-  → ensure character states (identity + distinct style refs; chromakey prompt; local matte)
-  → write immutable generation records for every provider call
-  → assemble via shared renderer (stable background + per-panel character placement)
-  → Visual-ready only when all required hybrid components are ready
-  → optional explicit local diagnostic ZIP export
+POST generate → 202 + operationId
+  → persisted operation phases (real work only)
+  → ensure primary-scene background (sole pointer on scene_background_state)
+  → ensure character states on panel_visual_state heads
+  → finalize-once generation records per provider request
+  → assemble via shared renderer
+  → Visual-ready only after background + all panel states ready + assembly validates
+GET diagnostics → application/zip download for current version/frame
 ```
 
 Mapping of approved functional areas:
 
 | Area | Implementation location |
 |------|-------------------------|
-| Foreground layer feasibility | `image-matte.mjs` + `image-info.mjs` alpha checks |
-| Scene background lifecycle | `visual-store.mjs` + migration |
-| Character-state lifecycle / refs | `visual-store.mjs`, `visual-model.mjs` |
+| Foreground layer feasibility | `image-matte.mjs` + `image-info.mjs` alpha/acceptance checks |
+| Scene background lifecycle | `visual-store.mjs` + `scene_background_state.current_generation_id` |
+| Character-state lifecycle / refs | `panel_visual_state` + `character_visual_state_generation` |
 | Layered intent + prompts | `visual-intent.mjs`, `visual-model.mjs` |
-| Deterministic composition | `frame-renderer.mjs`, placement in `panel_visual_state` |
-| Async / stale ops | `server.mjs` orchestration + generation ids/tokens |
-| Provenance | `generation_record` (+ component generation rows) |
-| Diagnostic export | `visual-diagnostics.mjs` + export endpoint |
+| Deterministic composition | `frame-renderer.mjs`, placement on `panel_visual_state` |
+| Async / stale ops | `visual_frame_operation` + server accept/poll |
+| Provenance | finalize-once `generation_record` |
+| Diagnostic export | `GET .../diagnostics` → ZIP |
 | Isolation / migration | additive SQL + version-scoped keys |
-| UI honesty / export | `public/app.js` |
+| UI honesty / export | `public/app.js` polling + download |
 | Verification | unit/contract/postgres/browser suites |
+
+## Final persistence decisions
+
+1. **Panel head**: extend existing `panel_visual_state` with `current_character_generation_id` and `fit_mode`; keep zoom/pan there. No `character_visual_state` table.
+2. **Character candidates**: append-only `character_visual_state_generation` referencing `panel_visual_state.id`.
+3. **Background pointer**: only `scene_background_state.current_generation_id`.
+4. **Frame head**: `frame_hybrid_state` owns composition mode, `scene_key="primary"`, `active_operation_id`, assembly status—not a second background pointer.
+5. **Scene identity**: version-scoped `"primary"` for all ordinary dialogue frames in this slice.
+6. **Async**: persisted `visual_frame_operation`; `POST` returns `202`; UI polls status.
+7. **Provenance**: finalize-once records (immutable inputs; one terminal lifecycle transition).
+8. **Diagnostics**: `GET /api/visual/frames/:frameId/diagnostics` → `application/zip`.
+
+Details: [data-model.md](./data-model.md), [contracts/hybrid-dialogue-frame-api.md](./contracts/hybrid-dialogue-frame-api.md).
 
 ## Implementation Phases (inside feature 006 only)
 
-### Phase A — Storage and provenance foundations
+### Phase A — Storage, operations, and provenance foundations
 
-- Additive migration for scene backgrounds, character visual states, generation records, hybrid frame readiness pointers, and expanded `visual_asset.kind` values.
-- Keep existing tables readable; do not delete historical `panel_generation` rows.
-- Extend `image-info` with real alpha/color-type inspection helpers used by storage validation.
+- Additive migration for scene background state/generations, character-state generations, frame hybrid state, visual frame operations, generation records, and expanded `visual_asset.kind` values.
+- Extend `panel_visual_state` with `current_character_generation_id` and `fit_mode`.
+- Keep historical `panel_generation` readable under precedence rules.
+- Extend `image-info` with real alpha/color-type inspection helpers.
 
-### Phase B — Matting and provider compile path
+### Phase B — Matting, acceptance, and provider compile path
 
-- Implement deterministic chromakey + edge cleanup.
-- Replace ordinary-dialogue panel compile path with:
-  - background prompt/compiler;
-  - character-state prompt/compiler (no split-layout wording; relational off-screen rules);
-  - human-readable briefs for grid/detail.
-- First-generation references: identity anchor + distinct style seed only.
+- Implement deterministic chromakey + edge cleanup + measurable acceptance checks.
+- Retain raw chromakey and derived RGBA assets for diagnosis.
+- Background and character-state compilers with required project style authority.
+- Human-readable briefs vs compiled prompts; no split-layout provider wording.
 
-### Phase C — Store lifecycle and server orchestration
+### Phase C — Store lifecycle and async server orchestration
 
-- Selected-frame generate becomes hybrid orchestration: background → character states → readiness.
-- Reuse ready background on character retries; retry failed background without a separate background UI.
-- Stale-operation protection on current-pointer updates.
-- Preserve previous ready assets during pending/failed replacements.
-- Placement endpoints remain provider-free and affect character layers only.
+- `POST .../generate` → create operation → `202`.
+- Orchestrate real phases; poll endpoint exposes them.
+- Reuse ready primary-scene background; retry failed background inside a new operation without a background-approval UI.
+- Stale-write protection via operation id / `write_version`.
+- Placement remains provider-free and character-only.
 
 ### Phase D — Renderer and UI
 
-- Extend shared renderer for hybrid visual layers.
-- Frame-level phase copy (no fake percents).
+- Extend shared renderer for hybrid layers.
+- Poll operation phases; no fake percents.
 - Incomplete readiness never presented as full Visual.
-- Explicit diagnostic export control outside the 1920×1080 canvas.
+- Diagnostics download control outside the 1920×1080 canvas.
 - Visible frame number remains outside the canvas.
 
 ### Phase E — Verification
 
 - Offline contract tests with doubles.
-- PostgreSQL isolation/persistence tests.
-- Live provider + browser acceptance for the current frame 1 case during implementation verification (not during this planning stage).
+- PostgreSQL isolation/persistence/stale-operation tests.
+- Chromakey acceptance tests with contrasting composites and saved visual evidence.
+- Live provider + browser acceptance for the current frame 1 case during implementation verification.
 
 ## Detailed Design Resolutions
 
 ### 1. Foreground character layer
 
 Chosen: controlled `#00FF00` provider backing + local deterministic matting → stored RGBA character asset.  
-See [research.md](./research.md) D1 and probe evidence. Fail closed if matting cannot demonstrate real transparency or still contains keyed green.
+Planning probe proved technical alpha creation but did **not** fully accept visual edge quality (possible thin green fringe). Implementation must enforce acceptance checks and may fail with `matte-failed`. See [research.md](./research.md).
 
 ### 2. Stable scene background
 
-- Entity scoped to `storyboard_version_id` + scene key derived from the selected frame’s scene identity (generic; not fixture-specific).
-- Prompt uses project style authority as style-only reference when distinct; never transfers character identity.
-- People/text/borders/unrequested salient props prohibited in prompt and treated as rejectable failures when obviously violated by storage-time heuristics/review.
-- Shared by both split panels through frame hybrid pointers.
-- Spatially stable under character zoom/pan because renderer applies transforms only to character layers.
-- Failed background retries allowed inside selected-frame generation; no dedicated background-edit UI in 006.
+- Scope: `(storyboard_version_id, scene_key="primary")`.
+- Sole current pointer: `scene_background_state.current_generation_id`.
+- Frame resolves background only through `frame_hybrid_state.scene_key` → scene background state.
+- Prompt uses project style authority only; never character identity.
+- Reuse ready background while retrying character states; retry failed background via a new frame operation; no dedicated background-edit/approval UI.
 
 ### 3. Character visual states
 
-- One state per panel role for the selected frame/version.
-- Authorities: approved identity anchor; project style seed when distinct.
-- Intent carries speaking/listening/reaction role, frame composition mode, gaze/screen direction, shot scale, safe margins, prohibited content.
+- Head: `panel_visual_state`.
+- Candidates: `character_visual_state_generation`.
+- Authorities: identity anchor + required project style authority as distinct roles.
+- Missing style → `style-required` (no text-only silent fallback).
 - Off-screen relational names may influence gaze only.
-- Lifecycle: `pending` → `ready` / `failed`; current pointer advances only on newer successful completion; previous ready remains visible while replacement pending/failed.
-- Stale-anchor: if required approved anchor is missing, fail with existing `anchor-required` class of error rather than generating without identity.
+- Previous ready candidate remains visible while a replacement is pending/failed.
 
 ### 4. Layered visual-intent compiler
 
-Structured intent object (planning shape, not UI) includes project direction, scene continuity, frame composition mode, panel subject, visible characters, role, shot scale, gaze, expression/pose, crop/safe margins, prohibitions.  
-Outputs:
-
-1. concise grid description;
-2. detailed human brief;
-3. compiled provider prompt + reference manifest.
-
-Normal UI shows (1)/(2). Diagnostics expose (3).
+Structured intent → concise grid description, detailed human brief, compiled provider prompt + reference manifest.  
+Normal UI shows briefs; diagnostics expose compiled prompts and negative constraints.
 
 ### 5. Deterministic hybrid renderer
 
-Extend existing renderer only. Zoom/pan/fit/reset apply to character layers. Background placement is frame-stable. Controls/frame number stay outside canvas. Incomplete hybrid components ⇒ Structure or partial visual presentation, never `visualReady=true`.
+Extend existing renderer only. Zoom/pan/fit apply to character layers owned by `panel_visual_state`. Background is frame-stable via scene association. Controls/frame number stay outside canvas.
 
 ### 6. Honest asynchronous state
 
-Frame operation phases: start → background → character-states → assembly/storage → complete/failed.  
-Per-component status remains visible. No provider percentages. Stale completions ignored when operation token / generation id is not current.
+Persisted operation resource with real phases. `POST` accepts quickly with `202`; UI polls. No timer-simulated phases. Stale completions ignored. Visual mode only after complete hybrid readiness + assembly validation.
 
-### 7–8. Provenance and diagnostic export
+### 7. Finalize-once generation provenance
 
-Append-only generation records for every provider request. Explicit `GET`/`POST` export builds a local ZIP with manifest, intents, prompts, references, outputs, background, hashes, versions. No auto-upload. Safe logs retain allowlisted fields only.
+Inputs immutable after create; lifecycle finalized exactly once to `ready` or `failed`; retries create new records/operations.
+
+### 8. Diagnostic export
+
+`GET /api/visual/frames/:frameId/diagnostics` returns `application/zip` for the current result/version/frame with the concrete contents listed in the contract.
 
 ### 9. Isolation and versioning
 
-All hybrid current pointers and component rows key by `storyboard_version_id`. Structural edits create new versions; 006 does not invent cross-version reuse. Matching semantic frame ids across results/versions do not share mutable state.
+All hybrid/scene/operation rows key by storyboard version. Matching semantic frame ids across results/versions do not share mutable state.
 
-### 10. Migration and compatibility
+### 10. Migration and historical coexistence
 
-Additive migration only. Existing identity/anchor/style-seed/panel rows remain. Ordinary dialogue success path for newly generated frames uses hybrid components; historical full-scene panel images remain readable for old data. No destructive reset.
+Additive migration only. Read precedence:
+
+1. complete current hybrid assembly when available;
+2. historical full-panel assets readable for non-migrated/historical frames;
+3. after hybrid attempt begins, no silent full-scene success fallback;
+4. failed/incomplete attempts retain previous valid visible result and show failure separately;
+5. no automatic full-scene provider fallback.
 
 ### 11. Verification strategy
 
-See Quickstart and contracts. Distinguish:
+See Quickstart. Distinguish deterministic contracts, provider adherence, and human visual acceptance. Offline prompt tests never claim a provider image contains exactly one person.
 
-- deterministic contract tests (compiler, matte, renderer, isolation, logs, export);
-- provider adherence (live checks);
-- human visual acceptance (paired composition / single-subject / shared background).
+## Chromakey acceptance (implementation-stage, not yet visually accepted)
 
-Offline prompt tests never claim the provider image contains exactly one person.
+Planning probe is technical evidence only. Implementation verification MUST:
+
+1. Composite each derived cutout over light, dark, and strongly contrasting backgrounds.
+2. Inspect hair, face, clothing, and antialiased outline edges.
+3. Detect remaining green spill / unacceptable halos.
+4. Preserve facial and clothing colors (no gross hue shift from cleanup).
+5. Reject or mark the character-state generation `failed` (`matte-failed`) when deterministic cleanup cannot meet thresholds.
+6. Retain raw chromakey asset and derived RGBA asset for diagnosis.
+7. Save visual evidence artifacts for the acceptance case.
+
+Measurable checks (baseline; tune only with recorded evidence):
+
+- PNG color type is alpha-capable (`4` or `6`) with non-zero transparent samples.
+- Opaque subject pixels with keyed-green dominance above threshold ≈ 0 (no remaining green spill on kept pixels).
+- Edge-band green-fringe ratio below an explicit threshold after cleanup (record threshold in tests).
+- Cutout must not be fully opaque and must not erase the majority of the expected subject bounding region.
 
 ## Transaction and failure boundaries
 
-- Begin component generation row + provenance pending record before provider call.
+- Create operation + pending component generation + pending generation record before provider I/O.
 - Provider I/O outside DB transactions.
-- On success: store raw + matted assets as needed, finalize generation record, advance current pointer only if still the active operation.
-- On failure: mark generation failed with safe kind; leave previous ready pointer unchanged.
-- Frame response can be partial; UI must show specific retryable failures.
+- On success: store raw/matted assets, finalize generation record once, advance head pointer only if operation/`write_version` is still authoritative.
+- On failure: finalize failed once; leave previous ready pointer unchanged.
+- Client observes partial/terminal failure through operation polling and `GET /api/visual`.
 
 ## Privacy / logging boundaries
 
 Forbidden in routine logs: prompts, dialogue, image bytes/base64, credentials, Authorization headers, secret-bearing URLs, full provider bodies.  
-Allowed: request serial, operation/event, result/version/frame/panel/component ids, status, safe failure kind, latency, model name, mime/width/height/byte_length/sha256, git commit when available.
+Allowed: request serial, operation/event, result/version/frame/panel/component/operation ids, write version, status, safe failure kind, latency, model name, mime/width/height/byte_length/sha256, matte acceptance flags, git commit when available.
 
 ## Performance and storage implications
 
 - First successful split frame ≈ 3 provider images (1 background + 2 characters) plus local matting CPU.
-- RGBA character assets and raw chromakey inputs increase storage versus one opaque panel image; acceptable for local prototype scale.
-- Diagnostic ZIP can be large; generate on demand and do not retain export archives unless the user saves them.
+- Raw + RGBA assets increase storage versus one opaque panel image; acceptable for local prototype scale.
+- Diagnostic ZIP generated on demand for browser download.
 
 ## Technical risks and mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| Provider paints checkerboard or non-green backing | Reject after alpha/key validation; retry with explicit backing constraints |
-| Green fringe / hair holes | Bounded edge cleanup; human acceptance gate for frame 1 |
-| Relational prose pulls second person | Compiler strips/rewrites visible-character constraints; prohibit interlocutor visibility |
-| Nested layout regression | Remove split-layout provider wording; reject obvious border/gutter cues in review heuristics where practical |
-| Stale async races | Operation tokens / generation ids on pointer updates |
-| Overflow drops hybrid fields | Extend metadata-preserving overflow path from feature 005 |
-| Scope creep into revision/performance/full-panel | Explicitly deferred; do not implement fallback that reintroduces full-scene ordinary dialogue |
+| Provider paints checkerboard or non-green backing | Reject after alpha/key validation; retry |
+| Green fringe / hair holes | Edge cleanup + measurable acceptance thresholds + saved composites; fail closed with `matte-failed` |
+| Relational prose pulls second person | Compiler prohibitions for visible interlocutors |
+| Nested layout regression | Remove split-layout provider wording |
+| Long sync request hides phases | Persisted operation + `202` + polling |
+| Dual background pointers drift | Sole pointer on `scene_background_state` |
+| Stale async races | operation id / `write_version` |
+| Missing style seed silently weakens style | Fail with `style-required` |
+| Overflow drops hybrid fields | Preserve hybrid + placement metadata |
+| Historical full-panel confusion | Explicit read precedence; no hybrid-success fallback |
 
 ## Complexity Tracking
 
-No constitution violations requiring special justification. Local matting is required because native provider alpha is unavailable; it is smaller than adding a remote segmentation service or a second rendering pipeline.
+No constitution violations requiring special justification. Local matting and persisted operations are required for honest hybrid assembly and async feedback; both are smaller than adding a remote segmentation service or a second rendering pipeline.

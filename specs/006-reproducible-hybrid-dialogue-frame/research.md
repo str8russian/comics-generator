@@ -51,7 +51,8 @@ No production code, migrations, or database writes.
 - Raw outcome: RGB PNG with flat green backing, sharp black comic outline
 - Local key removed `394081 / 1069056` pixels (`36.86%`)
 - Cutout: true RGBA PNG color type `6`, `minAlpha=0`, `maxAlpha=255`, `remainingGreenOpaquePixels=0`
-- Visual: composable character layer; thin green fringe risk noted → edge cleanup required in implementation
+- Visual: composable character layer is technically feasible, but a possible thin green fringe remains along some edges
+- Conclusion: technical alpha creation is demonstrated; **visual edge quality is not fully accepted yet** and requires implementation-stage acceptance checks, contrasting composites, and fail-closed `matte-failed` behavior when cleanup cannot meet thresholds
 
 Evidence file: `research/provider-alpha-probe/evidence.json`
 
@@ -77,24 +78,29 @@ Evidence file: `research/provider-alpha-probe/evidence.json`
 **Implementation notes for later tasks**:
 
 - Validate actual alpha after matting (`colorType` 4/6 and non-trivial transparent samples).
-- Reject character states that remain fully opaque or still contain large keyed-green regions.
-- Apply bounded edge cleanup after keying to reduce fringe.
-- Keep raw provider RGB bytes in provenance; store matted RGBA as the composited character asset.
+- Composite cutouts over light, dark, and strongly contrasting backgrounds; inspect hair/face/clothing/outline edges.
+- Reject character states that remain fully opaque, retain green spill, or exceed fringe thresholds (`matte-failed`).
+- Apply bounded edge cleanup after keying; preserve facial/clothing colors.
+- Keep raw provider RGB bytes and derived RGBA cutout for diagnosis.
 
 ### D2: Stable scene background lifecycle
 
-**Decision**: During selected-frame hybrid generation, create one people-free scene background for the frame’s scene key if none is ready; otherwise reuse the current ready background while generating/retrying character states. Retries may regenerate a failed background operation. No mandatory background-approval gate and no dedicated user-facing background-edit workflow in feature 006.
+**Decision**: Use version-scoped scene identity `"primary"` for all ordinary dialogue frames in this slice. Sole current-background pointer is `scene_background_state.current_generation_id`. Frames resolve the background through `frame_hybrid_state.scene_key` → scene background state and never store a second current-background pointer. During selected-frame hybrid generation, create the people-free background if none is ready; otherwise reuse it while generating/retrying character states. Retries may regenerate a failed background via a new frame operation. No mandatory background-approval gate and no dedicated user-facing background-edit workflow in feature 006.
 
-**Rationale**: Matches the approved editorial clarification and keeps continuity without expanding into multi-scene UI.
+**Rationale**: Matches the approved editorial clarification, avoids dual mutable background pointers, and keeps continuity without inventing multi-scene UI.
 
-**Alternatives rejected**: Independent background per panel; mandatory background approval step; silent full-scene fallback when background fails.
+**Alternatives rejected**: Independent background per panel; mandatory background approval step; silent full-scene fallback when background fails; inferring scene identity from mutable descriptions/prompts; dual current-background fields on frame and scene heads.
 
 ### D3: Character visual-state authority for first generation
 
-**Decision**: First-generation hybrid character states use ordered references:
+**Decision**: Persist panel heads on existing `panel_visual_state` (`current_character_generation_id` + placement). Store append-only candidates in `character_visual_state_generation` referencing `panel_visual_state.id`. Do not create a separate `character_visual_state` table.
+
+First-generation hybrid character states use ordered references:
 
 1. approved identity anchor (mandatory when subject exists);
-2. approved project style authority when distinct.
+2. approved project style authority as a distinct required role.
+
+Background generation receives project style authority and no character identity. Missing required style authority fails with `style-required`; text-only style continuation while claiming reproducible project style is prohibited.
 
 Performance references and previous-result revision precedence remain outside this feature’s first-generation path. Later revision features may add them without changing the hybrid assembly contract.
 
@@ -127,15 +133,17 @@ Provider prompts for ordinary dialogue character states MUST:
 
 ### D6: Async and stale-operation model
 
-**Decision**: Keep frame-level async feedback only. A selected-frame generation run has explicit phases: `background`, `character-states`, `assembly`, `complete` / `failed`. No fabricated percentages. Each mutating completion carries an operation token / generation id; older completions must not advance current pointers after a newer operation supersedes them. Previous ready assets remain visible during pending/failed replacements.
+**Decision**: Use a persisted `visual_frame_operation` resource. `POST /api/visual/frames/:frameId/generate` validates, creates the operation, and returns `202` with `operationId`. The UI polls `GET /api/visual/frames/:frameId/operations/:operationId` for real phases (`preparing-background`, `generating-background`, `generating-character-states`, `assembling`, `complete`, `failed`). No fabricated percentages and no timer-simulated phases. Each operation has a stale-write/`write_version` token so obsolete completions cannot replace newer heads. Reload recovers the active operation. Previous ready assets remain visible during pending/failed replacements.
 
-### D7: Immutable generation provenance + diagnostic export
+### D7: Finalize-once generation provenance + diagnostic export
 
-**Decision**: Every provider request writes an append-only local generation record containing structured intent snapshot, exact compiled prompt, compiler/prompt version, model/settings, ordered reference manifest (roles, asset ids, hashes), omitted-reference reasons, status, safe failure metadata, latency, output asset id/hash/mime/dimensions/bytes, and application git commit when available. Exact prompts/images live in persisted provenance and explicit ZIP export, never routine logs. Export is local-only, frame-scoped, and excludes credentials and unrelated results.
+**Decision**: Every provider request writes a finalize-once local generation record. Provenance inputs (intent, compiled prompt, references, model/settings, scope ids, etc.) are immutable after creation. Lifecycle fields finalize exactly once from `pending` to `ready` or `failed`. Terminal records are never rewritten or reused; retries create new generation and operation records. Exact prompts/images live in persisted provenance and explicit ZIP download, never routine logs.
+
+Diagnostic export is concrete: `GET /api/visual/frames/:frameId/diagnostics` returns `application/zip` for the current result/version/frame, including operation/generation ids, briefs, prompts, negative constraints, reference roles/hashes, non-secret provider params, lifecycle/safe errors, background/raw/cutout/composite assets where available, placement, and assembly manifest. Excludes credentials, secret-bearing URLs, raw secret provider bodies, unrelated frames/results, and auto-upload.
 
 ### D8: Isolation and additive migration
 
-**Decision**: Scope all hybrid component pointers and generation rows by `storyboard_version_id` (and thus indirectly by storyboard result). Matching semantic `frame_id` / panel index across versions must not share mutable current pointers. Structural edits continue to create new storyboard versions; feature 006 copies or re-resolves hybrid pointers conservatively without inventing cross-version reuse policy. Migrations are additive; existing anchors, style seed, panel generations, and Structure behavior remain readable.
+**Decision**: Scope all hybrid component pointers and generation rows by `storyboard_version_id` (and thus indirectly by storyboard result). Matching semantic `frame_id` / panel index across versions must not share mutable current pointers. Structural edits continue to create new storyboard versions; feature 006 does not invent cross-version reuse policy. Migrations are additive; existing anchors, style seed, panel generations, and Structure behavior remain readable under explicit hybrid-vs-historical precedence.
 
 ## Confirmed findings vs assumptions
 
@@ -149,10 +157,11 @@ Provider prompts for ordinary dialogue character states MUST:
 
 ### Assumptions carried into plan
 
-- Simple chroma key plus bounded edge cleanup will be visually acceptable for the hard-outline comic style at panel size; human acceptance remains required.
-- One scene key per selected ordinary dialogue frame is enough for this slice (no multi-scene manager).
-- ZIP is an acceptable local diagnostic archive format for explicit export.
-- Existing `POST /api/visual/frames/:frameId/generate` can be evolved into hybrid orchestration without preserving independent full-scene generation as the ordinary-dialogue success path.
+- Version-scoped `"primary"` scene identity is sufficient for this prototype slice (no multi-scene manager).
+- Persisted operations + polling fit the existing local Node server better than streaming for honest phase visibility.
+- Browser ZIP download is the diagnostic export format.
+- Chromakey + cleanup can meet measurable acceptance thresholds for hard-outline comic cutouts after implementation tuning; this remains an implementation verification burden, not a planning claim of full visual acceptance.
+- Ordinary dialogue success path uses hybrid components; historical full-panel assets remain readable under precedence rules without silent hybrid-success fallback.
 
 ## Out-of-scope research deliberately not pursued
 
@@ -161,4 +170,3 @@ Provider prompts for ordinary dialogue character states MUST:
 - White/black dual-render matting optimization
 - Special/action full-panel generation
 - Storyboard-wide state deduplication
-)
