@@ -33,7 +33,7 @@
     "noIndependentFullScenePanels": true
   },
   "dialogue": {
-    "wording": "Значит, Павел Валерьевич, мы решили разблокировать телеграмм.",
+    "wording": "\u0417\u043d\u0430\u0447\u0438\u0442, \u041f\u0430\u0432\u0435\u043b \u0412\u0430\u043b\u0435\u0440\u044c\u0435\u0432\u0438\u0447, \u043c\u044b \u0440\u0435\u0448\u0438\u043b\u0438 \u0440\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0442\u0435\u043b\u0435\u0433\u0440\u0430\u043c\u043c.",
     "speakerPanel": 0
   },
   "generationRecords": [
@@ -280,5 +280,26 @@
     "note": "Original uploaded identity photographs were not written into the evidence directory."
   },
   "round": "round-2",
-  "outDir": "/Users/andrey/Documents/Projects/comics-pipeline-visual-workflow-spike/specs/006-reproducible-hybrid-dialogue-frame/verification/live/round-2"
+  "outDir": "/Users/andrey/Documents/Projects/comics-pipeline-visual-workflow-spike/specs/006-reproducible-hybrid-dialogue-frame/verification/live/round-2",
+  "evidenceRepair": {
+    "kind": "verification-harness-compositing",
+    "preFixAssembled": "assembled-frame-representative.pre-fix-opaque-backplates.png",
+    "preFixContactSheet": "owner-review-contact-sheet.pre-fix-opaque-backplates.png",
+    "correctedAssembled": "assembled-frame-representative.png",
+    "correctedContactSheet": "owner-review-contact-sheet.png",
+    "opaqueBackplateDetectedLeft": false,
+    "opaqueBackplateDetectedRight": false,
+    "providerRequestsThisRepair": {
+      "image": 0,
+      "text": 0
+    },
+    "browserVisualFrame": "frame-1-visual-browser.png",
+    "browserVisualDialog": "frame-1-visual-browser-dialog.png",
+    "productionRendererOpaqueBackplates": false,
+    "hybridPanelBackgroundCss": "transparent under .frame-canvas.hybrid-visual .panel",
+    "characterLayerBackgroundCss": "transparent",
+    "transparentCornerSamplesShowSharedBackground": true,
+    "cumulativeLiveImageProviderRequestCount": 8,
+    "cumulativeLiveTextProviderRequestCount": 0
+  }
 }

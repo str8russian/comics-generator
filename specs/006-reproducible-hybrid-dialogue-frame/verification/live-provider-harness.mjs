@@ -32,6 +32,11 @@ import {
 } from "../../../app/storyboard-web/image-matte.mjs";
 import { createServer } from "../../../app/storyboard-web/server.mjs";
 import { createVisualStore } from "../../../app/storyboard-web/visual-store.mjs";
+import {
+  assembleRepresentativeHybridFrame,
+  blitSourceOver,
+  downscaleRgba,
+} from "./evidence-composite.mjs";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const LIVE_DIR = process.env.LIVE_HARNESS_OUT_DIR
@@ -364,46 +369,9 @@ function compositeOver(rgba, width, height, backgroundRgb) {
   return encodeRgbaPng(width, height, out);
 }
 
-function downscaleRgba(rgba, width, height, maxSide) {
-  const scale = Math.min(1, maxSide / Math.max(width, height));
-  const tw = Math.max(1, Math.round(width * scale));
-  const th = Math.max(1, Math.round(height * scale));
-  const out = Buffer.alloc(tw * th * 4);
-  for (let y = 0; y < th; y += 1) {
-    for (let x = 0; x < tw; x += 1) {
-      const sx = Math.min(width - 1, Math.floor((x + 0.5) * width / tw));
-      const sy = Math.min(height - 1, Math.floor((y + 0.5) * height / th));
-      const si = (sy * width + sx) * 4;
-      const di = (y * tw + x) * 4;
-      out[di] = rgba[si];
-      out[di + 1] = rgba[si + 1];
-      out[di + 2] = rgba[si + 2];
-      out[di + 3] = rgba[si + 3];
-    }
-  }
-  return { rgba: out, width: tw, height: th };
-}
-
 function decodeAnyToRgba(bytes) {
   // Live outputs and anchors are PNG; identity JPEGs are never decoded here.
   return decodePngRgba(bytes);
-}
-
-function blit(dest, destW, destH, src, srcW, srcH, ox, oy, fill = [32, 32, 36, 255]) {
-  for (let y = 0; y < srcH; y += 1) {
-    for (let x = 0; x < srcW; x += 1) {
-      const dx = ox + x;
-      const dy = oy + y;
-      if (dx < 0 || dy < 0 || dx >= destW || dy >= destH) continue;
-      const di = (dy * destW + dx) * 4;
-      const si = (y * srcW + x) * 4;
-      const a = src[si + 3] / 255;
-      dest[di] = Math.round(src[si] * a + fill[0] * (1 - a));
-      dest[di + 1] = Math.round(src[si + 1] * a + fill[1] * (1 - a));
-      dest[di + 2] = Math.round(src[si + 2] * a + fill[2] * (1 - a));
-      dest[di + 3] = 255;
-    }
-  }
 }
 
 function buildContactSheet(cells, { cellW = 220, cellH = 220, cols = 4, pad = 12, labelBand = 28 } = {}) {
@@ -436,7 +404,8 @@ function buildContactSheet(cells, { cellW = 220, cellH = 220, cols = 4, pad = 12
       const scaled = downscaleRgba(cell.rgba, cell.width, cell.height, Math.min(cellW, cellH) - 8);
       const bx = ox + Math.floor((cellW - scaled.width) / 2);
       const by = oy + Math.floor((cellH - scaled.height) / 2);
-      blit(rgba, width, height, scaled.rgba, scaled.width, scaled.height, bx, by);
+      // Source-over onto the already-painted dark cell (not a constant fill).
+      blitSourceOver(rgba, width, height, scaled.rgba, scaled.width, scaled.height, bx, by);
     }
   });
   return encodeRgbaPng(width, height, rgba);
@@ -582,24 +551,21 @@ async function exportLiveEvidence({
   // Representative assembled frame: shared background with both cutouts side-by-side.
   const c0Decoded = decodeAnyToRgba(c0.rows[0].bytes);
   const c1Decoded = decodeAnyToRgba(c1.rows[0].bytes);
-  const assembledW = Math.max(bgDecoded.width, 1200);
-  const assembledH = Math.max(bgDecoded.height, 540);
-  const assembled = Buffer.alloc(assembledW * assembledH * 4, 0);
-  {
-    const scaledBg = downscaleRgba(bgDecoded.rgba, bgDecoded.width, bgDecoded.height, Math.max(assembledW, assembledH));
-    blit(assembled, assembledW, assembledH, scaledBg.rgba, scaledBg.width, scaledBg.height, 0, 0, [20, 20, 24, 255]);
-    const half = Math.floor(assembledW / 2);
-    const left = downscaleRgba(c0Decoded.rgba, c0Decoded.width, c0Decoded.height, Math.min(half - 24, assembledH - 24));
-    const right = downscaleRgba(c1Decoded.rgba, c1Decoded.width, c1Decoded.height, Math.min(half - 24, assembledH - 24));
-    const leftX = Math.floor((half - left.width) / 2);
-    const rightX = half + Math.floor((half - right.width) / 2);
-    const leftY = Math.floor((assembledH - left.height) / 2);
-    const rightY = Math.floor((assembledH - right.height) / 2);
-    blit(assembled, assembledW, assembledH, left.rgba, left.width, left.height, leftX, leftY);
-    blit(assembled, assembledW, assembledH, right.rgba, right.width, right.height, rightX, rightY);
-  }
-  writeFileSync(join(LIVE_DIR, "assembled-frame-representative.png"), encodeRgbaPng(assembledW, assembledH, assembled));
-  cells.push({ label: "assembled", rgba: assembled, width: assembledW, height: assembledH });
+  const assembledFrame = assembleRepresentativeHybridFrame({
+    background: bgDecoded,
+    panel0: c0Decoded,
+    panel1: c1Decoded,
+  });
+  writeFileSync(
+    join(LIVE_DIR, "assembled-frame-representative.png"),
+    encodeRgbaPng(assembledFrame.width, assembledFrame.height, assembledFrame.rgba),
+  );
+  cells.push({
+    label: "assembled",
+    rgba: assembledFrame.rgba,
+    width: assembledFrame.width,
+    height: assembledFrame.height,
+  });
 
   const contactSheet = buildContactSheet(cells, { cols: 6, cellW: 180, cellH: 180 });
   const contactSheetPath = join(LIVE_DIR, "owner-review-contact-sheet.png");

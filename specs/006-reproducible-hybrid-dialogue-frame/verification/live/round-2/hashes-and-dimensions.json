@@ -24,14 +24,14 @@
     "height": 1152
   },
   "assembled-frame-representative.png": {
-    "sha256": "3dd1342defc70902c8f164f5493f910392f684c7d8f218311c709655543712ab",
-    "bytes": 910049,
+    "sha256": "d09a5c73c15199d4434914a756667814b9a5daae9c5172f3d6f87890e535cd17",
+    "bytes": 1126951,
     "width": 1584,
     "height": 672
   },
   "owner-review-contact-sheet.png": {
-    "sha256": "0bbd3bccdc4b04bd3844aae162fe44f61c6c6197f1d696c5f8ae7c5a47a2f841",
-    "bytes": 196734,
+    "sha256": "b0f219a28dd30f82d0bf0268c85b1236219a5112b52a72c97ed555a7b7290dce",
+    "bytes": 196573,
     "width": 1164,
     "height": 672
   },
@@ -76,5 +76,29 @@
     "bytes": 841477,
     "width": 928,
     "height": 1152
+  },
+  "assembled-frame-representative.pre-fix-opaque-backplates.png": {
+    "sha256": "3dd1342defc70902c8f164f5493f910392f684c7d8f218311c709655543712ab",
+    "bytes": 910049,
+    "width": 1584,
+    "height": 672
+  },
+  "owner-review-contact-sheet.pre-fix-opaque-backplates.png": {
+    "sha256": "0bbd3bccdc4b04bd3844aae162fe44f61c6c6197f1d696c5f8ae7c5a47a2f841",
+    "bytes": 196734,
+    "width": 1164,
+    "height": 672
+  },
+  "frame-1-visual-browser.png": {
+    "sha256": "0c0b10ea54004d0939f5134574748f83ad0974910383b5556040f9561bba2633",
+    "bytes": 598788,
+    "width": 960,
+    "height": 540
+  },
+  "frame-1-visual-browser-dialog.png": {
+    "sha256": "68f55978babdc5f10008d7cc3fdbf46aa7f8d4a5f7af1c4101afffb667197e33",
+    "bytes": 1711460,
+    "width": 4137,
+    "height": 2506
   }
 }

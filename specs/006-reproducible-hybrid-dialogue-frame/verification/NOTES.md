@@ -206,6 +206,43 @@ Evidence: `verification/live/frame-frame-1-diagnostics.zip` generations `7ff008e
 - **T051 marked complete**
 - Human visual acceptance remains pending owner review (not claimed by Cursor)
 
+## 5c. Round-2 assembly evidence repair (harness compositing; zero provider requests)
+
+**Defect (verification harness only, not provider output)**
+
+The first round-2 `assembled-frame-representative.png` showed opaque dark rectangles behind both cutouts. Cause: `live-provider-harness.mjs` `blit` composited transparent source pixels against a constant dark `fill` (`[32,32,36]`) instead of the already-rendered destination background. Light/dark/contrast matte checks that intentionally use fixed fills were not the bug surface.
+
+This is distinct from:
+
+- provider character-state quality (round-2 cutouts themselves were already clean);
+- production renderer behavior (hybrid panels use transparent CSS and source-over image layers).
+
+**Repair**
+
+- Preserved misleading artifacts explicitly:
+  - `verification/live/round-2/assembled-frame-representative.pre-fix-opaque-backplates.png`
+  - `verification/live/round-2/owner-review-contact-sheet.pre-fix-opaque-backplates.png`
+- Extracted `verification/evidence-composite.mjs` with `blitSourceOver`, `blitAgainstFill`, and `assembleRepresentativeHybridFrame`
+- Regenerated faithful `assembled-frame-representative.png` and `owner-review-contact-sheet.png` from stored round-2 background + cutouts only
+- Added deterministic regression tests in `verification/evidence-composite.test.mjs`
+- Captured real Visual frame-1 rendering against `comics_006_live_verify` with providers disabled:
+  - `verification/live/round-2/frame-1-visual-browser.png`
+  - dialog context: `verification/live/round-2/frame-1-visual-browser-dialog.png`
+
+**Browser / production observations**
+
+- Shared office background remains visible through transparent character regions
+- No opaque rectangular backplates in the real hybrid Visual canvas
+- `.frame-canvas.hybrid-visual .panel` and `.character-layer` backgrounds are transparent
+- Dialogue wording unchanged; `speakerPanel=0` (dialogue text in left cell only)
+- Both characters, divider/gutter, scale, and gaze remain consistent with round-2 acceptance
+- Image-provider calls this repair: **0**; text-provider calls: **0**
+- Cumulative totals unchanged: image **8**, text **0**
+
+**T052 / T053**
+
+- Left unchecked; human visual acceptance still pending owner review
+
 ## 6. Live deterministic edge measurements
 
 Round-1 final ready cutouts (`live/live-run-report.json`) — historical:
@@ -242,6 +279,9 @@ PENDING PRODUCT-OWNER REVIEW
 Inspect at least (prefer round-2 current evidence; keep round-1 as history):
 
 - `verification/live/round-2/owner-review-contact-sheet.png`
+- `verification/live/round-2/assembled-frame-representative.png` (faithful source-over repair)
+- `verification/live/round-2/frame-1-visual-browser.png` (real Visual canvas)
+- Historical harness defect (do not treat as product output): `*.pre-fix-opaque-backplates.png`
 - `verification/live/round-2/approved-anchor-putin.png`
 - `verification/live/round-2/approved-anchor-durov.png`
 - `verification/live/round-2/panel-0-chromakey-raw.png`
@@ -251,7 +291,6 @@ Inspect at least (prefer round-2 current evidence; keep round-1 as history):
 - `verification/live/round-2/panel-1-cutout-rgba.png`
 - `verification/live/round-2/panel-1-composite-{light,dark,contrast}.png`
 - `verification/live/round-2/shared-background.png` (same retained #3 bytes)
-- `verification/live/round-2/assembled-frame-representative.png`
 - Optional local diagnostics ZIP (gitignored): `verification/live/round-2/frame-frame-1-diagnostics.zip`
 
 Review questions:
