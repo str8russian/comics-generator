@@ -478,6 +478,7 @@ function hybridEligibleState(overrides = {}) {
       hybrid: {
         sceneKey: "primary",
         compositionMode: "near-frontal-pair",
+        assemblyStatus: "not-ready",
         activeOperationId: null,
         operation: null,
         background: { status: "missing", assetId: null },
@@ -676,6 +677,7 @@ test("eligible hybrid frame accept returns 202, polls real phases, and completes
           visualReady: true,
           hybrid: {
             ...op.hybrid,
+            assemblyStatus: "ready",
             activeOperationId: op.operationId,
             operation: {
               operationId: op.operationId,
@@ -764,6 +766,7 @@ test("hybrid failures map contract kinds and retain previous ready assembly", as
   const previousHybrid = {
     sceneKey: "primary",
     compositionMode: "near-frontal-pair",
+    assemblyStatus: "ready",
     activeOperationId: "op-prev",
     operation: {
       operationId: "op-prev",
@@ -1040,6 +1043,7 @@ test("overflow fitting preserves hybrid fields, dialogue, and speakerPanel", asy
     hybrid: {
       sceneKey: "primary",
       compositionMode: "near-frontal-pair",
+      assemblyStatus: "ready",
       activeOperationId: null,
       background: { status: "ready", assetId: "bg-1" },
       panels: [
@@ -1088,6 +1092,16 @@ test("overflow fitting preserves hybrid fields, dialogue, and speakerPanel", asy
       },
     ],
   };
+  const notReady = {
+    ...frame,
+    visualReady: false,
+    hybrid: { ...frame.hybrid, assemblyStatus: "not-ready" },
+  };
+  const notReadyFitted = compileOverflow([notReady], () => true);
+  assert.equal(notReadyFitted.ok, true);
+  assert.equal(notReadyFitted.frames[0].visualReady, false);
+  assert.equal(notReadyFitted.frames[0].hybrid.assemblyStatus, "not-ready");
+
   const fitted = compileOverflow([frame], (text, options) => {
     if (options.fontSize > 31) return false;
     return text.length <= 20;
@@ -1099,6 +1113,7 @@ test("overflow fitting preserves hybrid fields, dialogue, and speakerPanel", asy
   for (const piece of fitted.frames) {
     assert.equal(piece.speakerPanel, 1);
     assert.equal(piece.hybrid.sceneKey, "primary");
+    assert.equal(piece.hybrid.assemblyStatus, "ready");
     assert.equal(piece.hybrid.background.assetId, "bg-1");
     assert.equal(piece.panels[0].characterAssetId, "c0");
     assert.equal(piece.panels[0].fitMode, "manual");

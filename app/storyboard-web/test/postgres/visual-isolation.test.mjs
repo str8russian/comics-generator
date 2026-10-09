@@ -795,42 +795,72 @@ test("hybrid lifecycle keeps provenance before provider I/O and retains ready he
     const op = await store.createFrameOperation({ frameId: "frame-1" });
     assert.equal(op.ok, true);
 
+    const providerConfig = { model: "hybrid-test-model", timeoutMs: 12345 };
     let providerCalls = 0;
     const backgroundBegin = await store.beginSceneBackgroundLifecycle({
       operationId: op.operationId,
+      providerConfig,
+      env: {},
     });
     assert.equal(backgroundBegin.ok, true);
     assert.equal(backgroundBegin.mode, "generate");
     const recordBeforeProvider = await pool.query(
-      `SELECT status, compiled_prompt FROM generation_record WHERE id = $1`,
+      `SELECT status, compiled_prompt, model, generation_settings_json,
+              provider_status, latency_ms
+       FROM generation_record WHERE id = $1`,
       [backgroundBegin.generationRecordId],
     );
     assert.equal(recordBeforeProvider.rows[0].status, "pending");
     assert.ok(String(recordBeforeProvider.rows[0].compiled_prompt).length > 0);
+    assert.equal(recordBeforeProvider.rows[0].model, "hybrid-test-model");
+    assert.equal(recordBeforeProvider.rows[0].generation_settings_json.aspectRatio, "21:9");
+    assert.equal(recordBeforeProvider.rows[0].generation_settings_json.component, "scene-background");
+    assert.equal(recordBeforeProvider.rows[0].generation_settings_json.timeoutMs, 12345);
+    assert.equal(recordBeforeProvider.rows[0].provider_status, null);
     assert.equal(providerCalls, 0, "provenance exists before any provider call");
 
     providerCalls += 1;
     const bgDone = await store.finalizeSceneBackgroundLifecycle({
       generationId: backgroundBegin.generationId,
-      providerResult: { ok: true, image: { bytes: png } },
+      providerResult: {
+        ok: true,
+        image: { bytes: png },
+        metadata: { providerStatus: 200, latencyMs: 42, model: "hybrid-test-model" },
+      },
     });
     assert.equal(bgDone.ok, true);
     assert.equal(bgDone.advancedCurrentPointer, true);
+    const recordAfterSuccess = await pool.query(
+      `SELECT status, model, provider_status, latency_ms FROM generation_record WHERE id = $1`,
+      [backgroundBegin.generationRecordId],
+    );
+    assert.equal(recordAfterSuccess.rows[0].status, "ready");
+    assert.equal(recordAfterSuccess.rows[0].model, "hybrid-test-model");
+    assert.equal(Number(recordAfterSuccess.rows[0].provider_status), 200);
+    assert.equal(Number(recordAfterSuccess.rows[0].latency_ms), 42);
 
     const charBegin = await store.beginCharacterStateLifecycle({
       operationId: op.operationId,
       frameId: "frame-1",
       panelIndex: 0,
+      providerConfig,
+      env: {},
     });
     assert.equal(charBegin.ok, true);
     const charRecord = await pool.query(
-      `SELECT status FROM generation_record WHERE id = $1`,
+      `SELECT status, model, generation_settings_json FROM generation_record WHERE id = $1`,
       [charBegin.generationRecordId],
     );
     assert.equal(charRecord.rows[0].status, "pending");
+    assert.equal(charRecord.rows[0].model, "hybrid-test-model");
+    assert.equal(charRecord.rows[0].generation_settings_json.panelIndex, 0);
     const charReady = await store.finalizeCharacterStateLifecycle({
       generationId: charBegin.generationId,
-      providerResult: { ok: true, image: { bytes: chromakeySubjectPng() } },
+      providerResult: {
+        ok: true,
+        image: { bytes: chromakeySubjectPng() },
+        metadata: { providerStatus: 201, latencyMs: 17 },
+      },
       advanceWithOperationId: op.operationId,
     });
     assert.equal(charReady.ok, true);
@@ -838,26 +868,44 @@ test("hybrid lifecycle keeps provenance before provider I/O and retains ready he
     assert.equal(charReady.advancedCurrentPointer, true);
     assert.ok(charReady.rawAssetId);
     assert.ok(charReady.outputAssetId);
+    const charTerminal = await pool.query(
+      `SELECT provider_status, latency_ms FROM generation_record WHERE id = $1`,
+      [charBegin.generationRecordId],
+    );
+    assert.equal(Number(charTerminal.rows[0].provider_status), 201);
+    assert.equal(Number(charTerminal.rows[0].latency_ms), 17);
 
     const opaqueFailBegin = await store.beginCharacterStateLifecycle({
       operationId: op.operationId,
       frameId: "frame-1",
       panelIndex: 0,
+      providerConfig,
+      env: {},
     });
     assert.equal(opaqueFailBegin.ok, true);
     const matteFailed = await store.finalizeCharacterStateLifecycle({
       generationId: opaqueFailBegin.generationId,
-      providerResult: { ok: true, image: { bytes: png } },
+      providerResult: {
+        ok: true,
+        image: { bytes: png },
+        metadata: { providerStatus: 200, latencyMs: 9 },
+      },
       advanceWithOperationId: op.operationId,
     });
     assert.equal(matteFailed.ok, true);
     assert.equal(matteFailed.status, "failed");
     assert.equal(matteFailed.errorKind, "matte-failed");
     assert.equal(matteFailed.advancedCurrentPointer, false);
+    const failedTerminal = await pool.query(
+      `SELECT provider_status, latency_ms FROM generation_record WHERE id = $1`,
+      [opaqueFailBegin.generationRecordId],
+    );
+    assert.equal(Number(failedTerminal.rows[0].provider_status), 200);
+    assert.equal(Number(failedTerminal.rows[0].latency_ms), 9);
     const head = await store.loadHybridPersistence({ frameId: "frame-1" });
     assert.equal(head.panels[0].currentCharacterGenerationId, charBegin.generationId);
 
-    const assembly = await store.evaluateHybridAssembly({ frameId: "frame-1" });
+    const assembly = await store.evaluateHybridAssembly({ frameId: "frame-1", operationId: op.operationId });
     assert.equal(assembly.ok, true);
     assert.equal(assembly.visualReady, false, "both panels required for assembly readiness");
 
@@ -865,23 +913,241 @@ test("hybrid lifecycle keeps provenance before provider I/O and retains ready he
       operationId: op.operationId,
       frameId: "frame-1",
       panelIndex: 1,
+      providerConfig,
+      env: {},
     });
     assert.equal(char1.ok, true);
     const char1Ready = await store.finalizeCharacterStateLifecycle({
       generationId: char1.generationId,
-      providerResult: { ok: true, image: { bytes: chromakeySubjectPng() } },
+      providerResult: {
+        ok: true,
+        image: { bytes: chromakeySubjectPng() },
+        metadata: { providerStatus: 200, latencyMs: 11 },
+      },
       advanceWithOperationId: op.operationId,
     });
     assert.equal(char1Ready.ok, true);
-    const readyAssembly = await store.evaluateHybridAssembly({ frameId: "frame-1" });
+    const readyAssembly = await store.evaluateHybridAssembly({
+      frameId: "frame-1",
+      operationId: op.operationId,
+    });
     assert.equal(readyAssembly.visualReady, true);
 
     const loaded = await store.load();
     assert.equal(loaded.frames[0].visualReady, true);
+    assert.equal(loaded.frames[0].hybrid.assemblyStatus, "ready");
     assert.equal(loaded.frames[0].hybrid.background.status, "ready");
     assert.equal(loaded.frames[0].hybrid.panels[0].status, "ready");
     assert.ok(loaded.frames[0].detailedBrief);
     assert.equal(String(loaded.frames[0].detailedBrief).includes("#00FF00"), false);
+
+    // Authoritative background failure clears the scene claim and preserves prior ready pointer.
+    const failOp = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(failOp.ok, true);
+    const failBegin = await store.beginSceneBackgroundLifecycle({
+      operationId: failOp.operationId,
+      providerConfig,
+      env: {},
+      preferReuse: false,
+    });
+    assert.equal(failBegin.mode, "generate");
+    const beforeFailPointer = await store.loadHybridPersistence({ frameId: "frame-1" });
+    const previousBg = beforeFailPointer.sceneBackgroundState.currentGenerationId;
+    const failFinalize = await store.finalizeSceneBackgroundLifecycle({
+      generationId: failBegin.generationId,
+      providerResult: { ok: false, kind: "provider", diagnostics: { providerStatus: 500, latencyMs: 3 } },
+    });
+    assert.equal(failFinalize.ok, true);
+    assert.equal(failFinalize.status, "failed");
+    assert.equal(failFinalize.clearedSceneClaim, true);
+    const afterFail = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(afterFail.sceneBackgroundState.currentGenerationId, previousBg);
+    assert.equal(afterFail.sceneBackgroundState.activeOperationId, null);
+
+    // Stale failure must not clear a newer scene claim.
+    const newerOp = await store.createFrameOperation({ frameId: "frame-1" });
+    const staleOp = await store.createFrameOperation({ frameId: "frame-2" });
+    const staleBegin = await store.beginSceneBackgroundLifecycle({
+      operationId: staleOp.operationId,
+      providerConfig,
+      env: {},
+      preferReuse: false,
+    });
+    assert.equal(staleBegin.mode, "generate");
+    const newerBegin = await store.beginSceneBackgroundLifecycle({
+      operationId: newerOp.operationId,
+      providerConfig,
+      env: {},
+      preferReuse: false,
+    });
+    assert.equal(newerBegin.mode, "generate");
+    const staleFail = await store.finalizeSceneBackgroundLifecycle({
+      generationId: staleBegin.generationId,
+      providerResult: { ok: false, kind: "provider", diagnostics: { providerStatus: 500, latencyMs: 1 } },
+    });
+    assert.equal(staleFail.ok, true);
+    assert.equal(staleFail.clearedSceneClaim, false);
+    const afterStaleFail = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(afterStaleFail.sceneBackgroundState.activeOperationId, newerOp.operationId);
+    assert.equal(afterStaleFail.sceneBackgroundState.currentGenerationId, previousBg);
+
+    // Orphan-claim injection: failure before generation insert rolls back the claim.
+    const beforeOrphan = await store.loadHybridPersistence({ frameId: "frame-1" });
+    const claimBeforeOrphan = beforeOrphan.sceneBackgroundState.activeOperationId;
+    const writeBeforeOrphan = beforeOrphan.sceneBackgroundState.writeVersion;
+    const orphanOp = await store.createFrameOperation({ frameId: "frame-2" });
+    assert.equal(orphanOp.ok, true);
+    const orphanBegin = await store.beginSceneBackgroundLifecycle({
+      operationId: orphanOp.operationId,
+      providerConfig,
+      env: {},
+      preferReuse: false,
+      onBeforeCreateGeneration: async () => {
+        const error = new Error("inject-begin-failure");
+        error.kind = "database";
+        error.httpStatus = 503;
+        throw error;
+      },
+    });
+    assert.equal(orphanBegin.ok, false);
+    assert.equal(orphanBegin.kind, "database");
+    const orphanScene = await store.loadHybridPersistence({ frameId: "frame-2" });
+    assert.equal(orphanScene.sceneBackgroundState.activeOperationId, claimBeforeOrphan);
+    assert.equal(orphanScene.sceneBackgroundState.writeVersion, writeBeforeOrphan);
+    assert.notEqual(orphanScene.sceneBackgroundState.activeOperationId, orphanOp.operationId);
+    const orphanRecords = await pool.query(
+      `SELECT count(*)::int AS count FROM generation_record
+       WHERE operation_id = $1`,
+      [orphanOp.operationId],
+    );
+    assert.equal(orphanRecords.rows[0].count, 0);
+    const orphanGens = await pool.query(
+      `SELECT count(*)::int AS count FROM scene_background_generation
+       WHERE operation_id = $1`,
+      [orphanOp.operationId],
+    );
+    assert.equal(orphanGens.rows[0].count, 0);
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+test("stale frame operation finalizes own evidence but cannot complete or continue", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-09T15:00:00Z", splitDialogueFrames());
+    const store = createVisualStore(pool);
+    await approveStyleAndAnchor(store);
+    await store.ensureHybridHeads({ frameId: "frame-1" });
+    const providerConfig = { model: "stale-model", timeoutMs: 1000 };
+
+    const opA = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(opA.ok, true);
+    let releaseA;
+    const gateA = new Promise((resolve) => {
+      releaseA = resolve;
+    });
+    let aCalls = 0;
+    const runA = store.orchestrateHybridFrameOperation({
+      operationId: opA.operationId,
+      providerConfig,
+      env: {},
+      generateImage: async () => {
+        aCalls += 1;
+        await gateA;
+        return {
+          ok: true,
+          image: { bytes: aCalls === 1 ? png : chromakeySubjectPng() },
+          metadata: { providerStatus: 200, latencyMs: 5 },
+        };
+      },
+    });
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (aCalls >= 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(aCalls, 1, "operation A enters the first provider call");
+
+    const opB = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(opB.ok, true);
+    assert.notEqual(opB.operationId, opA.operationId);
+    const hybridAfterB = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(hybridAfterB.frameHybridState.activeOperationId, opB.operationId);
+
+    releaseA();
+    const resultA = await runA;
+    assert.equal(resultA.ok, false);
+    assert.equal(resultA.kind, "conflict");
+    assert.equal(aCalls, 1, "stale operation A must not start remaining provider calls");
+
+    const opARow = await pool.query(`SELECT status, phase, error_kind FROM visual_frame_operation WHERE id = $1`, [opA.operationId]);
+    assert.equal(opARow.rows[0].status, "failed");
+    assert.equal(opARow.rows[0].phase, "failed");
+    assert.equal(opARow.rows[0].error_kind, "conflict");
+
+    const aRecords = await pool.query(
+      `SELECT status FROM generation_record WHERE operation_id = $1 ORDER BY created_at`,
+      [opA.operationId],
+    );
+    assert.ok(aRecords.rowCount >= 1);
+    assert.equal(aRecords.rows[0].status, "ready");
+
+    const persistence = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(persistence.frameHybridState.activeOperationId, opB.operationId);
+    assert.equal(
+      persistence.sceneBackgroundState.currentGenerationId == null
+        || persistence.sceneBackgroundState.activeOperationId == null
+        || persistence.sceneBackgroundState.activeOperationId === opB.operationId,
+      true,
+    );
+
+    // Stale evaluate must not mutate assembly status.
+    await pool.query(`
+      UPDATE frame_hybrid_state
+      SET assembly_status = 'not-ready'
+      WHERE storyboard_version_id = $1 AND frame_id = 'frame-1'
+    `, [persistence.storyboardVersionId]);
+    const staleEval = await store.evaluateHybridAssembly({
+      frameId: "frame-1",
+      operationId: opA.operationId,
+    });
+    assert.equal(staleEval.ok, false);
+    assert.equal(staleEval.kind, "conflict");
+    const assemblyAfter = await pool.query(`
+      SELECT assembly_status FROM frame_hybrid_state
+      WHERE storyboard_version_id = $1 AND frame_id = 'frame-1'
+    `, [persistence.storyboardVersionId]);
+    assert.equal(assemblyAfter.rows[0].assembly_status, "not-ready");
+
+    // Operation B remains authoritative and can proceed independently.
+    const resultB = await store.orchestrateHybridFrameOperation({
+      operationId: opB.operationId,
+      providerConfig,
+      env: {},
+      generateImage: async ({ aspectRatio }) => ({
+        ok: true,
+        image: { bytes: aspectRatio === "21:9" ? png : chromakeySubjectPng() },
+        metadata: { providerStatus: 200, latencyMs: 8 },
+      }),
+    });
+    assert.equal(resultB.ok, true);
+    assert.equal(resultB.visualReady, true);
+    const loaded = await store.load();
+    assert.equal(loaded.frames[0].visualReady, true);
+    assert.equal(loaded.frames[0].hybrid.assemblyStatus, "ready");
   } finally {
     await reset(pool).catch(() => {});
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
