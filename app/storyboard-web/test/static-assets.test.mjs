@@ -52,9 +52,10 @@ test("browser module URLs stay on the static allowlist and Node can import the c
   const allow = new Set(routes.map((route) => route.path));
   const appJs = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
   const overflow = readFileSync(new URL("../overflow.mjs", import.meta.url), "utf8");
-  for (const specifier of ["/app.js", "/overflow.mjs", "/frame-renderer.mjs"]) {
+  for (const specifier of ["/app.js", "/hybrid-ui.mjs", "/overflow.mjs", "/frame-renderer.mjs"]) {
     assert.equal(allow.has(specifier), true, specifier);
   }
+  assert.match(appJs, /from "\/hybrid-ui\.mjs"/);
   assert.match(appJs, /from "\/overflow\.mjs"/);
   assert.match(appJs, /from "\/frame-renderer\.mjs"/);
   assert.match(overflow, /new URL\("\/frame-renderer\.mjs", import\.meta\.url\)/);

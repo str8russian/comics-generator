@@ -1,4 +1,11 @@
 import { bindDraftAutosave } from "/draft-autosave.mjs";
+import {
+  actionMessage as hybridActionMessage,
+  DEFAULT_PLACEMENT,
+  fitPlacement,
+  hybridFailureMessage,
+  hybridPhaseMessage,
+} from "/hybrid-ui.mjs";
 import { assessDialogue, compileOverflow, pageState } from "/overflow.mjs";
 import * as FrameRenderer from "/frame-renderer.mjs";
 
@@ -47,6 +54,12 @@ let castChain = Promise.resolve();
 let visual = null;
 let detailIndex = -1;
 let busy = false;
+/** @type {Map<string, { operationId: string, controller: AbortController, generation: number }>} */
+const activePolls = new Map();
+let pollGeneration = 0;
+/** Debounced placement persistence tokens by frame:panel */
+const placementPersistTimers = new Map();
+const CONFIRMED_PLACEMENT = new Map();
 
 export const draftAutosave = bindDraftAutosave({
   textarea: draftField,
@@ -169,7 +182,13 @@ function showReady(frames, state = "ready") {
     number.textContent = `Кадр ${index + 1}`;
     const status = document.createElement("span");
     status.className = "card-status";
-    status.textContent = frame.visualReady ? "Изображения готовы" : "Текст";
+    if (frame.hybrid?.operation?.status === "running") {
+      status.textContent = hybridPhaseMessage(frame.hybrid.operation.phase);
+    } else if (frame.hybrid?.operation?.status === "failed") {
+      status.textContent = "Ошибка генерации";
+    } else {
+      status.textContent = frame.visualReady ? "Изображения готовы" : "Текст";
+    }
     top.append(number, status);
     const preview = document.createElement("button");
     preview.type = "button";
@@ -210,14 +229,32 @@ function openDetail(index) {
   if (!frame) return;
   detailIndex = index;
   mountFrame(detailHost, frame, 0.5);
-  detailOutside.textContent = frame.outsideFrameText || "";
-  renderPanelControls(frame);
+  renderDetailChrome(frame, index);
   const following = readyFrames[index + 1];
   nextFrame.hidden = !frame.visualReady || !following;
   if (following) {
     nextFrame.textContent = following.visualReady ? "Открыть следующий кадр" : "Создать следующий кадр";
   }
   if (!detail.open) detail.showModal();
+}
+
+function renderDetailChrome(frame, index) {
+  const parts = [];
+  parts.push(`Кадр ${index + 1}`);
+  if (frame.gridDescription) parts.push(frame.gridDescription);
+  if (frame.detailedBrief) parts.push(frame.detailedBrief);
+  const op = frame.hybrid?.operation;
+  if (op?.status === "running") {
+    parts.push(hybridPhaseMessage(op.phase));
+  } else if (op?.status === "failed" && op.errorKind) {
+    parts.push(hybridFailureMessage(op.errorKind));
+  } else if (frame.visualReady) {
+    parts.push(hybridPhaseMessage("complete"));
+  }
+  detailOutside.textContent = [frame.outsideFrameText, ...parts].filter(Boolean).join("\n\n");
+  detailOutside.setAttribute("aria-live", "polite");
+  detailOutside.setAttribute("role", "status");
+  renderPanelControls(frame);
 }
 
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
@@ -260,24 +297,7 @@ async function fetchJson(path, options = {}) {
 }
 
 function actionMessage(kind) {
-  const messages = {
-    "identity-required": "Сначала выберите реальную фотографию персонажа.",
-    "anchor-required": "Сначала утвердите базовый образ этого персонажа.",
-    "invalid-image": "Не удалось прочитать изображение. Выберите JPEG, PNG или WebP.",
-    "unsupported-image-format": "Этот формат пока не поддерживается. Выберите JPEG, PNG или WebP.",
-    "image-too-large": "Файл слишком большой. Выберите фото меньшего размера.",
-    "structure-rejected": "Не удалось применить эту правку, не меняя реплики. Опишите изменение кадра иначе.",
-    "invalid-request": "Не удалось прочитать запрос. Проверьте файл или формулировку правки и попробуйте ещё раз.",
-    "visual-incomplete": "Сначала создайте изображения для всех панелей.",
-    timeout: "Генерация заняла слишком много времени. Попробуйте ещё раз.",
-    provider: "Провайдер не завершил генерацию. Уже готовые результаты сохранены.",
-    "invalid-output": "Провайдер не вернул пригодное изображение.",
-    database: "Не удалось сохранить результат. Попробуйте ещё раз.",
-    "stale-version": "Раскадровка уже изменилась. Обновите страницу и повторите действие.",
-    "asset-load-failed": "Изображение не удалось показать. Обновите страницу или создайте панель заново.",
-    "nothing-to-undo": "Предыдущей структурной версии пока нет.",
-  };
-  return messages[kind] || "Не удалось выполнить действие. Попробуйте ещё раз.";
+  return hybridActionMessage(kind);
 }
 
 function failureNotice(failures) {
@@ -334,14 +354,9 @@ function fileAsDataUrl(file) {
   });
 }
 
-function withVisualReady(frames) {
-  return (frames || []).map((frame) => {
-    const panels = Array.isArray(frame?.panels) ? frame.panels : [];
-    return {
-      ...frame,
-      visualReady: panels.length > 0 && panels.every((panel) => Boolean(panel?.assetId)),
-    };
-  });
+function preserveServerVisualReady(frames) {
+  // Server already applies hybrid vs historical readiness rules; do not overwrite.
+  return (frames || []).map((frame) => ({ ...frame }));
 }
 
 function fitFrames(frames) {
@@ -352,11 +367,118 @@ function fitFrames(frames) {
       panels: options.panels,
       dialogue: text,
     }, options.fontSize));
-    if (!fitted.ok) return withVisualReady(frames);
-    return withVisualReady(fitted.frames);
+    if (!fitted.ok) return preserveServerVisualReady(frames);
+    return preserveServerVisualReady(fitted.frames);
   } catch (error) {
     console.warn("[visual] fitFrames failed", { kind: "measurement" });
-    return withVisualReady(frames);
+    return preserveServerVisualReady(frames);
+  }
+}
+
+function stopPoll(frameId) {
+  const entry = activePolls.get(frameId);
+  if (!entry) return;
+  entry.controller.abort();
+  activePolls.delete(frameId);
+}
+
+function stopAllPolls() {
+  for (const frameId of [...activePolls.keys()]) stopPoll(frameId);
+}
+
+async function pollHybridOperation(frameId, operationId, { onPhase } = {}) {
+  stopPoll(frameId);
+  pollGeneration += 1;
+  const generation = pollGeneration;
+  const controller = new AbortController();
+  activePolls.set(frameId, { operationId, controller, generation });
+  try {
+    while (!controller.signal.aborted) {
+      const response = await fetch(
+        `/api/visual/frames/${encodeURIComponent(frameId)}/operations/${encodeURIComponent(operationId)}`,
+        { signal: controller.signal },
+      );
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      const current = activePolls.get(frameId);
+      if (!current || current.generation !== generation || current.operationId !== operationId) {
+        return null;
+      }
+      if (!response.ok) {
+        const kind = payload?.kind || "not-found";
+        return { ok: false, kind, status: "failed", operationId };
+      }
+      if (typeof onPhase === "function") onPhase(payload);
+      if (payload.status === "complete" || payload.status === "failed") {
+        return payload;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  } catch (error) {
+    if (error?.name === "AbortError") return null;
+    throw error;
+  } finally {
+    const current = activePolls.get(frameId);
+    if (current?.generation === generation) activePolls.delete(frameId);
+  }
+  return null;
+}
+
+async function resumeHybridPollingFromVisual(next) {
+  for (const frame of next.frames || []) {
+    const operationId = frame.hybrid?.activeOperationId;
+    const status = frame.hybrid?.operation?.status;
+    if (!operationId || status !== "running") continue;
+    if (activePolls.has(frame.id)) continue;
+    const index = (next.frames || []).findIndex((entry) => entry.id === frame.id);
+    void watchHybridOperation(frame.id, operationId, index);
+  }
+}
+
+async function watchHybridOperation(frameId, operationId, index) {
+  showActionNotice(hybridPhaseMessage("queued"));
+  const terminal = await pollHybridOperation(frameId, operationId, {
+    onPhase: (payload) => {
+      if (payload.status === "running") {
+        showActionNotice(hybridPhaseMessage(payload.phase));
+        const frame = readyFrames.find((entry) => entry.id === frameId);
+        if (frame?.hybrid) {
+          frame.hybrid.operation = {
+            operationId: payload.operationId,
+            phase: payload.phase,
+            status: payload.status,
+            errorKind: payload.errorKind,
+            writeVersion: payload.writeVersion,
+          };
+        }
+        if (detail.open && detailIndex >= 0 && readyFrames[detailIndex]?.id === frameId) {
+          renderDetailChrome(readyFrames[detailIndex], detailIndex);
+        }
+      }
+    },
+  });
+  if (!terminal) return;
+  try {
+    const refreshed = await fetchJson("/api/visual");
+    if (refreshed.status === "ready") applyVisual(refreshed);
+  } catch {
+    // Keep last known visual if refresh fails.
+  }
+  if (terminal.status === "complete" && terminal.visualReady) {
+    showActionNotice(hybridPhaseMessage("complete"));
+    const fittedIndex = readyFrames.findIndex((frame) => frame.id === frameId);
+    const openIndex = fittedIndex >= 0 ? fittedIndex : index;
+    if (Number.isInteger(openIndex) && readyFrames[openIndex]) openDetail(openIndex);
+    return;
+  }
+  const kind = terminal.errorKind || terminal.kind || "provider";
+  showActionNotice(hybridFailureMessage(kind), "error");
+  if (detail.open && detailIndex >= 0 && readyFrames[detailIndex]?.id === frameId) {
+    renderDetailChrome(readyFrames[detailIndex], detailIndex);
   }
 }
 
@@ -504,7 +626,10 @@ function applyVisual(next) {
 async function refreshVisual() {
   try {
     const next = await fetchJson("/api/visual");
-    if (next.status === "ready") applyVisual(next);
+    if (next.status === "ready") {
+      applyVisual(next);
+      await resumeHybridPollingFromVisual(next);
+    }
   } catch {
     // Earlier checkpoints and isolated UI tests do not expose the visual API.
   }
@@ -512,44 +637,134 @@ async function refreshVisual() {
 
 async function generateFrame(frameId, button, index) {
   const source = (visual?.frames || []).find((frame) => frame.id === frameId);
-  const panelCount = source?.panels?.length || 1;
-  const progress = panelCount > 1
-    ? `Создаю изображения этого кадра: ${panelCount} панели…`
-    : "Создаю изображение этого кадра…";
-  await runBusy(progress, async () => {
-    const previous = button.textContent;
-    button.textContent = panelCount > 1 ? `Создаю ${panelCount} панели…` : "Создаю…";
+  const hybridEligible = Boolean(source?.hybrid) || source?.layout === "split2";
+  const previous = button.textContent;
+  button.textContent = "Создаю…";
+  button.disabled = true;
+  showActionNotice(hybridPhaseMessage("queued"));
+  try {
+    const response = await fetch(`/api/visual/frames/${encodeURIComponent(frameId)}/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    let payload = null;
     try {
-      const next = await fetchJson(`/api/visual/frames/${encodeURIComponent(frameId)}/generate`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
-      applyVisual(next);
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    if (response.status === 202 && payload?.operationId) {
       const fittedIndex = readyFrames.findIndex((frame) => frame.id === frameId);
       const openIndex = fittedIndex >= 0 ? fittedIndex : index;
-      if (Number.isInteger(openIndex) && readyFrames[openIndex]) {
-        openDetail(openIndex);
-      }
-      const failures = next.generationFailures || [];
+      if (Number.isInteger(openIndex) && readyFrames[openIndex]) openDetail(openIndex);
+      await watchHybridOperation(frameId, payload.operationId, openIndex);
+      return;
+    }
+    if (!response.ok) {
+      const kind = payload?.kind || "request-failed";
+      showActionNotice(actionMessage(kind), "error");
+      return;
+    }
+    // Legacy synchronous full-panel path for non-hybrid frames.
+    if (payload?.status === "ready") {
+      applyVisual(payload);
+      const fittedIndex = readyFrames.findIndex((frame) => frame.id === frameId);
+      const openIndex = fittedIndex >= 0 ? fittedIndex : index;
+      if (Number.isInteger(openIndex) && readyFrames[openIndex]) openDetail(openIndex);
+      const failures = payload.generationFailures || [];
       const notice = failureNotice(failures);
       showActionNotice(
-        notice || (next.frames?.find((frame) => frame.id === frameId)?.visualReady
+        notice || (payload.frames?.find((frame) => frame.id === frameId)?.visualReady
           ? "Кадр готов. Проверьте изображения."
           : "Генерация завершилась, но кадр ещё не полностью готов."),
         notice ? "error" : "info",
       );
-    } catch (error) {
-      console.error("[visual] frame generation failed", { kind: error?.kind || "request-failed", frameId });
-      throw error;
-    } finally {
-      button.textContent = previous;
+      return;
     }
+    showActionNotice(actionMessage("request-failed"), "error");
+    void hybridEligible;
+  } catch (error) {
+    console.error("[visual] frame generation failed", { kind: error?.kind || "request-failed", frameId });
+    showActionNotice(actionMessage(error?.kind || "request-failed"), "error");
+  } finally {
+    button.textContent = previous;
+    button.disabled = false;
+  }
+}
+
+function placementKey(frameId, panelIndex) {
+  return `${frameId}:${panelIndex}`;
+}
+
+function readPlacement(panel) {
+  return {
+    zoom: Number(panel.zoom) || DEFAULT_PLACEMENT.zoom,
+    positionX: Number(panel.positionX ?? 50),
+    positionY: Number(panel.positionY ?? 30),
+    fitMode: panel.fitMode === "fit" ? "fit" : "manual",
+  };
+}
+
+function applyLocalPlacement(frame, panelIndex, placement) {
+  const panel = frame.panels[panelIndex];
+  panel.zoom = placement.zoom;
+  panel.positionX = placement.positionX;
+  panel.positionY = placement.positionY;
+  panel.fitMode = placement.fitMode;
+  panel.position = `${placement.positionX}% ${placement.positionY}%`;
+  panel.align = `${placement.positionX}% ${placement.positionY}%`;
+  if (frame.hybrid?.panels?.[panelIndex]) {
+    Object.assign(frame.hybrid.panels[panelIndex], {
+      zoom: placement.zoom,
+      positionX: placement.positionX,
+      positionY: placement.positionY,
+      fitMode: placement.fitMode,
+    });
+  }
+}
+
+async function persistPlacement(frameId, panelIndex, placement) {
+  const key = placementKey(frameId, panelIndex);
+  const existing = placementPersistTimers.get(key);
+  if (existing) clearTimeout(existing.timer);
+  return new Promise((resolve) => {
+    const timer = setTimeout(async () => {
+      placementPersistTimers.delete(key);
+      try {
+        const next = await fetchJson(
+          `/api/visual/frames/${encodeURIComponent(frameId)}/panels/${panelIndex}/placement`,
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(placement),
+          },
+        );
+        CONFIRMED_PLACEMENT.set(key, { ...placement });
+        applyVisual(next);
+        showActionNotice("Размещение сохранено без новой генерации.");
+        resolve(true);
+      } catch (error) {
+        const confirmed = CONFIRMED_PLACEMENT.get(key);
+        const frame = readyFrames.find((entry) => entry.id === frameId);
+        if (confirmed && frame) {
+          applyLocalPlacement(frame, panelIndex, confirmed);
+          if (detail.open && readyFrames[detailIndex]?.id === frameId) {
+            mountFrame(detailHost, frame, 0.5);
+            renderPanelControls(frame);
+          }
+        }
+        showActionNotice(actionMessage(error?.kind || "request-failed"), "error");
+        resolve(false);
+      }
+    }, 200);
+    placementPersistTimers.set(key, { timer });
   });
 }
 
 function renderPanelControls(frame) {
   detailPanelControls.replaceChildren();
+  const hybridFrame = Boolean(frame.hybrid);
   frame.panels.forEach((panel, panelIndex) => {
     const section = document.createElement("section");
     section.className = "panel-control";
@@ -560,85 +775,165 @@ function renderPanelControls(frame) {
     const description = document.createElement("p");
     description.className = "panel-description-copy";
     description.textContent = panel.description;
-    const failure = panel.generationStatus === "failed"
+    const characterFailure = panel.characterErrorKind || panel.generationError;
+    const failure = characterFailure
       ? Object.assign(document.createElement("p"), {
         className: "panel-failure",
-        textContent: actionMessage(panel.generationError || "provider"),
+        textContent: actionMessage(characterFailure),
       })
       : null;
-    const instruction = document.createElement("textarea");
-    instruction.placeholder = "Опишите, что изменить в этой панели";
-    const performanceLabel = document.createElement("label");
-    performanceLabel.textContent = panel.performanceAssetId
-      ? "Заменить фото позы или выражения (необязательно)"
-      : "Добавить фото позы или выражения (необязательно)";
-    const performance = document.createElement("input");
-    performance.type = "file";
-    performance.accept = "image/png,image/jpeg,image/webp";
-    performanceLabel.append(performance);
     const regenerate = document.createElement("button");
     regenerate.type = "button";
-    regenerate.textContent = panel.assetId ? "Переделать эту панель" : "Создать эту панель";
+    const hasCharacter = Boolean(panel.characterAssetId || panel.assetId);
+    regenerate.textContent = hasCharacter ? "Переделать эту панель" : "Создать эту панель";
     regenerate.addEventListener("click", async () => {
-      await runBusy(`Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`, async () => {
-        const file = performance.files?.[0];
-        const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
+      regenerate.disabled = true;
+      showActionNotice(hybridFrame
+        ? hybridPhaseMessage("generating-character-states")
+        : `Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`);
+      try {
+        const response = await fetch(
+          `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: "{}",
+          },
+        );
+        let payload = null;
         try {
-          const next = await fetchJson(
-            `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ instruction: instruction.value, performanceImageDataUrl }),
-            },
-          );
-          applyVisual(next);
-          showActionNotice(`Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`);
-        } catch (error) {
-          console.error("[visual] panel generation failed", {
-            kind: error?.kind || "request-failed",
-            frameId: frame.id,
-            panelIndex,
-          });
-          throw error;
+          payload = await response.json();
+        } catch {
+          payload = null;
         }
-      });
+        if (response.status === 202 && payload?.operationId) {
+          await watchHybridOperation(frame.id, payload.operationId, detailIndex);
+          return;
+        }
+        if (!response.ok) {
+          showActionNotice(actionMessage(payload?.kind || "request-failed"), "error");
+          return;
+        }
+        if (payload?.status === "ready") {
+          applyVisual(payload);
+          showActionNotice(`Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`);
+        }
+      } catch (error) {
+        console.error("[visual] panel generation failed", {
+          kind: error?.kind || "request-failed",
+          frameId: frame.id,
+          panelIndex,
+        });
+        showActionNotice(actionMessage(error?.kind || "request-failed"), "error");
+      } finally {
+        regenerate.disabled = false;
+      }
     });
     section.append(title, description);
     if (failure) section.append(failure);
-    section.append(instruction, performanceLabel, regenerate);
-    if (panel.assetId) {
+    section.append(regenerate);
+
+    const placeable = Boolean(panel.characterAssetId || panel.assetId);
+    if (placeable) {
+      const key = placementKey(frame.id, panelIndex);
+      if (!CONFIRMED_PLACEMENT.has(key)) {
+        CONFIRMED_PLACEMENT.set(key, readPlacement(panel));
+      }
+      let draft = readPlacement(panel);
+
+      const placementBox = document.createElement("div");
+      placementBox.className = "placement-controls";
+
       const zoomLabel = document.createElement("label");
       zoomLabel.className = "zoom-control";
       const zoomCopy = document.createElement("span");
-      zoomCopy.textContent = `Приближение без генерации · ${Number(panel.zoom).toFixed(2)}×`;
+      zoomCopy.textContent = `Масштаб · ${draft.zoom.toFixed(2)}×`;
       const zoom = document.createElement("input");
       zoom.type = "range";
       zoom.min = "1";
       zoom.max = "3";
       zoom.step = "0.05";
-      zoom.value = String(panel.zoom);
-      zoom.addEventListener("input", () => {
-        zoomCopy.textContent = `Приближение без генерации · ${Number(zoom.value).toFixed(2)}×`;
-        readyFrames[detailIndex].panels[panelIndex].zoom = Number(zoom.value);
+      zoom.value = String(draft.zoom);
+
+      const panXLabel = document.createElement("label");
+      panXLabel.className = "pan-control";
+      const panXCopy = document.createElement("span");
+      panXCopy.textContent = `По горизонтали · ${Math.round(draft.positionX)}%`;
+      const panX = document.createElement("input");
+      panX.type = "range";
+      panX.min = "0";
+      panX.max = "100";
+      panX.step = "1";
+      panX.value = String(draft.positionX);
+
+      const panYLabel = document.createElement("label");
+      panYLabel.className = "pan-control";
+      const panYCopy = document.createElement("span");
+      panYCopy.textContent = `По вертикали · ${Math.round(draft.positionY)}%`;
+      const panY = document.createElement("input");
+      panY.type = "range";
+      panY.min = "0";
+      panY.max = "100";
+      panY.step = "1";
+      panY.value = String(draft.positionY);
+
+      const preview = () => {
+        draft = {
+          zoom: Number(zoom.value),
+          positionX: Number(panX.value),
+          positionY: Number(panY.value),
+          fitMode: draft.fitMode === "fit" ? "fit" : "manual",
+        };
+        zoomCopy.textContent = `Масштаб · ${draft.zoom.toFixed(2)}×`;
+        panXCopy.textContent = `По горизонтали · ${Math.round(draft.positionX)}%`;
+        panYCopy.textContent = `По вертикали · ${Math.round(draft.positionY)}%`;
+        applyLocalPlacement(readyFrames[detailIndex], panelIndex, draft);
         mountFrame(detailHost, readyFrames[detailIndex], 0.5);
-      });
-      zoom.addEventListener("change", async () => {
-        await runBusy("Сохраняю приближение…", async () => {
-          const next = await fetchJson(
-            `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/placement`,
-            {
-              method: "PATCH",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ zoom: Number(zoom.value), positionX: 50, positionY: 30 }),
-            },
-          );
-          applyVisual(next);
-          showActionNotice("Приближение сохранено без новой генерации.");
-        });
-      });
+      };
+      const commit = () => {
+        draft.fitMode = "manual";
+        void persistPlacement(frame.id, panelIndex, { ...draft });
+      };
+      zoom.addEventListener("input", preview);
+      panX.addEventListener("input", preview);
+      panY.addEventListener("input", preview);
+      zoom.addEventListener("change", commit);
+      panX.addEventListener("change", commit);
+      panY.addEventListener("change", commit);
+
       zoomLabel.append(zoomCopy, zoom);
-      section.append(zoomLabel);
+      panXLabel.append(panXCopy, panX);
+      panYLabel.append(panYCopy, panY);
+
+      const actions = document.createElement("div");
+      actions.className = "placement-actions";
+      const fitButton = document.createElement("button");
+      fitButton.type = "button";
+      fitButton.className = "secondary";
+      fitButton.textContent = "Вписать";
+      fitButton.addEventListener("click", async () => {
+        draft = fitPlacement();
+        zoom.value = String(draft.zoom);
+        panX.value = String(draft.positionX);
+        panY.value = String(draft.positionY);
+        preview();
+        await persistPlacement(frame.id, panelIndex, { ...draft });
+      });
+      const resetButton = document.createElement("button");
+      resetButton.type = "button";
+      resetButton.className = "secondary";
+      resetButton.textContent = "Сбросить";
+      resetButton.addEventListener("click", async () => {
+        draft = { ...DEFAULT_PLACEMENT };
+        zoom.value = String(draft.zoom);
+        panX.value = String(draft.positionX);
+        panY.value = String(draft.positionY);
+        preview();
+        await persistPlacement(frame.id, panelIndex, { ...draft });
+      });
+      actions.append(fitButton, resetButton);
+      placementBox.append(zoomLabel, panXLabel, panYLabel, actions);
+      section.append(placementBox);
     }
     detailPanelControls.append(section);
   });

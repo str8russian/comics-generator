@@ -144,6 +144,30 @@ body[data-busy="true"] button {
   max-width: 420px;
   font-size: 14px;
   line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.outside-frame[role="status"] {
+  font-weight: 600;
+  color: #17333a;
+}
+
+.placement-controls {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.placement-controls .pan-control,
+.placement-controls .zoom-control {
+  display: grid;
+  gap: 4px;
+}
+
+.placement-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .detail-layout {
