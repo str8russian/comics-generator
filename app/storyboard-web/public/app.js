@@ -14,6 +14,21 @@ const detail = document.querySelector("#detail");
 const detailHost = document.querySelector("#detail-frame");
 const detailOutside = document.querySelector("#detail-outside");
 const closeDetail = document.querySelector("#close-detail");
+const detailPanelControls = document.querySelector("#detail-panel-controls");
+const nextFrame = document.querySelector("#next-frame");
+const structureTools = document.querySelector("#structure-tools");
+const structureEditForm = document.querySelector("#structure-edit-form");
+const structureInstruction = document.querySelector("#structure-instruction");
+const structureResult = document.querySelector("#structure-result");
+const undoStructure = document.querySelector("#undo-structure");
+const charactersWorkspace = document.querySelector("#characters-workspace");
+const characterCards = document.querySelector("#character-cards");
+const visualHeading = document.querySelector("#visual-heading");
+const visualProgress = document.querySelector("#visual-progress");
+const visualApproval = document.querySelector("#visual-approval");
+const approveVisual = document.querySelector("#approve-visual");
+const approvalCopy = document.querySelector("#approval-copy");
+const readyForVideo = document.querySelector("#ready-for-video");
 
 const materialReview = document.querySelector("#material-review");
 const materialSources = document.querySelector("#material-sources");
@@ -29,6 +44,9 @@ let readyFrames = [];
 let draftSync = { state: "boot", savedText: null };
 let review = null;
 let castChain = Promise.resolve();
+let visual = null;
+let detailIndex = -1;
+let busy = false;
 
 export const draftAutosave = bindDraftAutosave({
   textarea: draftField,
@@ -43,8 +61,14 @@ export const draftAutosave = bindDraftAutosave({
 
 function clearBoard() {
   readyFrames = [];
+  visual = null;
   grid.replaceChildren();
   openLast.hidden = true;
+  structureTools.hidden = true;
+  charactersWorkspace.hidden = true;
+  visualHeading.hidden = true;
+  visualApproval.hidden = true;
+  readyForVideo.hidden = true;
   document.body.dataset.state = "";
 }
 
@@ -93,14 +117,14 @@ function showTerminal(view) {
   document.body.dataset.kind = view.kind || "";
 }
 
-function mountFrame(host, frame, scale) {
+function mountFrame(host, frame, scale, mode = frame.visualReady ? "visual" : "structure") {
   host.replaceChildren();
   const stage = document.createElement("div");
   stage.className = "frame-stage";
   stage.style.width = `${FrameRenderer.FRAME_GEOMETRY.width * scale}px`;
   stage.style.height = `${FrameRenderer.FRAME_GEOMETRY.height * scale}px`;
   stage.style.setProperty("--frame-scale", String(scale));
-  stage.append(FrameRenderer.render(frame, { mode: "structure" }));
+  stage.append(FrameRenderer.render(frame, { mode }));
   host.append(stage);
 }
 
@@ -136,20 +160,46 @@ function showReady(frames, state = "ready") {
   notice.textContent = state === "ready" ? "" : state;
   grid.replaceChildren();
   frames.forEach((frame, index) => {
-    const card = document.createElement("button");
-    card.type = "button";
+    const card = document.createElement("article");
     card.className = "story-card";
+    card.dataset.ready = frame.visualReady ? "true" : "false";
+    const top = document.createElement("div");
+    top.className = "card-heading";
+    const number = document.createElement("span");
+    number.textContent = `Кадр ${index + 1}`;
+    const status = document.createElement("span");
+    status.className = "card-status";
+    status.textContent = frame.visualReady ? "Изображения готовы" : "Текст";
+    top.append(number, status);
+    const preview = document.createElement("button");
+    preview.type = "button";
+    preview.className = "frame-preview";
     const host = document.createElement("div");
     host.className = "frame-host";
     mountFrame(host, frame, 0.2);
-    card.append(host);
+    preview.append(host);
     if (frame.outsideFrameText) {
       const outside = document.createElement("p");
       outside.className = "outside-frame";
       outside.textContent = frame.outsideFrameText;
-      card.append(outside);
+      preview.append(outside);
     }
-    card.addEventListener("click", () => openDetail(index));
+    preview.addEventListener("click", () => openDetail(index));
+    card.append(top, preview);
+    if (visual?.allAnchorsApproved) {
+      const generate = document.createElement("button");
+      generate.type = "button";
+      generate.className = "generate-frame";
+      generate.textContent = frame.visualReady ? "Открыть и изменить" : "Создать изображения кадра";
+      generate.addEventListener("click", async () => {
+        if (frame.visualReady) {
+          openDetail(index);
+          return;
+        }
+        await generateFrame(frame.id, generate, index);
+      });
+      card.append(generate);
+    }
     grid.append(card);
   });
   openLast.hidden = frames.length === 0;
@@ -158,13 +208,397 @@ function showReady(frames, state = "ready") {
 function openDetail(index) {
   const frame = readyFrames[index];
   if (!frame) return;
+  detailIndex = index;
   mountFrame(detailHost, frame, 0.5);
   detailOutside.textContent = frame.outsideFrameText || "";
+  renderPanelControls(frame);
+  const following = readyFrames[index + 1];
+  nextFrame.hidden = !frame.visualReady || !following;
+  if (following) {
+    nextFrame.textContent = following.visualReady ? "Открыть следующий кадр" : "Создать следующий кадр";
+  }
   if (!detail.open) detail.showModal();
 }
 
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
 closeDetail.addEventListener("click", () => detail.close());
+nextFrame.addEventListener("click", async () => {
+  const index = detailIndex + 1;
+  const frame = readyFrames[index];
+  if (!frame) return;
+  if (frame.visualReady) {
+    openDetail(index);
+    return;
+  }
+  await generateFrame(frame.id, nextFrame, index);
+});
+
+function showActionNotice(text, kind = "info") {
+  notice.hidden = false;
+  notice.textContent = text;
+  notice.dataset.kind = kind;
+}
+
+async function fetchJson(path, options = {}) {
+  const response = await fetch(path, options);
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (!response.ok) {
+    const error = new Error(payload?.kind || "request-failed");
+    error.kind = payload?.kind || "request-failed";
+    error.payload = payload;
+    throw error;
+  }
+  return payload;
+}
+
+function actionMessage(kind) {
+  const messages = {
+    "identity-required": "Сначала выберите реальную фотографию персонажа.",
+    "anchor-required": "Сначала утвердите базовый образ этого персонажа.",
+    "invalid-image": "Не удалось прочитать изображение. Выберите PNG, JPEG или WebP.",
+    "visual-incomplete": "Сначала создайте изображения для всех панелей.",
+    timeout: "Генерация заняла слишком много времени. Попробуйте ещё раз.",
+    provider: "Провайдер не завершил генерацию. Уже готовые результаты сохранены.",
+    "invalid-output": "Провайдер не вернул пригодное изображение.",
+    "nothing-to-undo": "Предыдущей структурной версии пока нет.",
+  };
+  return messages[kind] || "Не удалось выполнить действие. Попробуйте ещё раз.";
+}
+
+async function runBusy(message, operation) {
+  if (busy) return null;
+  busy = true;
+  document.body.dataset.busy = "true";
+  showActionNotice(message);
+  try {
+    return await operation();
+  } catch (error) {
+    showActionNotice(actionMessage(error.kind), "error");
+    return null;
+  } finally {
+    busy = false;
+    delete document.body.dataset.busy;
+  }
+}
+
+function fileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("invalid-image"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+}
+
+function fitFrames(frames) {
+  try {
+    const fitted = compileOverflow(frames, (text, options) => FrameRenderer.measureDialogue(document, {
+      layout: options.layout,
+      speakerPanel: options.speakerPanel,
+      panels: options.panels,
+      dialogue: text,
+    }, options.fontSize));
+    return fitted.ok ? fitted.frames : frames;
+  } catch {
+    return frames;
+  }
+}
+
+function renderCharacterCards() {
+  characterCards.replaceChildren();
+  for (const character of visual.characters || []) {
+    const card = document.createElement("article");
+    card.className = "character-card";
+    const heading = document.createElement("div");
+    heading.className = "character-heading";
+    const title = document.createElement("h3");
+    title.textContent = character.name;
+    const badge = document.createElement("span");
+    badge.className = "status-badge";
+    badge.textContent = character.approvedAnchorId ? "Образ утверждён" : "Нужен образ";
+    heading.append(title, badge);
+
+    const media = document.createElement("div");
+    media.className = "anchor-media";
+    if (character.identity?.assetUrl) {
+      const identity = document.createElement("figure");
+      const image = document.createElement("img");
+      image.src = character.identity.assetUrl;
+      image.alt = `Исходная фотография: ${character.name}`;
+      const caption = document.createElement("figcaption");
+      caption.textContent = "Реальное фото";
+      identity.append(image, caption);
+      media.append(identity);
+    }
+    if (character.candidate?.assetUrl) {
+      const candidate = document.createElement("figure");
+      const image = document.createElement("img");
+      image.src = character.candidate.assetUrl;
+      image.alt = `Базовый образ: ${character.name}`;
+      const caption = document.createElement("figcaption");
+      caption.textContent = character.approvedAnchorId === character.candidate.id ? "Утверждённый образ" : "Текущий вариант";
+      candidate.append(image, caption);
+      media.append(candidate);
+    }
+
+    const identityLabel = document.createElement("label");
+    identityLabel.textContent = character.identity ? "Заменить реальное фото" : "Выбрать реальное фото";
+    const identityInput = document.createElement("input");
+    identityInput.type = "file";
+    identityInput.accept = "image/png,image/jpeg,image/webp";
+    identityLabel.append(identityInput);
+    const comment = document.createElement("textarea");
+    comment.placeholder = "Комментарий к внешности и базовому образу";
+    comment.value = character.identity?.comment || "";
+    const saveIdentity = document.createElement("button");
+    saveIdentity.type = "button";
+    saveIdentity.className = "secondary";
+    saveIdentity.textContent = character.identity ? "Сохранить новое фото" : "Сохранить фото";
+    saveIdentity.addEventListener("click", async () => {
+      const file = identityInput.files?.[0];
+      if (!file) {
+        showActionNotice("Выберите локальную фотографию.", "error");
+        return;
+      }
+      await runBusy(`Сохраняю фотографию для ${character.name}…`, async () => {
+        const imageDataUrl = await fileAsDataUrl(file);
+        const next = await fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/identity`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ imageDataUrl, comment: comment.value }),
+        });
+        applyVisual(next);
+        showActionNotice(`Фотография для ${character.name} сохранена.`);
+      });
+    });
+
+    const instruction = document.createElement("textarea");
+    instruction.placeholder = character.candidate?.assetUrl
+      ? "Что изменить в следующем варианте?"
+      : "Дополнительные пожелания к первому варианту";
+    const generate = document.createElement("button");
+    generate.type = "button";
+    generate.disabled = !character.identity;
+    generate.textContent = character.candidate?.assetUrl ? "Создать новый вариант" : "Создать base anchor";
+    generate.addEventListener("click", async () => {
+      await runBusy(`Создаю базовый образ для ${character.name}. Это может занять около минуты…`, async () => {
+        const next = await fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/anchor`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ instruction: instruction.value }),
+        });
+        applyVisual(next);
+        showActionNotice(`Новый вариант для ${character.name} готов.`);
+      });
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "anchor-actions";
+    actions.append(generate);
+    if (character.candidate?.status === "ready" && character.candidate.assetId) {
+      const approve = document.createElement("button");
+      approve.type = "button";
+      approve.className = "primary-soft";
+      approve.textContent = "Утвердить этот образ";
+      approve.addEventListener("click", async () => {
+        await runBusy(`Утверждаю образ ${character.name}…`, async () => {
+          const next = await fetchJson(
+            `/api/visual/characters/${encodeURIComponent(character.name)}/anchors/${character.candidate.id}/approve`,
+            { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+          );
+          applyVisual(next);
+          showActionNotice(`Образ ${character.name} утверждён.`);
+        });
+      });
+      actions.append(approve);
+    }
+    card.append(heading, media, identityLabel, comment, saveIdentity, instruction, actions);
+    characterCards.append(card);
+  }
+}
+
+function applyVisual(next) {
+  if (!next || next.status !== "ready") return;
+  visual = next;
+  const fitted = fitFrames(next.frames || []);
+  showReady(fitted, "ready");
+  structureTools.hidden = false;
+  undoStructure.hidden = !next.canUndo;
+  charactersWorkspace.hidden = false;
+  visualHeading.hidden = !next.allAnchorsApproved;
+  renderCharacterCards();
+  const completed = (next.frames || []).filter((frame) => frame.visualReady).length;
+  visualProgress.textContent = next.allAnchorsApproved
+    ? `${completed} из ${(next.frames || []).length} кадров готовы`
+    : "Сначала утвердите базовый образ каждого персонажа";
+  visualApproval.hidden = !next.complete;
+  approveVisual.hidden = next.readyForVideo;
+  approvalCopy.textContent = next.approved
+    ? "Текущая версия утверждена."
+    : "Просмотрите все кадры и утвердите текущую версию.";
+  readyForVideo.hidden = !next.readyForVideo;
+  if (detail.open && detailIndex >= 0) openDetail(detailIndex);
+}
+
+async function refreshVisual() {
+  try {
+    const next = await fetchJson("/api/visual");
+    if (next.status === "ready") applyVisual(next);
+  } catch {
+    // Earlier checkpoints and isolated UI tests do not expose the visual API.
+  }
+}
+
+async function generateFrame(frameId, button, index) {
+  await runBusy("Создаю изображения этого кадра по утверждённым образам…", async () => {
+    const previous = button.textContent;
+    button.textContent = "Создаю…";
+    try {
+      const next = await fetchJson(`/api/visual/frames/${encodeURIComponent(frameId)}/generate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      applyVisual(next);
+      if (Number.isInteger(index) && next.frames?.some((frame) => frame.id === frameId && frame.visualReady)) {
+        openDetail(index);
+      }
+      const failures = next.generationFailures || [];
+      showActionNotice(failures.length
+        ? `Кадр создан частично. Не удалось создать панелей: ${failures.map((entry) => entry.panelIndex + 1).join(", ")}.`
+        : "Кадр готов. Откройте его, чтобы проверить панели.", failures.length ? "error" : "info");
+    } finally {
+      button.textContent = previous;
+    }
+  });
+}
+
+function renderPanelControls(frame) {
+  detailPanelControls.replaceChildren();
+  frame.panels.forEach((panel, panelIndex) => {
+    const section = document.createElement("section");
+    section.className = "panel-control";
+    const title = document.createElement("h3");
+    title.textContent = frame.panels.length > 1
+      ? `Панель ${panelIndex + 1}${panel.subject ? ` · ${panel.subject}` : ""}`
+      : (panel.subject || "Изображение кадра");
+    const description = document.createElement("p");
+    description.className = "panel-description-copy";
+    description.textContent = panel.description;
+    const instruction = document.createElement("textarea");
+    instruction.placeholder = "Опишите, что изменить в этой панели";
+    const performanceLabel = document.createElement("label");
+    performanceLabel.textContent = panel.performanceAssetId
+      ? "Заменить фото позы или выражения (необязательно)"
+      : "Добавить фото позы или выражения (необязательно)";
+    const performance = document.createElement("input");
+    performance.type = "file";
+    performance.accept = "image/png,image/jpeg,image/webp";
+    performanceLabel.append(performance);
+    const regenerate = document.createElement("button");
+    regenerate.type = "button";
+    regenerate.textContent = panel.assetId ? "Переделать эту панель" : "Создать эту панель";
+    regenerate.addEventListener("click", async () => {
+      await runBusy(`Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`, async () => {
+        const file = performance.files?.[0];
+        const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
+        const next = await fetchJson(
+          `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ instruction: instruction.value, performanceImageDataUrl }),
+          },
+        );
+        applyVisual(next);
+        showActionNotice(`Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`);
+      });
+    });
+    section.append(title, description, instruction, performanceLabel, regenerate);
+    if (panel.assetId) {
+      const zoomLabel = document.createElement("label");
+      zoomLabel.className = "zoom-control";
+      const zoomCopy = document.createElement("span");
+      zoomCopy.textContent = `Приближение без генерации · ${Number(panel.zoom).toFixed(2)}×`;
+      const zoom = document.createElement("input");
+      zoom.type = "range";
+      zoom.min = "1";
+      zoom.max = "3";
+      zoom.step = "0.05";
+      zoom.value = String(panel.zoom);
+      zoom.addEventListener("input", () => {
+        zoomCopy.textContent = `Приближение без генерации · ${Number(zoom.value).toFixed(2)}×`;
+        readyFrames[detailIndex].panels[panelIndex].zoom = Number(zoom.value);
+        mountFrame(detailHost, readyFrames[detailIndex], 0.5);
+      });
+      zoom.addEventListener("change", async () => {
+        await runBusy("Сохраняю приближение…", async () => {
+          const next = await fetchJson(
+            `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/placement`,
+            {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ zoom: Number(zoom.value), positionX: 50, positionY: 30 }),
+            },
+          );
+          applyVisual(next);
+          showActionNotice("Приближение сохранено без новой генерации.");
+        });
+      });
+      zoomLabel.append(zoomCopy, zoom);
+      section.append(zoomLabel);
+    }
+    detailPanelControls.append(section);
+  });
+}
+
+structureEditForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const instruction = structureInstruction.value.trim();
+  if (!instruction) return;
+  await runBusy("Применяю структурную правку к раскадровке…", async () => {
+    const next = await fetchJson("/api/visual/storyboard/edit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ instruction }),
+    });
+    applyVisual(next);
+    structureInstruction.value = "";
+    structureResult.hidden = false;
+    structureResult.textContent = "Правка применена. Предыдущую структуру можно вернуть.";
+    showActionNotice("Раскадровка обновлена.");
+  });
+});
+
+undoStructure?.addEventListener("click", async () => {
+  await runBusy("Возвращаю предыдущую структуру…", async () => {
+    const next = await fetchJson("/api/visual/storyboard/undo", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    applyVisual(next);
+    structureResult.hidden = false;
+    structureResult.textContent = "Предыдущая структура восстановлена.";
+  });
+});
+
+approveVisual?.addEventListener("click", async () => {
+  await runBusy("Утверждаю текущую визуальную раскадровку…", async () => {
+    const next = await fetchJson("/api/visual/approve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    applyVisual(next);
+    showActionNotice("Визуальная раскадровка утверждена.");
+  });
+});
 
 function textsMatch(readingText) {
   return draftSync.state === "idle"
@@ -480,6 +914,7 @@ stageMaterial?.addEventListener("click", async () => {
     return;
   }
   await presentCheckedStoryboard(payload);
+  await refreshVisual();
 });
 
 draftAutosave.ready.then(async () => {
@@ -489,6 +924,7 @@ draftAutosave.ready.then(async () => {
     const project = await response.json();
     restoreReview(project);
     await restoreStoryboard(project);
+    await refreshVisual();
   } catch {
     hideReview();
   }

@@ -1,8 +1,21 @@
 # comics-pipeline
 
 Server-side half of the video-comic generator: the schema, the role prompts, the rule validator, and
-the eval harness. No image generation here — assets are described placeholders until the compute
-resource is known, which is deliberate and is what lets everything else be built and tuned now.
+the eval harness. The core pipeline remains data-first. The `storyboard-web` product spike also
+contains an opt-in visual workflow that calls the configured image provider only after a user
+selects an identity photo and starts a generation.
+
+## Visual storyboard workflow spike
+
+The local `storyboard-web` path now exercises the workflow from raw dialogue to a visual storyboard
+ready for video: Interpret and Stage, free-form structural edits with undo, local identity photos,
+iterative base anchors, one-frame-at-a-time generation, per-panel revisions and performance
+references, placement-only zoom, and final visual approval. It deliberately has no generate-all
+action.
+
+Set `DATABASE_URL`, `BASE_URL`, and `CONTEST_API_TOKEN` as for the existing application. Text calls
+use `CONTEST_MODEL`; image calls default to `gemini-3-pro-image-preview` and can be overridden with
+`IMAGE_MODEL`. `IMAGE_TIMEOUT_MS` controls the image request timeout.
 
 ## The one structural decision
 

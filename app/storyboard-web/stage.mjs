@@ -60,7 +60,7 @@ function partition(dialogue, segments) {
   return ranges;
 }
 
-function buildChecked(draft, sourceItems, stage) {
+export function buildChecked(draft, sourceItems, stage) {
   const assessment = assessStage(sourceItems, stage);
   if (!assessment.ok) {
     return { ok: false, httpStatus: 200, status: "blocked", failures: assessment.failures };

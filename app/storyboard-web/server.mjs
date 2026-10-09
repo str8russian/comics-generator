@@ -9,8 +9,14 @@ import { isEmptyDraft } from "./fidelity.mjs";
 import { interpretDraft } from "./interpret.mjs";
 import { draftInputError, createProjectStore } from "./project-store.mjs";
 import { stageStoryboard } from "./stage.mjs";
+import { parseImageDataUrl } from "./image-info.mjs";
+import { generateImage } from "./image-provider.mjs";
+import { editStoryboard } from "./storyboard-edit.mjs";
+import { anchorPrompt, aspectRatioForFrame, panelPrompt } from "./visual-model.mjs";
+import { createVisualStore } from "./visual-store.mjs";
 
 export const DEFAULT_MAX_BODY_BYTES = 262144;
+export const IMAGE_MAX_BODY_BYTES = 16 * 1024 * 1024;
 
 export const routes = [
   { method: "GET", path: "/", file: "app/storyboard-web/public/index.html" },
@@ -56,6 +62,13 @@ function sendJson(res, status, payload) {
     "Content-Length": Buffer.byteLength(body),
   });
   res.end(body);
+}
+
+function sendVisualFailure(res, result) {
+  sendJson(res, result?.httpStatus || 500, {
+    status: "failed",
+    kind: safeKind(result?.kind) || "database",
+  });
 }
 
 function isJsonContentType(value) {
@@ -713,6 +726,337 @@ async function handleStoryboardResults(req, res, { maxBodyBytes, env, fetchImpl,
   });
 }
 
+function visualCharacterPath(pathname, suffix) {
+  const pattern = suffix === "identity"
+    ? /^\/api\/visual\/characters\/([^/]+)\/identity$/
+    : /^\/api\/visual\/characters\/([^/]+)\/anchor$/;
+  const match = pathname.match(pattern);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function visualAnchorApprovalPath(pathname) {
+  const match = pathname.match(/^\/api\/visual\/characters\/([^/]+)\/anchors\/([0-9a-f-]{36})\/approve$/i);
+  if (!match) return null;
+  try {
+    return { characterName: decodeURIComponent(match[1]), anchorId: match[2] };
+  } catch {
+    return null;
+  }
+}
+
+function visualFramePath(pathname) {
+  const frame = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/generate$/);
+  if (frame) return { frameId: decodeURIComponent(frame[1]), kind: "frame" };
+  const panel = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/panels\/(\d+)\/(generate|placement)$/);
+  if (!panel) return null;
+  return {
+    frameId: decodeURIComponent(panel[1]),
+    panelIndex: Number(panel[2]),
+    kind: panel[3],
+  };
+}
+
+async function readVisualBody(req, res, maxBytes = DEFAULT_MAX_BODY_BYTES) {
+  return readJsonBody(req, res, maxBytes);
+}
+
+async function sendVisualState(res, runtime) {
+  const visual = await runtime.visualStore.load();
+  if (!visual?.ok) {
+    sendVisualFailure(res, visual);
+    return;
+  }
+  sendJson(res, 200, visual);
+}
+
+async function handleVisualIdentity(req, res, { runtime, characterName }) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readVisualBody(req, res, IMAGE_MAX_BODY_BYTES);
+  if (body.done) return;
+  const image = !body.invalid ? parseImageDataUrl(body.payload?.imageDataUrl) : null;
+  if (!image) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-image" });
+    return;
+  }
+  const result = await runtime.visualStore.saveIdentity({
+    characterName,
+    image,
+    comment: body.payload?.comment || "",
+  });
+  if (!result.ok) {
+    sendVisualFailure(res, result);
+    return;
+  }
+  await sendVisualState(res, runtime);
+}
+
+function imageInput(asset) {
+  return asset ? { mime: asset.mime, bytes: asset.bytes } : null;
+}
+
+async function handleVisualAnchor(req, res, { runtime, characterName, imageGenerator, env, fetchImpl }) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readVisualBody(req, res);
+  if (body.done) return;
+  if (body.invalid) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const pending = await runtime.visualStore.beginAnchor({
+    characterName,
+    instruction: body.payload?.instruction || "",
+  });
+  if (!pending.ok) {
+    sendVisualFailure(res, pending);
+    return;
+  }
+  const images = [pending.identity, pending.previous, pending.style].filter(Boolean).slice(0, 3).map(imageInput);
+  const result = await imageGenerator({
+    prompt: anchorPrompt({
+      characterName,
+      identityComment: pending.identityComment,
+      instruction: pending.instruction,
+      hasPrevious: Boolean(pending.previous),
+      hasStyle: Boolean(pending.style) && images.length > (pending.previous ? 2 : 1),
+    }),
+    images,
+    aspectRatio: "4:5",
+    env,
+    fetchImpl,
+  });
+  const finished = await runtime.visualStore.finishAnchor({ id: pending.id, result });
+  if (!finished.ok) {
+    sendVisualFailure(res, finished);
+    return;
+  }
+  await sendVisualState(res, runtime);
+}
+
+async function handleVisualAnchorApproval(req, res, { runtime, target }) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readVisualBody(req, res);
+  if (body.done) return;
+  if (body.invalid) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const result = await runtime.visualStore.approveAnchor(target);
+  if (!result.ok) {
+    sendVisualFailure(res, result);
+    return;
+  }
+  await sendVisualState(res, runtime);
+}
+
+async function generateOnePanel({ runtime, frameId, panelIndex, body, imageGenerator, env, fetchImpl }) {
+  const performanceImage = body?.performanceImageDataUrl
+    ? parseImageDataUrl(body.performanceImageDataUrl)
+    : null;
+  if (body?.performanceImageDataUrl && !performanceImage) return failedVisual("invalid-image", 400);
+  const pending = await runtime.visualStore.beginPanelGeneration({
+    frameId,
+    panelIndex,
+    instruction: body?.instruction || "",
+    performanceImage,
+    clearPerformance: body?.clearPerformance === true,
+  });
+  if (!pending.ok) return pending;
+  const refs = [];
+  if (pending.refs.anchor) refs.push(["anchor", pending.refs.anchor]);
+  if (pending.refs.previous) refs.push(["previous", pending.refs.previous]);
+  if (pending.refs.performance) refs.push(["performance", pending.refs.performance]);
+  if (!pending.refs.previous && refs.length < 3 && pending.refs.style) refs.push(["style", pending.refs.style]);
+  const roles = new Set(refs.map(([role]) => role));
+  const result = await imageGenerator({
+    prompt: panelPrompt({
+      characterName: pending.subject,
+      description: pending.panel.description,
+      instruction: pending.instruction,
+      layout: pending.frame.layout,
+      panelIndex,
+      speakerPanel: pending.frame.speakerPanel,
+      hasPrevious: roles.has("previous"),
+      hasPerformance: roles.has("performance"),
+      hasStyle: roles.has("style"),
+    }),
+    images: refs.map(([, asset]) => imageInput(asset)),
+    aspectRatio: aspectRatioForFrame(pending.frame),
+    env,
+    fetchImpl,
+  });
+  return runtime.visualStore.finishPanelGeneration({ id: pending.id, result });
+}
+
+function failedVisual(kind, httpStatus) {
+  return { ok: false, status: "failed", kind, httpStatus };
+}
+
+async function handleVisualGeneration(req, res, {
+  runtime,
+  target,
+  imageGenerator,
+  env,
+  fetchImpl,
+}) {
+  if (target.kind === "placement") {
+    if (req.method !== "PATCH") {
+      sendEmpty(res, 405, { Allow: "PATCH" });
+      req.resume();
+      return;
+    }
+    const body = await readVisualBody(req, res);
+    if (body.done) return;
+    const result = body.invalid ? failedVisual("invalid-request", 400) : await runtime.visualStore.updatePlacement({
+      frameId: target.frameId,
+      panelIndex: target.panelIndex,
+      zoom: body.payload?.zoom,
+      positionX: body.payload?.positionX,
+      positionY: body.payload?.positionY,
+    });
+    if (!result.ok) {
+      sendVisualFailure(res, result);
+      return;
+    }
+    await sendVisualState(res, runtime);
+    return;
+  }
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readVisualBody(req, res, IMAGE_MAX_BODY_BYTES);
+  if (body.done) return;
+  if (body.invalid) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  if (target.kind === "generate") {
+    const result = await generateOnePanel({
+      runtime,
+      frameId: target.frameId,
+      panelIndex: target.panelIndex,
+      body: body.payload,
+      imageGenerator,
+      env,
+      fetchImpl,
+    });
+    if (!result.ok) {
+      sendVisualFailure(res, result);
+      return;
+    }
+    await sendVisualState(res, runtime);
+    return;
+  }
+  const visual = await runtime.visualStore.load();
+  const frame = visual?.frames?.find((entry) => entry.id === target.frameId);
+  if (!frame) {
+    sendJson(res, 404, { status: "failed", kind: "not-found" });
+    return;
+  }
+  const failures = [];
+  for (let panelIndex = 0; panelIndex < frame.panels.length; panelIndex += 1) {
+    const result = await generateOnePanel({
+      runtime,
+      frameId: target.frameId,
+      panelIndex,
+      body: {},
+      imageGenerator,
+      env,
+      fetchImpl,
+    });
+    if (!result.ok) failures.push({ panelIndex, kind: safeKind(result.kind) || "provider" });
+  }
+  const refreshed = await runtime.visualStore.load();
+  sendJson(res, 200, { ...refreshed, generationFailures: failures });
+}
+
+async function handleVisualEdit(req, res, { runtime, env, fetchImpl }) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readVisualBody(req, res);
+  if (body.done) return;
+  const instruction = body.invalid ? "" : String(body.payload?.instruction ?? "").trim();
+  if (!instruction) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const [project, visual, structure] = await Promise.all([
+    runtime.projectStore.loadProject(),
+    runtime.visualStore.load(),
+    runtime.visualStore.loadStructure(),
+  ]);
+  if (!project?.material || visual?.status !== "ready" || !structure?.ok) {
+    sendJson(res, 404, { status: "failed", kind: "not-found" });
+    return;
+  }
+  const board = (project.storyboards || []).find((entry) => entry.materialStateId === project.activeMaterialStateId);
+  const edited = await editStoryboard({
+    draft: project.draft.text,
+    sourceItems: board?.sourceItems || [],
+    cast: project.material.cast,
+    frames: structure.frames,
+    displayFrames: visual.frames,
+    instruction,
+    env,
+    fetchImpl,
+  });
+  if (!edited.ok) {
+    if (edited.status === "blocked") {
+      sendJson(res, 409, { status: "blocked", failures: publicFailures(edited.failures) });
+    } else {
+      sendVisualFailure(res, edited);
+    }
+    return;
+  }
+  const saved = await runtime.visualStore.saveStoryboardEdit({ instruction, frames: edited.body.frames });
+  if (!saved.ok) {
+    sendVisualFailure(res, saved);
+    return;
+  }
+  await sendVisualState(res, runtime);
+}
+
+async function handleVisualSimple(req, res, { runtime, action }) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readVisualBody(req, res);
+  if (body.done) return;
+  if (body.invalid) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const result = await runtime.visualStore[action]();
+  if (!result.ok) {
+    sendVisualFailure(res, result);
+    return;
+  }
+  await sendVisualState(res, runtime);
+}
+
 async function handle(req, res, {
   load,
   maxBodyBytes,
@@ -722,6 +1066,7 @@ async function handle(req, res, {
   nextRequest,
   enableLegacyStoryboardRoute,
   runtime,
+  imageGenerator,
 }) {
   const pathname = pathnameOf(req.url);
   const method = req.method || "GET";
@@ -771,6 +1116,72 @@ async function handle(req, res, {
     await handleStoryboardResults(req, res, { maxBodyBytes, env, fetchImpl, logger, nextRequest, runtime });
     return;
   }
+  if (pathname === "/api/visual") {
+    if (method !== "GET") {
+      sendEmpty(res, 405, { Allow: "GET" });
+      req.resume();
+      return;
+    }
+    if (!runtime.visualStore) {
+      sendJson(res, 503, { status: "failed", kind: "database" });
+      return;
+    }
+    await sendVisualState(res, runtime);
+    return;
+  }
+  const assetMatch = pathname.match(/^\/api\/visual\/assets\/([0-9a-f-]{36})$/i);
+  if (assetMatch) {
+    if (method !== "GET") {
+      sendEmpty(res, 405, { Allow: "GET" });
+      req.resume();
+      return;
+    }
+    const asset = await runtime.visualStore?.readAsset(assetMatch[1]);
+    if (!asset) {
+      sendEmpty(res, 404);
+      return;
+    }
+    res.writeHead(200, {
+      "Content-Type": asset.mime,
+      "Content-Length": asset.bytes.length,
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    res.end(asset.bytes);
+    return;
+  }
+  if (pathname === "/api/visual/storyboard/edit") {
+    await handleVisualEdit(req, res, { runtime, env, fetchImpl });
+    return;
+  }
+  if (pathname === "/api/visual/storyboard/undo") {
+    await handleVisualSimple(req, res, { runtime, action: "undoStoryboardEdit" });
+    return;
+  }
+  if (pathname === "/api/visual/approve") {
+    await handleVisualSimple(req, res, { runtime, action: "approveVisual" });
+    return;
+  }
+  const identityCharacter = visualCharacterPath(pathname, "identity");
+  if (identityCharacter) {
+    await handleVisualIdentity(req, res, { runtime, characterName: identityCharacter });
+    return;
+  }
+  const anchorCharacter = visualCharacterPath(pathname, "anchor");
+  if (anchorCharacter) {
+    await handleVisualAnchor(req, res, { runtime, characterName: anchorCharacter, imageGenerator, env, fetchImpl });
+    return;
+  }
+  const anchorApproval = visualAnchorApprovalPath(pathname);
+  if (anchorApproval) {
+    await handleVisualAnchorApproval(req, res, { runtime, target: anchorApproval });
+    return;
+  }
+  const visualTarget = visualFramePath(pathname);
+  if (visualTarget) {
+    await handleVisualGeneration(req, res, { runtime, target: visualTarget, imageGenerator, env, fetchImpl });
+    return;
+  }
   const route = routesByPath.get(pathname);
   if (!route) {
     sendEmpty(res, 404);
@@ -812,10 +1223,12 @@ export function createServer({
   logger,
   migrate,
   projectStore,
+  visualStore,
+  imageGenerator = generateImage,
   enableLegacyStoryboardRoute = false,
 } = {}) {
   const load = readFile ?? defaultRead;
-  const runtime = { projectStore: projectStore ?? null, pool: null };
+  const runtime = { projectStore: projectStore ?? null, visualStore: visualStore ?? null, pool: null };
   let requestSerial = 0;
   const nextRequest = () => {
     requestSerial += 1;
@@ -831,6 +1244,7 @@ export function createServer({
       nextRequest,
       enableLegacyStoryboardRoute,
       runtime,
+      imageGenerator,
     }).catch(() => {
       if (!res.headersSent) sendJson(res, 500, { status: "failed", kind: "configuration" });
     });
@@ -840,9 +1254,10 @@ export function createServer({
   });
   const runMigration = migrationRunner({ migrate, logger });
   const attachStore = () => {
-    if (runtime.projectStore) return;
-    runtime.pool = createPool();
-    runtime.projectStore = createProjectStore(runtime.pool);
+    if (runtime.projectStore && runtime.visualStore) return;
+    if (!runtime.pool) runtime.pool = createPool();
+    if (!runtime.projectStore) runtime.projectStore = createProjectStore(runtime.pool);
+    if (!runtime.visualStore) runtime.visualStore = createVisualStore(runtime.pool);
   };
   if (runMigration) {
     const listen = server.listen.bind(server);
