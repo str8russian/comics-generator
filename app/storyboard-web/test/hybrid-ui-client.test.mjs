@@ -462,3 +462,60 @@ test("startContainedTask swallows rejected background work without unhandledreje
     process.off("unhandledRejection", onRejection);
   }
 });
+
+test("placement writer clearAll drops in-flight channels so version B cannot reuse version A keys", async () => {
+  const clock = createManualClock();
+  const sent = [];
+  const writer = createPlacementWriter({
+    debounceMs: 200,
+    schedule: clock.schedule,
+    cancelSchedule: clock.cancel,
+    send: async (key, placement) => {
+      sent.push({ key, placement });
+      return { status: "ready" };
+    },
+  });
+  const keyA = "version-a::frame-1::0";
+  const pending = writer.enqueue(keyA, { zoom: 1.5, positionX: 10, positionY: 10, fitMode: "manual" });
+  writer.clearAll();
+  const settled = await pending;
+  assert.equal(settled.superseded, true);
+  await clock.advance(200);
+  assert.equal(sent.length, 0);
+  const keyB = "version-b::frame-1::0";
+  const next = writer.enqueue(keyB, { zoom: 2, positionX: 20, positionY: 20, fitMode: "manual" });
+  await clock.advance(200);
+  const outcome = await next;
+  assert.equal(outcome.ok, true);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].key, keyB);
+});
+
+test("operation poller stopAll and version guard prevent stale cross-version phase application", async () => {
+  let currentVersion = "version-a";
+  const phases = [];
+  const poller = createCanonicalOperationPoller({
+    intervalMs: 5,
+    delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    fetchOperation: async () => ({
+      operationId: "op-a",
+      status: "running",
+      phase: "generating-background",
+      storyboardVersionId: "version-a",
+    }),
+  });
+
+  const run = poller.poll("frame-1", "op-a", {
+    expectedStoryboardVersionId: "version-a",
+    getCurrentStoryboardVersionId: () => currentVersion,
+    onPhase: (payload) => phases.push(payload.phase),
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.ok(phases.length >= 1);
+  currentVersion = "version-b";
+  poller.stopAll();
+  const result = await run;
+  assert.ok(result.kind === "aborted" || result.kind === "stale");
+  assert.equal(poller.has("frame-1"), false);
+});

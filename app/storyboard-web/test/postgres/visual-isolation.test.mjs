@@ -3,6 +3,7 @@ import test from "node:test";
 import { createPool } from "../../db/pool.mjs";
 import { migrate } from "../../db/migrate.mjs";
 import { encodeRgbPng } from "../../image-matte.mjs";
+import { readZipArchive } from "../../visual-diagnostics.mjs";
 import { createVisualStore } from "../../visual-store.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
@@ -1512,6 +1513,212 @@ test("persisted provider settings exactly control the actual provider request", 
       invocations.filter((call) => call.component === "character-state").every((call) => Number.isInteger(call.panelIndex)),
       true,
     );
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+test("hybrid state, placement, provenance, and diagnostics stay isolated across results with identical frame keys", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-09T18:00:00Z", splitDialogueFrames());
+
+    const store = createVisualStore(pool);
+    await approveStyleAndAnchor(store);
+    await store.ensureHybridHeads({ frameId: "frame-1", compositionMode: "near-frontal-pair" });
+
+    const providerConfig = { model: "iso-model", timeoutMs: 2000 };
+    const generateImage = async ({ aspectRatio }) => ({
+      ok: true,
+      image: { bytes: aspectRatio === "21:9" ? png : chromakeySubjectPng() },
+      metadata: { providerStatus: 200, latencyMs: 4 },
+    });
+
+    const opA = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(opA.ok, true);
+    const resultA = await store.orchestrateHybridFrameOperation({
+      operationId: opA.operationId,
+      providerConfig,
+      env: {},
+      generateImage,
+    });
+    assert.equal(resultA.ok, true);
+
+    const placedA = await store.updatePlacement({
+      frameId: "frame-1",
+      panelIndex: 0,
+      zoom: 1.7,
+      positionX: 22,
+      positionY: 33,
+      fitMode: "manual",
+    });
+    assert.equal(placedA.ok, true);
+
+    const loadedA = await store.load();
+    assert.equal(loadedA.storyboardResultId, ids.resultA);
+    const versionA = loadedA.storyboardVersionId;
+    const persistenceA = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(persistenceA.panels[0].zoom, 1.7);
+    assert.equal(persistenceA.panels[0].positionX, 22);
+    assert.ok(persistenceA.sceneBackgroundState.currentGenerationId);
+    assert.ok(persistenceA.panels[0].currentCharacterGenerationId);
+    assert.equal(persistenceA.frameHybridState.assemblyStatus, "ready");
+
+    const exportA = await store.exportFrameDiagnostics({ frameId: "frame-1" });
+    assert.equal(exportA.ok, true);
+    const zipA = readZipArchive(exportA.bytes);
+    const textA = Buffer.concat([...zipA.values()]).toString("utf8");
+    assert.equal(textA.includes(ids.resultA), true);
+    assert.equal(textA.includes(versionA), true);
+    assert.match(textA, /1\.7/);
+
+    await insertResult(pool, ids.resultB, "2026-10-09T18:01:00Z", splitDialogueFrames());
+    const loadedB = await store.load();
+    assert.equal(loadedB.storyboardResultId, ids.resultB);
+    assert.notEqual(loadedB.storyboardVersionId, versionA);
+    assert.equal(loadedB.frames[0].id, "frame-1");
+    assert.equal(loadedB.frames[0].panels[0].panelIndex ?? 0, 0);
+
+    const headsB = await store.ensureHybridHeads({ frameId: "frame-1" });
+    assert.equal(headsB.ok, true);
+    assert.equal(headsB.sceneBackgroundState.currentGenerationId, null);
+    assert.equal(headsB.frameHybridState.assemblyStatus, "not-ready");
+    assert.equal(headsB.frameHybridState.activeOperationId, null);
+
+    const persistenceB0 = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(persistenceB0.storyboardResultId, ids.resultB);
+    assert.notEqual(persistenceB0.storyboardVersionId, versionA);
+    assert.equal(persistenceB0.sceneBackgroundState.currentGenerationId, null);
+    assert.equal(persistenceB0.panels[0].currentCharacterGenerationId, null);
+    assert.equal(persistenceB0.panels[0].zoom, 1);
+    assert.equal(persistenceB0.panels[0].fitMode, "manual");
+
+    const missingDiagnostics = await store.exportFrameDiagnostics({ frameId: "frame-1" });
+    assert.equal(missingDiagnostics.ok, false);
+    assert.equal(missingDiagnostics.kind, "not-found");
+
+    const opB = await store.createFrameOperation({ frameId: "frame-1" });
+    assert.equal(opB.ok, true);
+    assert.notEqual(opB.operationId, opA.operationId);
+    const resultB = await store.orchestrateHybridFrameOperation({
+      operationId: opB.operationId,
+      providerConfig,
+      env: {},
+      generateImage,
+    });
+    assert.equal(resultB.ok, true);
+
+    const placedB = await store.updatePlacement({
+      frameId: "frame-1",
+      panelIndex: 0,
+      zoom: 2.2,
+      positionX: 70,
+      positionY: 60,
+      fitMode: "fit",
+      expectedStoryboardVersionId: loadedB.storyboardVersionId,
+    });
+    assert.equal(placedB.ok, true);
+
+    const staleGuard = await store.updatePlacement({
+      frameId: "frame-1",
+      panelIndex: 0,
+      zoom: 1.1,
+      positionX: 10,
+      positionY: 10,
+      fitMode: "manual",
+      expectedStoryboardVersionId: versionA,
+    });
+    assert.equal(staleGuard.ok, false);
+    assert.equal(staleGuard.kind, "stale-version");
+
+    const persistenceB = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(persistenceB.panels[0].zoom, 2.2);
+    assert.equal(persistenceB.panels[0].fitMode, "fit");
+    assert.notEqual(
+      persistenceB.sceneBackgroundState.currentGenerationId,
+      persistenceA.sceneBackgroundState.currentGenerationId,
+    );
+    assert.notEqual(
+      persistenceB.panels[0].currentCharacterGenerationId,
+      persistenceA.panels[0].currentCharacterGenerationId,
+    );
+    assert.notEqual(persistenceB.frameHybridState.activeOperationId, opA.operationId);
+
+    const exportB = await store.exportFrameDiagnostics({ frameId: "frame-1" });
+    assert.equal(exportB.ok, true);
+    const zipB = readZipArchive(exportB.bytes);
+    const textB = Buffer.concat([...zipB.values()]).toString("utf8");
+    assert.equal(textB.includes(ids.resultB), true);
+    assert.equal(textB.includes(loadedB.storyboardVersionId), true);
+    assert.equal(textB.includes(ids.resultA), false);
+    assert.equal(textB.includes(versionA), false);
+    assert.equal(textB.includes(opA.operationId), false);
+    assert.equal(textB.includes(String(persistenceA.sceneBackgroundState.currentGenerationId)), false);
+    assert.equal(textB.includes("1.7"), false);
+    assert.match(textB, /2\.2/);
+
+    // Re-activate result A and prove its heads/placement remain unchanged.
+    await pool.query(`
+      UPDATE storyboard_result
+      SET created_at = '2026-10-09T18:02:00Z'
+      WHERE id = $1
+    `, [ids.resultA]);
+    const reloadedA = await store.load();
+    assert.equal(reloadedA.storyboardResultId, ids.resultA);
+    assert.equal(reloadedA.storyboardVersionId, versionA);
+    const persistenceA2 = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(persistenceA2.panels[0].zoom, 1.7);
+    assert.equal(persistenceA2.panels[0].positionX, 22);
+    assert.equal(
+      persistenceA2.sceneBackgroundState.currentGenerationId,
+      persistenceA.sceneBackgroundState.currentGenerationId,
+    );
+    assert.equal(
+      persistenceA2.panels[0].currentCharacterGenerationId,
+      persistenceA.panels[0].currentCharacterGenerationId,
+    );
+    assert.equal(persistenceA2.frameHybridState.assemblyStatus, "ready");
+
+    const exportA2 = await store.exportFrameDiagnostics({ frameId: "frame-1" });
+    assert.equal(exportA2.ok, true);
+    const textA2 = Buffer.concat([...readZipArchive(exportA2.bytes).values()]).toString("utf8");
+    assert.equal(textA2.includes(ids.resultB), false);
+    assert.equal(textA2.includes(opB.operationId), false);
+    assert.equal(textA2.includes(loadedB.storyboardVersionId), false);
+
+    // Two versions inside the same result: structure edit creates a new version head.
+    const edited = await store.saveStoryboardEdit({
+      instruction: "keep dialogue, reorder description wording",
+      frames: splitDialogueFrames().map((frame) => ({
+        ...frame,
+        panels: frame.panels.map((panel) => ({
+          ...panel,
+          description: `${panel.description} (v2)`,
+        })),
+      })),
+    });
+    assert.equal(edited.ok, true);
+    const versionA2 = edited.storyboardVersionId || (await store.load()).storyboardVersionId;
+    assert.notEqual(versionA2, versionA);
+    const headsNewVersion = await store.ensureHybridHeads({ frameId: "frame-1" });
+    assert.equal(headsNewVersion.ok, true);
+    assert.equal(headsNewVersion.sceneBackgroundState.currentGenerationId, null);
+    const persistenceNew = await store.loadHybridPersistence({ frameId: "frame-1" });
+    assert.equal(persistenceNew.storyboardVersionId, versionA2);
+    assert.equal(persistenceNew.panels[0].currentCharacterGenerationId, null);
+    assert.equal(persistenceNew.panels[0].zoom, 1);
   } finally {
     await reset(pool).catch(() => {});
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
