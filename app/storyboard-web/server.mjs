@@ -30,6 +30,7 @@ export const routes = [
   { method: "GET", path: "/app.js", file: "app/storyboard-web/public/app.js" },
   { method: "GET", path: "/app.css", file: "app/storyboard-web/public/app.css" },
   { method: "GET", path: "/draft-autosave.mjs", file: "app/storyboard-web/public/draft-autosave.mjs" },
+  { method: "GET", path: "/hybrid-ui.mjs", file: "app/storyboard-web/public/hybrid-ui.mjs" },
   { method: "GET", path: "/overflow.mjs", file: "app/storyboard-web/overflow.mjs" },
   { method: "GET", path: "/frame-renderer.mjs", file: "prototypes/storyboard-viewer/frame-renderer.mjs" },
   { method: "GET", path: "/viewer.css", file: "prototypes/storyboard-viewer/viewer.css" },
@@ -1191,6 +1192,7 @@ async function handleVisualGeneration(req, res, {
       zoom: body.payload?.zoom,
       positionX: body.payload?.positionX,
       positionY: body.payload?.positionY,
+      fitMode: body.payload?.fitMode,
     });
     logVisual(logger, request, "visual-placement", {
       status: result.ok ? "ok" : "failed",
@@ -1198,6 +1200,7 @@ async function handleVisualGeneration(req, res, {
       http: result.ok ? 200 : result.httpStatus,
       frameId: target.frameId,
       panelIndex: target.panelIndex,
+      fitMode: result.ok ? (result.fitMode || body.payload?.fitMode || "manual") : undefined,
     });
     if (!result.ok) {
       sendVisualFailure(res, result);
@@ -1218,6 +1221,27 @@ async function handleVisualGeneration(req, res, {
     return;
   }
   if (target.kind === "generate") {
+    const visual = await runtime.visualStore.load();
+    const frame = visual?.frames?.find((entry) => entry.id === target.frameId);
+    if (!frame) {
+      sendJson(res, 404, { status: "failed", kind: "not-found" });
+      return;
+    }
+    if (isEligibleHybridDialogueFrame(frame)) {
+      await handleHybridPanelAcceptFromParsed({
+        res,
+        runtime,
+        target,
+        frame,
+        visual,
+        imageGenerator,
+        env,
+        fetchImpl,
+        logger,
+        request,
+      });
+      return;
+    }
     const result = await generateOnePanel({
       runtime,
       frameId: target.frameId,
@@ -1249,8 +1273,6 @@ async function handleVisualGeneration(req, res, {
     return;
   }
   if (isEligibleHybridDialogueFrame(frame)) {
-    // Re-read body already consumed — handleHybridFrameAccept reads body again.
-    // Body was already parsed above; pass through a thin wrapper.
     await handleHybridFrameAcceptFromParsed({
       res,
       runtime,
@@ -1300,6 +1322,78 @@ async function handleVisualGeneration(req, res, {
   sendJson(res, 200, { ...refreshed, generationFailures: failures });
 }
 
+function bindHybridLogger(logger, request) {
+  return (event, fields = {}) => {
+    logVisual(logger, request, event, fields);
+  };
+}
+
+function scheduleHybridOrchestration({
+  runtime,
+  operationId,
+  frameId,
+  scope,
+  panelIndex = null,
+  imageGenerator,
+  env,
+  fetchImpl,
+  logger,
+  request,
+  startedAt,
+}) {
+  const onHybridLog = bindHybridLogger(logger, request);
+  scheduleHybridDeferredWork(async () => {
+    try {
+      if (typeof runtime.visualStore.orchestrateHybridFrameOperation !== "function") {
+        return;
+      }
+      const outcome = await runtime.visualStore.orchestrateHybridFrameOperation({
+        operationId,
+        env,
+        onHybridLog,
+        generateImage: (input) => imageGenerator({
+          ...input,
+          env,
+          fetchImpl,
+        }),
+      });
+      logVisual(logger, request, scope === "panel"
+        ? "visual-hybrid-panel-outcome"
+        : "visual-hybrid-frame-outcome", {
+        status: outcome?.ok ? "ok" : "failed",
+        kind: outcome?.ok ? undefined : mapHybridFailureKind(outcome?.kind || "provider"),
+        operationId,
+        frameId,
+        scope,
+        panelIndex,
+        latencyMs: Date.now() - startedAt,
+        visualReady: Boolean(outcome?.visualReady),
+      });
+    } catch {
+      logVisual(logger, request, scope === "panel"
+        ? "visual-hybrid-panel-outcome"
+        : "visual-hybrid-frame-outcome", {
+        status: "failed",
+        kind: "provider",
+        operationId,
+        frameId,
+        scope,
+        panelIndex,
+        latencyMs: Date.now() - startedAt,
+      });
+      if (typeof runtime.visualStore.updateFrameOperation === "function") {
+        await runtime.visualStore.updateFrameOperation({
+          operationId,
+          phase: "failed",
+          status: "failed",
+          errorKind: "provider",
+          componentFailures: [{ component: "operation", kind: "provider" }],
+        }).catch(() => {});
+      }
+    }
+  });
+}
+
 async function handleHybridFrameAcceptFromParsed({
   res,
   runtime,
@@ -1309,9 +1403,19 @@ async function handleHybridFrameAcceptFromParsed({
   imageGenerator,
   env,
   fetchImpl,
+  logger,
+  request,
 }) {
+  const startedAt = Date.now();
   const authorities = validateHybridAuthorities(visual, frame);
   if (!authorities.ok) {
+    logVisual(logger, request, "visual-hybrid-frame-outcome", {
+      status: "failed",
+      kind: mapHybridFailureKind(authorities.kind),
+      http: authorities.httpStatus,
+      frameId: target.frameId,
+      scope: "frame",
+    });
     sendJson(res, authorities.httpStatus, {
       status: "failed",
       kind: mapHybridFailureKind(authorities.kind),
@@ -1341,6 +1445,16 @@ async function handleHybridFrameAcceptFromParsed({
     sendVisualFailure(res, created || failedVisual("database", 503));
     return;
   }
+  logVisual(logger, request, "visual-hybrid-frame-start", {
+    operation: "hybrid-frame-generate",
+    operationId: created.operationId,
+    frameId: created.frameId,
+    scope: "frame",
+    writeVersion: created.writeVersion,
+    storyboardResultId: created.storyboardResultId || visual.storyboardResultId,
+    storyboardVersionId: created.storyboardVersionId,
+    phase: created.phase || "queued",
+  });
   sendJson(res, 202, {
     status: "accepted",
     operationId: created.operationId,
@@ -1348,33 +1462,134 @@ async function handleHybridFrameAcceptFromParsed({
     storyboardVersionId: created.storyboardVersionId,
     phase: created.phase || "queued",
     writeVersion: created.writeVersion,
+    scope: "frame",
   });
-  const operationId = created.operationId;
-  scheduleHybridDeferredWork(async () => {
-    try {
-      if (typeof runtime.visualStore.orchestrateHybridFrameOperation !== "function") {
-        return;
-      }
-      await runtime.visualStore.orchestrateHybridFrameOperation({
-        operationId,
-        env,
-        generateImage: (input) => imageGenerator({
-          ...input,
-          env,
-          fetchImpl,
-        }),
-      });
-    } catch {
-      if (typeof runtime.visualStore.updateFrameOperation === "function") {
-        await runtime.visualStore.updateFrameOperation({
-          operationId,
-          phase: "failed",
-          status: "failed",
-          errorKind: "provider",
-          componentFailures: [{ component: "operation", kind: "provider" }],
-        }).catch(() => {});
-      }
+  scheduleHybridOrchestration({
+    runtime,
+    operationId: created.operationId,
+    frameId: created.frameId,
+    scope: "frame",
+    imageGenerator,
+    env,
+    fetchImpl,
+    logger,
+    request,
+    startedAt,
+  });
+}
+
+async function handleHybridPanelAcceptFromParsed({
+  res,
+  runtime,
+  target,
+  frame,
+  visual,
+  imageGenerator,
+  env,
+  fetchImpl,
+  logger,
+  request,
+}) {
+  const startedAt = Date.now();
+  const panelIndex = target.panelIndex;
+  if (!Number.isInteger(panelIndex) || panelIndex < 0 || panelIndex >= (frame.panels?.length || 0)) {
+    sendJson(res, 404, { status: "failed", kind: "not-found" });
+    return;
+  }
+  const authorities = validateHybridAuthorities(visual, {
+    ...frame,
+    panels: [frame.panels[panelIndex]],
+  });
+  if (!authorities.ok) {
+    logVisual(logger, request, "visual-hybrid-panel-outcome", {
+      status: "failed",
+      kind: mapHybridFailureKind(authorities.kind),
+      http: authorities.httpStatus,
+      frameId: target.frameId,
+      panelIndex,
+      scope: "panel",
+    });
+    sendJson(res, authorities.httpStatus, {
+      status: "failed",
+      kind: mapHybridFailureKind(authorities.kind),
+    });
+    return;
+  }
+  if (typeof runtime.visualStore.hasReadyPrimaryBackground === "function") {
+    const ready = await runtime.visualStore.hasReadyPrimaryBackground();
+    if (!ready?.ok) {
+      sendVisualFailure(res, ready || failedVisual("database", 503));
+      return;
     }
+    if (!ready.ready) {
+      logVisual(logger, request, "visual-hybrid-panel-outcome", {
+        status: "failed",
+        kind: "frame-generation-required",
+        http: 409,
+        frameId: target.frameId,
+        panelIndex,
+        scope: "panel",
+      });
+      sendJson(res, 409, { status: "failed", kind: "frame-generation-required" });
+      return;
+    }
+  } else if (frame.hybrid?.background?.status !== "ready") {
+    sendJson(res, 409, { status: "failed", kind: "frame-generation-required" });
+    return;
+  }
+  if (typeof runtime.visualStore.ensureHybridHeads === "function") {
+    const heads = await runtime.visualStore.ensureHybridHeads({
+      frameId: target.frameId,
+      compositionMode: frame.hybrid?.compositionMode || "near-frontal-pair",
+    });
+    if (!heads?.ok) {
+      sendVisualFailure(res, heads || failedVisual("database", 503));
+      return;
+    }
+  }
+  const created = await runtime.visualStore.createFrameOperation({
+    frameId: target.frameId,
+    scope: "panel",
+    panelIndex,
+    phase: "queued",
+  });
+  if (!created?.ok) {
+    sendVisualFailure(res, created || failedVisual("database", 503));
+    return;
+  }
+  logVisual(logger, request, "visual-hybrid-panel-start", {
+    operation: "hybrid-panel-generate",
+    operationId: created.operationId,
+    frameId: created.frameId,
+    scope: "panel",
+    panelIndex,
+    writeVersion: created.writeVersion,
+    storyboardResultId: created.storyboardResultId || visual.storyboardResultId,
+    storyboardVersionId: created.storyboardVersionId,
+    phase: created.phase || "queued",
+  });
+  sendJson(res, 202, {
+    status: "accepted",
+    operationId: created.operationId,
+    frameId: created.frameId,
+    storyboardVersionId: created.storyboardVersionId,
+    phase: created.phase || "queued",
+    writeVersion: created.writeVersion,
+    scope: "panel",
+    panelIndex,
+  });
+  scheduleHybridOrchestration({
+    runtime,
+    operationId: created.operationId,
+    frameId: created.frameId,
+    scope: "panel",
+    panelIndex,
+    imageGenerator,
+    env,
+    fetchImpl,
+    logger,
+    request,
+    startedAt,
   });
 }
 

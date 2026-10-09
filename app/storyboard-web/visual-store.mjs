@@ -799,23 +799,38 @@ export async function finishPanelGeneration(pool, { id, result }) {
   }
 }
 
-export async function updatePlacement(pool, { frameId, panelIndex, zoom, positionX, positionY }) {
+export async function updatePlacement(pool, {
+  frameId,
+  panelIndex,
+  zoom,
+  positionX,
+  positionY,
+  fitMode = "manual",
+} = {}) {
   const numbers = [zoom, positionX, positionY].map(Number);
+  const mode = fitMode == null || fitMode === "" ? "manual" : String(fitMode);
   if (!frameId || !Number.isInteger(panelIndex) || panelIndex < 0
       || !numbers.every(Number.isFinite)
       || numbers[0] < 1 || numbers[0] > 3
       || numbers[1] < 0 || numbers[1] > 100
-      || numbers[2] < 0 || numbers[2] > 100) return failed("invalid-request");
+      || numbers[2] < 0 || numbers[2] > 100
+      || (mode !== "manual" && mode !== "fit")) {
+    return failed("invalid-request");
+  }
   try {
     return await withClient(pool, async (client) => {
       const target = await panelContext(client, frameId, panelIndex);
       if (!target) return failed("not-found", 404);
       await client.query(`
         UPDATE panel_visual_state
-        SET zoom = $2, position_x = $3, position_y = $4, updated_at = clock_timestamp()
+        SET zoom = $2,
+            position_x = $3,
+            position_y = $4,
+            fit_mode = $5,
+            updated_at = clock_timestamp()
         WHERE id = $1
-      `, [target.state.id, ...numbers]);
-      return { ok: true };
+      `, [target.state.id, ...numbers, mode]);
+      return { ok: true, fitMode: mode };
     });
   } catch {
     return failed("database", 503);
@@ -1920,9 +1935,33 @@ export async function assertFrameOperationAuthority(pool, { operationId, frameId
         ok: true,
         operationId,
         frameId: result.operation.frame_id,
+        scope: result.operation.scope,
+        panelIndex: result.operation.panel_index == null
+          ? null
+          : Number(result.operation.panel_index),
         writeVersion: result.writeVersion,
         storyboardVersionId: result.operation.storyboard_version_id,
         storyboardResultId: result.operation.storyboard_result_id,
+      };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+/** True when the active version has a ready primary-scene background. */
+export async function hasReadyPrimaryBackground(pool) {
+  try {
+    return await withClient(pool, async (client) => {
+      const context = await ensureVersion(client);
+      if (!context) return { ok: false, kind: "not-found", httpStatus: 404 };
+      const scene = await ensureSceneBackgroundState(client, context.version.id);
+      const ready = await readySceneBackground(client, scene);
+      return {
+        ok: true,
+        ready: Boolean(ready),
+        generationId: ready?.id ?? null,
+        assetId: ready?.output_asset_id ?? null,
       };
     });
   } catch {
@@ -2445,9 +2484,15 @@ export async function orchestrateHybridFrameOperation(pool, {
   providerConfig = null,
   onAfterBackgroundBegin = null,
   onAfterCharacterBegin = null,
+  onHybridLog = null,
 } = {}) {
   if (!operationId || typeof generateImage !== "function") return failed("invalid-request");
   const failures = [];
+  const emit = (event, fields = {}) => {
+    if (typeof onHybridLog === "function") {
+      try { onHybridLog(event, fields); } catch { /* logging must not break orchestration */ }
+    }
+  };
   try {
     const authority = await assertFrameOperationAuthority(pool, { operationId });
     if (!authority.ok) {
@@ -2457,13 +2502,38 @@ export async function orchestrateHybridFrameOperation(pool, {
       return authority;
     }
     const frameId = authority.frameId;
+    const operationScope = authority.scope === "panel" ? "panel" : "frame";
+    const scopedPanelIndex = Number.isInteger(authority.panelIndex) ? authority.panelIndex : null;
 
     await updateFrameOperation(pool, { operationId, phase: "preparing-background", status: "running" });
+    emit("visual-hybrid-operation-phase", {
+      operationId,
+      frameId,
+      scope: operationScope,
+      panelIndex: scopedPanelIndex,
+      phase: "preparing-background",
+      status: "running",
+    });
     const stillPreparing = await assertFrameOperationAuthority(pool, { operationId, frameId });
     if (!stillPreparing.ok) {
       return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
     }
 
+    if (operationScope === "panel") {
+      const readyBackground = await hasReadyPrimaryBackground(pool);
+      if (!readyBackground.ok || !readyBackground.ready) {
+        const kind = readyBackground.ok ? "frame-generation-required" : (readyBackground.kind || "database");
+        failures.push({ component: "background", kind });
+        await updateFrameOperation(pool, {
+          operationId,
+          phase: "failed",
+          status: "failed",
+          errorKind: kind,
+          componentFailures: failures,
+        });
+        return { ok: false, kind, componentFailures: failures };
+      }
+    } else {
     const background = await beginSceneBackgroundLifecycle(pool, {
       operationId,
       env,
@@ -2496,18 +2566,49 @@ export async function orchestrateHybridFrameOperation(pool, {
         return failOperationConflict(pool, operationId, failures);
       }
       await updateFrameOperation(pool, { operationId, phase: "generating-background", status: "running" });
+      emit("visual-hybrid-operation-phase", {
+        operationId, frameId, scope: operationScope, phase: "generating-background", status: "running",
+      });
+      const bgArgs = providerInvocationFromBegin(background, { component: "scene-background" });
+      emit("visual-background-start", {
+        operationId,
+        frameId,
+        component: "scene-background",
+        generationId: background.generationId,
+        generationRecordId: background.generationRecordId,
+        model: bgArgs.model,
+        writeVersion: background.capturedSceneWriteVersion,
+      });
       let providerResult;
       try {
-        providerResult = await generateImage({
-          ...providerInvocationFromBegin(background, { component: "scene-background" }),
-          env,
-        });
+        providerResult = await generateImage({ ...bgArgs, env });
       } catch {
         providerResult = { ok: false, kind: "provider" };
       }
+      const bgOutcome = normalizeProviderOutcome(providerResult);
+      emit("visual-background-provider", {
+        operationId,
+        frameId,
+        component: "scene-background",
+        generationId: background.generationId,
+        status: bgOutcome.ok ? "ok" : "failed",
+        kind: bgOutcome.ok ? undefined : (bgOutcome.kind || "provider"),
+        providerStatus: bgOutcome.providerStatus,
+        latencyMs: bgOutcome.latencyMs,
+        model: bgArgs.model,
+      });
       const finalized = await finalizeSceneBackgroundLifecycle(pool, {
         generationId: background.generationId,
         providerResult,
+      });
+      emit("visual-background-storage", {
+        operationId,
+        frameId,
+        component: "scene-background",
+        generationId: background.generationId,
+        status: finalized.ok ? finalized.status : "failed",
+        kind: finalized.ok ? finalized.errorKind : (finalized.kind || "database"),
+        advancedCurrentPointer: Boolean(finalized.advancedCurrentPointer),
       });
       const afterProvider = await assertFrameOperationAuthority(pool, { operationId, frameId });
       if (!afterProvider.ok) {
@@ -2527,6 +2628,7 @@ export async function orchestrateHybridFrameOperation(pool, {
         return { ok: false, kind, componentFailures: failures };
       }
     }
+    }
 
     const beforeCharacters = await assertFrameOperationAuthority(pool, { operationId, frameId });
     if (!beforeCharacters.ok) {
@@ -2537,14 +2639,25 @@ export async function orchestrateHybridFrameOperation(pool, {
       phase: "generating-character-states",
       status: "running",
     });
+    emit("visual-hybrid-operation-phase", {
+      operationId,
+      frameId,
+      scope: operationScope,
+      panelIndex: scopedPanelIndex,
+      phase: "generating-character-states",
+      status: "running",
+    });
 
     const panelCount = await withClient(pool, async (client) => {
       const context = await ensureVersion(client);
       const frame = expandStoryboardFrames(context.version.frames).find((entry) => entry.id === frameId);
       return frame?.panels?.length ?? 0;
     });
+    const panelIndexes = operationScope === "panel" && Number.isInteger(scopedPanelIndex)
+      ? [scopedPanelIndex]
+      : [...Array(panelCount).keys()];
 
-    for (let panelIndex = 0; panelIndex < panelCount; panelIndex += 1) {
+    for (const panelIndex of panelIndexes) {
       const beforePanel = await assertFrameOperationAuthority(pool, { operationId, frameId });
       if (!beforePanel.ok) {
         return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
@@ -2584,22 +2697,62 @@ export async function orchestrateHybridFrameOperation(pool, {
         failures.push({ component: "character-state", panelIndex, kind: "conflict" });
         return failOperationConflict(pool, operationId, failures);
       }
+      const charArgs = providerInvocationFromBegin(started, {
+        component: "character-state",
+        panelIndex,
+      });
+      emit("visual-character-state-start", {
+        operationId,
+        frameId,
+        component: "character-state",
+        panelIndex,
+        generationId: started.generationId,
+        generationRecordId: started.generationRecordId,
+        model: charArgs.model,
+      });
       let providerResult;
       try {
-        providerResult = await generateImage({
-          ...providerInvocationFromBegin(started, {
-            component: "character-state",
-            panelIndex,
-          }),
-          env,
-        });
+        providerResult = await generateImage({ ...charArgs, env });
       } catch {
         providerResult = { ok: false, kind: "provider" };
       }
+      const charOutcome = normalizeProviderOutcome(providerResult);
+      emit("visual-character-state-provider", {
+        operationId,
+        frameId,
+        component: "character-state",
+        panelIndex,
+        generationId: started.generationId,
+        status: charOutcome.ok ? "ok" : "failed",
+        kind: charOutcome.ok ? undefined : (charOutcome.kind || "provider"),
+        providerStatus: charOutcome.providerStatus,
+        latencyMs: charOutcome.latencyMs,
+        model: charArgs.model,
+      });
       const finalized = await finalizeCharacterStateLifecycle(pool, {
         generationId: started.generationId,
         providerResult,
         advanceWithOperationId: operationId,
+      });
+      emit("visual-character-state-matte", {
+        operationId,
+        frameId,
+        component: "character-state",
+        panelIndex,
+        generationId: started.generationId,
+        status: finalized.ok && finalized.status === "ready" ? "ok" : "failed",
+        kind: finalized.errorKind || (finalized.ok ? undefined : finalized.kind),
+        accepted: Boolean(finalized.ok && finalized.status === "ready"),
+      });
+      emit("visual-character-state-storage", {
+        operationId,
+        frameId,
+        component: "character-state",
+        panelIndex,
+        generationId: started.generationId,
+        status: finalized.ok ? finalized.status : "failed",
+        kind: finalized.ok ? finalized.errorKind : (finalized.kind || "database"),
+        advancedCurrentPointer: Boolean(finalized.advancedCurrentPointer),
       });
       const afterPanel = await assertFrameOperationAuthority(pool, { operationId, frameId });
       if (!afterPanel.ok) {
@@ -2625,6 +2778,10 @@ export async function orchestrateHybridFrameOperation(pool, {
       return failOperationConflict(pool, operationId, [{ component: "operation", kind: "conflict" }]);
     }
     await updateFrameOperation(pool, { operationId, phase: "assembling", status: "running" });
+    emit("visual-hybrid-operation-phase", {
+      operationId, frameId, scope: operationScope, panelIndex: scopedPanelIndex,
+      phase: "assembling", status: "running",
+    });
     const assembly = await evaluateHybridAssembly(pool, { frameId, operationId });
     if (!assembly.ok) {
       if (assembly.kind === "conflict") {
@@ -2663,7 +2820,11 @@ export async function orchestrateHybridFrameOperation(pool, {
       errorKind: null,
       componentFailures: [],
     });
-    return { ok: true, phase: "complete", visualReady: true };
+    emit("visual-hybrid-operation-phase", {
+      operationId, frameId, scope: operationScope, panelIndex: scopedPanelIndex,
+      phase: "complete", status: "complete",
+    });
+    return { ok: true, phase: "complete", visualReady: true, scope: operationScope, panelIndex: scopedPanelIndex };
   } catch (error) {
     const kind = error?.kind || "provider";
     failures.push({ component: "operation", kind });
@@ -2695,6 +2856,7 @@ export function createVisualStore(pool) {
     loadStructure: () => loadStoryboardStructure(pool),
     ensureHybridHeads: (input) => ensureHybridHeads(pool, input),
     createFrameOperation: (input) => createFrameOperation(pool, input),
+    hasReadyPrimaryBackground: () => hasReadyPrimaryBackground(pool),
     claimOrReuseSceneBackground: (input) => claimOrReuseSceneBackground(pool, input),
     createSceneBackgroundGeneration: (input) => createSceneBackgroundGeneration(pool, input),
     finalizeSceneBackgroundGeneration: (input) => finalizeSceneBackgroundGeneration(pool, input),
