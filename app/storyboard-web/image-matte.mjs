@@ -153,6 +153,11 @@ function isKeyedGreen(r, g, b, thresholds) {
     && g > b + thresholds.greenOverChannel;
 }
 
+/** Same residual-green criterion used by edge-fringe acceptance after cleanup. */
+function isEdgeFringeGreen(r, g, b, thresholds) {
+  return g - Math.max(r, b) >= thresholds.minGreenDominance / 2 && g > r && g > b;
+}
+
 function despillPixel(r, g, b, strength) {
   const maxRB = Math.max(r, b);
   if (g <= maxRB) return [r, g, b];
@@ -185,7 +190,10 @@ function edgeCleanup(rgba, width, height, thresholds) {
       out[i] = r;
       out[i + 1] = g;
       out[i + 2] = b;
-      if (isKeyedGreen(r, g, b, thresholds)) out[i + 3] = 0;
+      // Drop residual fringe-class greens that acceptance would reject, not only fully keyed greens.
+      if (isKeyedGreen(r, g, b, thresholds) || isEdgeFringeGreen(r, g, b, thresholds)) {
+        out[i + 3] = 0;
+      }
     }
   }
   return out;
@@ -227,7 +235,7 @@ export function measureMatteAcceptance(rgba, width, height, thresholds = MATTE_T
         })();
       if (onEdge) {
         edgeOpaque += 1;
-        if (g - Math.max(r, b) >= thresholds.minGreenDominance / 2 && g > r && g > b) {
+        if (isEdgeFringeGreen(r, g, b, thresholds)) {
           edgeGreenFringe += 1;
         }
       }

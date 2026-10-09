@@ -95,6 +95,40 @@ test("chromakey matte removes green backing, preserves subject, and rejects spil
   assert.equal(acceptance.opaqueGreenSpill, 0);
 });
 
+test("edge cleanup removes residual fringe-class greens that are not fully keyed", () => {
+  // Reproduces the live-provider failure mode: silhouette edge pixels with moderate
+  // green dominance survive keyed-green removal and previously failed edge-fringe acceptance.
+  const width = 48;
+  const height = 48;
+  const rgb = Buffer.alloc(width * height * 3);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 3;
+      const inCore = x >= 14 && x < 34 && y >= 12 && y < 38;
+      const inFringeRing = !inCore && x >= 12 && x < 36 && y >= 10 && y < 40;
+      if (inCore) {
+        rgb[i] = 52;
+        rgb[i + 1] = 48;
+        rgb[i + 2] = 44;
+      } else if (inFringeRing) {
+        rgb[i] = 40;
+        rgb[i + 1] = 90;
+        rgb[i + 2] = 45;
+      } else {
+        rgb[i] = 0;
+        rgb[i + 1] = 255;
+        rgb[i + 2] = 0;
+      }
+    }
+  }
+  const raw = encodeRgbPng(width, height, rgb);
+  const matte = extractChromakeyMatte(raw);
+  assert.equal(matte.ok, true, `expected fringe cleanup to accept, got ${matte.reasons?.join(",")}`);
+  assert.ok(matte.acceptance.edgeFringeRatio <= MATTE_THRESHOLDS.maxEdgeFringeRatio);
+  assert.equal(matte.acceptance.opaqueGreenSpill, 0);
+  assert.ok(matte.acceptance.opaqueSubjectRatio >= MATTE_THRESHOLDS.minOpaqueSubjectRatio);
+});
+
 test("invalid provider output fails closed as matte-failed", () => {
   const opaqueSubject = solidRgb(16, 16, [30, 30, 30]);
   const opaque = extractChromakeyMatte(opaqueSubject);

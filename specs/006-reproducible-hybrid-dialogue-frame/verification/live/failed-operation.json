@@ -1,0 +1,93 @@
+{
+  "operation": {
+    "operationId": "2743f6c1-e95a-43b8-b9fd-9d2e4bb09615",
+    "frameId": "frame-1",
+    "storyboardVersionId": "20000000-0000-4000-8000-000000000007",
+    "writeVersion": 2,
+    "phase": "failed",
+    "status": "failed",
+    "errorKind": "matte-failed",
+    "componentFailures": [
+      {
+        "kind": "matte-failed",
+        "component": "character-state",
+        "panelIndex": 0
+      }
+    ],
+    "visualReady": false,
+    "hybrid": {
+      "sceneKey": "primary",
+      "compositionMode": "near-frontal-pair",
+      "assemblyStatus": "not-ready",
+      "background": {
+        "status": "ready",
+        "assetId": "471cb3f5-00ac-4eff-8a1e-a04c75f6b188"
+      },
+      "panels": [
+        {
+          "panelIndex": 0,
+          "subject": "Путин",
+          "status": "missing",
+          "assetId": null,
+          "errorKind": null,
+          "zoom": 1,
+          "positionX": 50,
+          "positionY": 30,
+          "fitMode": "manual"
+        },
+        {
+          "panelIndex": 1,
+          "subject": "Дуров",
+          "status": "missing",
+          "assetId": null,
+          "errorKind": null,
+          "zoom": 1,
+          "positionX": 50,
+          "positionY": 30,
+          "fitMode": "manual"
+        }
+      ]
+    },
+    "createdAt": "2026-10-09T23:20:25.304Z",
+    "updatedAt": "2026-10-09T23:21:13.887Z",
+    "finishedAt": "2026-10-09T23:21:13.887Z"
+  },
+  "requestLog": [
+    {
+      "sequentialRequestNumber": 3,
+      "component": "scene-background",
+      "panelIndex": null,
+      "aspectRatio": "21:9",
+      "startedAt": "2026-10-09T23:20:25.344Z",
+      "retryOf": 1,
+      "retryReason": "background-border-nonadherence",
+      "success": true,
+      "providerStatus": 200,
+      "latencyMs": 25255,
+      "outputSha256": "25954ad59f0050dd95d8f162206ac10de0a20cb61ebc137a077b6c416432f6c6",
+      "outputByteLength": 808762,
+      "width": 1584,
+      "height": 672,
+      "finishedAt": "2026-10-09T23:20:50.599Z",
+      "kind": null
+    },
+    {
+      "sequentialRequestNumber": 4,
+      "component": "character-state",
+      "panelIndex": 0,
+      "aspectRatio": "4:5",
+      "startedAt": "2026-10-09T23:20:50.669Z",
+      "retryOf": 2,
+      "retryReason": "matte-failed-edge-fringe",
+      "success": true,
+      "providerStatus": 200,
+      "latencyMs": 22904,
+      "outputSha256": "7eb5b51662a4da7ea8cb329efe77bb976fe2db1fe18ad91df1a3fc84fb2dd618",
+      "outputByteLength": 1119121,
+      "width": 928,
+      "height": 1152,
+      "finishedAt": "2026-10-09T23:21:13.573Z",
+      "kind": null
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "note": "Harness attempt aborted before network I/O because createServer injected the text-provider fetchImpl into generateImage. Not counted as a live image-provider request.",
+  "latencyMsObserved": 1,
+  "providerStatus": null,
+  "networkRequestOccurred": false,
+  "liveImageProviderRequestsCounted": 0
+}

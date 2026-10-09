@@ -12,5 +12,9 @@ spikes/contest-chat-completions/results/
 # One approved Stage artistic baseline. Do not commit the saved candidate.
 app/storyboard-web/eval/stage-artistic/results/
 
+# Live diagnostic ZIPs stay local (large; may include full reference bytes).
+specs/006-reproducible-hybrid-dialogue-frame/verification/live/*-diagnostics.zip
+specs/006-reproducible-hybrid-dialogue-frame/verification/live/harness-console.log
+
 # Run artefacts are the record of what happened. Keep them.
 # Nothing under evals/runs/ is ignored on purpose.
