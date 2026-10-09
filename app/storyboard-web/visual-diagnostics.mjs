@@ -249,7 +249,7 @@ function assetMeta(role, asset, extras = {}) {
 
 function sanitizeReferenceManifest(manifest) {
   if (!Array.isArray(manifest)) return [];
-  return manifest.map((entry) => ({
+  return manifest.map((entry, index) => ({
     role: entry?.role ?? null,
     assetId: entry?.assetId ?? entry?.asset_id ?? null,
     required: Boolean(entry?.required),
@@ -258,7 +258,23 @@ function sanitizeReferenceManifest(manifest) {
     height: entry?.height ?? null,
     byteLength: entry?.byteLength ?? entry?.byte_length ?? null,
     sha256: entry?.sha256 ?? null,
+    referenceIndex: Number.isInteger(entry?.referenceIndex) ? entry.referenceIndex : index,
+    archivePath: entry?.archivePath ?? null,
   }));
+}
+
+function providerInvocationOccurred(generation) {
+  if (generation?.status === "ready") return true;
+  if (generation?.providerStatus != null && generation.providerStatus !== "") return true;
+  return false;
+}
+
+function indexReferenceAssets(evidence) {
+  const byId = new Map();
+  for (const asset of evidence.referenceAssets || []) {
+    if (asset?.id) byId.set(asset.id, asset);
+  }
+  return byId;
 }
 
 function sanitizeGenerationSettings(settings) {
@@ -380,9 +396,74 @@ export function buildDiagnosticsArchive(evidence) {
     }));
   }
 
+  const referenceAssetsById = indexReferenceAssets(evidence);
+  const referenceOccurrences = [];
+  const writtenReferenceAssets = new Map();
+
   for (const generation of evidence.generations || []) {
     const recordId = sanitizeFrameIdForFilename(generation.recordId);
     const base = `generations/${recordId}`;
+    const invocationOccurred = providerInvocationOccurred(generation);
+    const orderedRefs = Array.isArray(generation.referenceManifest) ? generation.referenceManifest : [];
+    const perGenerationRefs = [];
+
+    for (let referenceIndex = 0; referenceIndex < orderedRefs.length; referenceIndex += 1) {
+      const entry = orderedRefs[referenceIndex];
+      const assetId = entry?.assetId ?? entry?.asset_id ?? null;
+      if (!assetId) {
+        const error = new Error("reference-asset-missing");
+        error.kind = "not-found";
+        throw error;
+      }
+      const asset = referenceAssetsById.get(assetId);
+      if (!asset?.bytes || !asset.mime || !asset.sha256) {
+        const error = new Error("reference-asset-missing");
+        error.kind = "not-found";
+        throw error;
+      }
+      const bytes = Buffer.isBuffer(asset.bytes) ? asset.bytes : Buffer.from(asset.bytes);
+      const digest = sha256Hex(bytes);
+      if (digest !== asset.sha256) {
+        const error = new Error("reference-asset-hash-mismatch");
+        error.kind = "invalid-output";
+        throw error;
+      }
+      const ext = extensionForMime(asset.mime);
+      const archivePath = `references/assets/${asset.id}.${ext}`;
+      normalizeZipEntryPath(archivePath);
+      if (!writtenReferenceAssets.has(asset.id)) {
+        writtenReferenceAssets.set(asset.id, archivePath);
+        entries.push({ path: archivePath, bytes });
+      }
+      const occurrence = {
+        generationRecordId: generation.recordId,
+        referenceIndex,
+        role: entry?.role ?? null,
+        required: Boolean(entry?.required),
+        assetId: asset.id,
+        mime: asset.mime,
+        width: asset.width ?? null,
+        height: asset.height ?? null,
+        byteLength: bytes.length,
+        sha256: digest,
+        archivePath,
+        providerInvocationOccurred: invocationOccurred,
+      };
+      referenceOccurrences.push(occurrence);
+      perGenerationRefs.push({
+        role: occurrence.role,
+        assetId: occurrence.assetId,
+        required: occurrence.required,
+        mime: occurrence.mime,
+        width: occurrence.width,
+        height: occurrence.height,
+        byteLength: occurrence.byteLength,
+        sha256: occurrence.sha256,
+        referenceIndex,
+        archivePath,
+      });
+    }
+
     entries.push(jsonEntry(`${base}/record.json`, {
       recordId: generation.recordId,
       operationType: generation.operationType,
@@ -412,14 +493,17 @@ export function buildDiagnosticsArchive(evidence) {
       originatingOperationId: generation.originatingOperationId ?? null,
       createdAt: generation.createdAt ?? null,
       finishedAt: generation.finishedAt ?? null,
+      providerInvocationOccurred: invocationOccurred,
     }));
     entries.push(jsonEntry(`${base}/intent.json`, sanitizeExportValue(generation.visualIntent ?? {})));
     entries.push(textEntry(`${base}/compiled-prompt.txt`, generation.compiledPrompt ?? ""));
-    entries.push(jsonEntry(`${base}/reference-manifest.json`, sanitizeReferenceManifest(generation.referenceManifest)));
+    entries.push(jsonEntry(`${base}/reference-manifest.json`, sanitizeReferenceManifest(perGenerationRefs)));
     entries.push(jsonEntry(`${base}/omitted-references.json`, sanitizeExportValue(
       Array.isArray(generation.omittedReferences) ? generation.omittedReferences : [],
     )));
   }
+
+  entries.push(jsonEntry("references/manifest.json", { references: referenceOccurrences }));
 
   entries.push(jsonEntry("placement/panels.json", {
     panels: (evidence.panels || []).map((panel) => ({

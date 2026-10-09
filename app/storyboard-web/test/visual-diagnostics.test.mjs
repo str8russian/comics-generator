@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
 import test from "node:test";
+import { encodeRgbPng } from "../image-matte.mjs";
 import { createServer } from "../server.mjs";
 import {
   buildDiagnosticsArchive,
@@ -22,6 +23,29 @@ const png = Buffer.from(
   "base64",
 );
 const pngSha = sha256Hex(png);
+
+const styleRefBytes = encodeRgbPng(2, 2, Buffer.from([
+  200, 40, 40, 200, 40, 40,
+  200, 40, 40, 200, 40, 40,
+]));
+const identityRefBytes = encodeRgbPng(2, 2, Buffer.from([
+  40, 40, 200, 40, 40, 200,
+  40, 40, 200, 40, 40, 200,
+]));
+const unrelatedRefBytes = encodeRgbPng(2, 2, Buffer.from([
+  40, 200, 40, 40, 200, 40,
+  40, 200, 40, 40, 200, 40,
+]));
+const styleRefSha = sha256Hex(styleRefBytes);
+const identityRefSha = sha256Hex(identityRefBytes);
+const unrelatedRefSha = sha256Hex(unrelatedRefBytes);
+assert.notEqual(styleRefSha, identityRefSha);
+assert.notEqual(styleRefSha, unrelatedRefSha);
+
+const STYLE_REF_ID = "60000000-0000-4000-8000-000000000001";
+const IDENTITY_REF_ID = "60000000-0000-4000-8000-000000000002";
+const UNRELATED_REF_ID = "60000000-0000-4000-8000-000000000099";
+const ORIGINAL_IDENTITY_PHOTO_ID = "60000000-0000-4000-8000-000000000088";
 
 const PLANTED_SECRETS = [
   "sk-live-PLANTED-TOKEN-DO-NOT-EXPORT",
@@ -144,13 +168,13 @@ function baseEvidence(overrides = {}) {
         generationSettings: { aspectRatio: "21:9", component: "scene-background", timeoutMs: 1000 },
         referenceManifest: [{
           role: "style",
-          assetId: "60000000-0000-4000-8000-000000000001",
+          assetId: STYLE_REF_ID,
           required: true,
           mime: "image/png",
-          width: 1,
-          height: 1,
-          byteLength: png.length,
-          sha256: pngSha,
+          width: 2,
+          height: 2,
+          byteLength: styleRefBytes.length,
+          sha256: styleRefSha,
         }],
         omittedReferences: [],
         appGitCommit: "deadbeef",
@@ -193,23 +217,23 @@ function baseEvidence(overrides = {}) {
         referenceManifest: [
           {
             role: "identity",
-            assetId: "60000000-0000-4000-8000-000000000002",
+            assetId: IDENTITY_REF_ID,
             required: true,
             mime: "image/png",
-            sha256: pngSha,
-            byteLength: png.length,
-            width: 1,
-            height: 1,
+            sha256: identityRefSha,
+            byteLength: identityRefBytes.length,
+            width: 2,
+            height: 2,
           },
           {
             role: "style",
-            assetId: "60000000-0000-4000-8000-000000000001",
+            assetId: STYLE_REF_ID,
             required: true,
             mime: "image/png",
-            sha256: pngSha,
-            byteLength: png.length,
-            width: 1,
-            height: 1,
+            sha256: styleRefSha,
+            byteLength: styleRefBytes.length,
+            width: 2,
+            height: 2,
           },
         ],
         omittedReferences: [],
@@ -272,6 +296,28 @@ function baseEvidence(overrides = {}) {
         panelIndex: 0,
         generationId: "50000000-0000-4000-8000-000000000003",
         generationRecordId: recordChar,
+      },
+    ],
+    referenceAssets: [
+      {
+        id: STYLE_REF_ID,
+        kind: "style-seed",
+        mime: "image/png",
+        width: 2,
+        height: 2,
+        byteLength: styleRefBytes.length,
+        sha256: styleRefSha,
+        bytes: styleRefBytes,
+      },
+      {
+        id: IDENTITY_REF_ID,
+        kind: "anchor",
+        mime: "image/png",
+        width: 2,
+        height: 2,
+        byteLength: identityRefBytes.length,
+        sha256: identityRefSha,
+        bytes: identityRefBytes,
       },
     ],
     appGitCommit: "deadbeef",
@@ -344,6 +390,9 @@ test("complete hybrid frame evidence builds required archive layout", () => {
     "assets/character-rgba/panel-0-20000000-0000-4000-8000-000000000003.png",
     "assets/manifest.json",
     "placement/panels.json",
+    "references/manifest.json",
+    `references/assets/${STYLE_REF_ID}.png`,
+    `references/assets/${IDENTITY_REF_ID}.png`,
   ]) {
     assert.equal(entries.has(required), true, `missing ${required}`);
   }
@@ -750,4 +799,257 @@ test("asset bytes in archive match recorded sha256", () => {
     assert.ok(bytes, path);
     assert.equal(createHash("sha256").update(bytes).digest("hex"), meta.sha256);
   }
+});
+
+test("archive exports exact reference image bytes with ordered role mapping", () => {
+  const archive = buildDiagnosticsArchive(baseEvidence());
+  const entries = readZipArchive(archive.bytes);
+  assert.equal(entries.has(`references/assets/${STYLE_REF_ID}.png`), true);
+  assert.equal(entries.has(`references/assets/${IDENTITY_REF_ID}.png`), true);
+  assert.deepEqual(entries.get(`references/assets/${STYLE_REF_ID}.png`), styleRefBytes);
+  assert.deepEqual(entries.get(`references/assets/${IDENTITY_REF_ID}.png`), identityRefBytes);
+
+  const refs = JSON.parse(entries.get("references/manifest.json").toString("utf8"));
+  assert.ok(Array.isArray(refs.references));
+  assert.equal(refs.references.length, 3);
+
+  const styleBg = refs.references[0];
+  assert.equal(styleBg.generationRecordId, "30000000-0000-4000-8000-000000000001");
+  assert.equal(styleBg.referenceIndex, 0);
+  assert.equal(styleBg.role, "style");
+  assert.equal(styleBg.required, true);
+  assert.equal(styleBg.assetId, STYLE_REF_ID);
+  assert.equal(styleBg.mime, "image/png");
+  assert.equal(styleBg.width, 2);
+  assert.equal(styleBg.height, 2);
+  assert.equal(styleBg.byteLength, styleRefBytes.length);
+  assert.equal(styleBg.sha256, styleRefSha);
+  assert.equal(styleBg.archivePath, `references/assets/${STYLE_REF_ID}.png`);
+  assert.equal(styleBg.providerInvocationOccurred, true);
+
+  const identity = refs.references[1];
+  const styleOnChar = refs.references[2];
+  assert.equal(identity.role, "identity");
+  assert.equal(identity.assetId, IDENTITY_REF_ID);
+  assert.equal(identity.referenceIndex, 0);
+  assert.equal(styleOnChar.role, "style");
+  assert.equal(styleOnChar.assetId, STYLE_REF_ID);
+  assert.equal(styleOnChar.referenceIndex, 1);
+  assert.equal(styleOnChar.archivePath, styleBg.archivePath);
+
+  for (const entry of refs.references) {
+    const bytes = entries.get(entry.archivePath);
+    assert.ok(bytes, entry.archivePath);
+    assert.equal(sha256Hex(bytes), entry.sha256);
+  }
+
+  const again = buildDiagnosticsArchive(baseEvidence());
+  assert.deepEqual(again.bytes, archive.bytes);
+});
+
+test("identity and style roles stay distinct when both resolve to the same asset", () => {
+  const sharedId = STYLE_REF_ID;
+  const evidence = baseEvidence({
+    generations: baseEvidence().generations.map((generation, index) => (
+      index === 1
+        ? {
+          ...generation,
+          referenceManifest: [
+            {
+              role: "identity",
+              assetId: sharedId,
+              required: true,
+              mime: "image/png",
+              width: 2,
+              height: 2,
+              byteLength: styleRefBytes.length,
+              sha256: styleRefSha,
+            },
+            {
+              role: "style",
+              assetId: sharedId,
+              required: true,
+              mime: "image/png",
+              width: 2,
+              height: 2,
+              byteLength: styleRefBytes.length,
+              sha256: styleRefSha,
+            },
+          ],
+        }
+        : generation
+    )),
+    referenceAssets: [{
+      id: sharedId,
+      kind: "style-seed",
+      mime: "image/png",
+      width: 2,
+      height: 2,
+      byteLength: styleRefBytes.length,
+      sha256: styleRefSha,
+      bytes: styleRefBytes,
+    }],
+  });
+  const entries = readZipArchive(buildDiagnosticsArchive(evidence).bytes);
+  const assetPaths = [...entries.keys()].filter((name) => name.startsWith("references/assets/"));
+  assert.deepEqual(assetPaths, [`references/assets/${sharedId}.png`]);
+  const refs = JSON.parse(entries.get("references/manifest.json").toString("utf8")).references;
+  const charRefs = refs.filter((entry) => entry.generationRecordId === "30000000-0000-4000-8000-000000000002");
+  assert.equal(charRefs.length, 2);
+  assert.equal(charRefs[0].role, "identity");
+  assert.equal(charRefs[1].role, "style");
+  assert.equal(charRefs[0].assetId, sharedId);
+  assert.equal(charRefs[1].assetId, sharedId);
+  assert.equal(charRefs[0].archivePath, charRefs[1].archivePath);
+});
+
+test("shared-background style reference bytes are included for the requesting frame", () => {
+  const evidence = baseEvidence({
+    sharedBackground: {
+      sceneKey: "primary",
+      generationRecordId: "30000000-0000-4000-8000-000000000001",
+      originatingFrameId: "frame-2",
+      originatingOperationId: "40000000-0000-4000-8000-000000000088",
+      componentGenerationId: "50000000-0000-4000-8000-000000000002",
+    },
+    generations: baseEvidence().generations.map((generation, index) => (
+      index === 0
+        ? {
+          ...generation,
+          sharedBackground: true,
+          originatingFrameId: "frame-2",
+          originatingOperationId: "40000000-0000-4000-8000-000000000088",
+          frameId: "frame-2",
+        }
+        : generation
+    )),
+  });
+  const entries = readZipArchive(buildDiagnosticsArchive(evidence).bytes);
+  assert.deepEqual(entries.get(`references/assets/${STYLE_REF_ID}.png`), styleRefBytes);
+  const refs = JSON.parse(entries.get("references/manifest.json").toString("utf8")).references;
+  const sharedStyle = refs.find((entry) => (
+    entry.generationRecordId === "30000000-0000-4000-8000-000000000001" && entry.role === "style"
+  ));
+  assert.ok(sharedStyle);
+  assert.equal(sharedStyle.assetId, STYLE_REF_ID);
+});
+
+test("unrelated reference assets and original identity photos are not exported", () => {
+  const evidence = baseEvidence({
+    referenceAssets: [
+      ...baseEvidence().referenceAssets,
+      {
+        id: UNRELATED_REF_ID,
+        kind: "anchor",
+        mime: "image/png",
+        width: 2,
+        height: 2,
+        byteLength: unrelatedRefBytes.length,
+        sha256: unrelatedRefSha,
+        bytes: unrelatedRefBytes,
+      },
+      {
+        id: ORIGINAL_IDENTITY_PHOTO_ID,
+        kind: "identity",
+        mime: "image/png",
+        width: 2,
+        height: 2,
+        byteLength: unrelatedRefBytes.length,
+        sha256: unrelatedRefSha,
+        bytes: unrelatedRefBytes,
+      },
+    ],
+  });
+  const entries = readZipArchive(buildDiagnosticsArchive(evidence).bytes);
+  assert.equal(entries.has(`references/assets/${UNRELATED_REF_ID}.png`), false);
+  assert.equal(entries.has(`references/assets/${ORIGINAL_IDENTITY_PHOTO_ID}.png`), false);
+  const joined = Buffer.concat([...entries.values()]);
+  assert.equal(joined.includes(unrelatedRefBytes), false);
+  assert.equal(joined.toString("utf8").includes(UNRELATED_REF_ID), false);
+  assert.equal(joined.toString("utf8").includes(ORIGINAL_IDENTITY_PHOTO_ID), false);
+});
+
+test("failed generation retains intended reference bytes without claiming provider completion", () => {
+  const failedRecordId = "30000000-0000-4000-8000-000000000055";
+  const evidence = baseEvidence({
+    generations: [
+      ...baseEvidence().generations,
+      {
+        recordId: failedRecordId,
+        operationType: "character-state",
+        storyboardResultId: "10000000-0000-4000-8000-000000000006",
+        storyboardVersionId: "10000000-0000-4000-8000-000000000010",
+        frameId: "frame-1",
+        panelIndex: 0,
+        componentGenerationId: "50000000-0000-4000-8000-000000000055",
+        operationId: "40000000-0000-4000-8000-000000000055",
+        visualIntent: {},
+        compiledPrompt: "FAILED ATTEMPT PROMPT",
+        promptCompilerVersion: "hybrid-dialogue-v1",
+        model: "test-model",
+        generationSettings: { aspectRatio: "5:4", component: "character-state" },
+        referenceManifest: [
+          {
+            role: "identity",
+            assetId: IDENTITY_REF_ID,
+            required: true,
+            mime: "image/png",
+            width: 2,
+            height: 2,
+            byteLength: identityRefBytes.length,
+            sha256: identityRefSha,
+          },
+          {
+            role: "style",
+            assetId: STYLE_REF_ID,
+            required: true,
+            mime: "image/png",
+            width: 2,
+            height: 2,
+            byteLength: styleRefBytes.length,
+            sha256: styleRefSha,
+          },
+        ],
+        omittedReferences: [],
+        status: "failed",
+        errorKind: "conflict",
+        providerStatus: null,
+        latencyMs: null,
+        outputAssetId: null,
+        sharedBackground: false,
+        originatingFrameId: "frame-1",
+        originatingOperationId: "40000000-0000-4000-8000-000000000055",
+      },
+    ],
+  });
+  const entries = readZipArchive(buildDiagnosticsArchive(evidence).bytes);
+  const refs = JSON.parse(entries.get("references/manifest.json").toString("utf8")).references;
+  const failedRefs = refs.filter((entry) => entry.generationRecordId === failedRecordId);
+  assert.equal(failedRefs.length, 2);
+  assert.equal(failedRefs.every((entry) => entry.providerInvocationOccurred === false), true);
+  assert.deepEqual(entries.get(`references/assets/${IDENTITY_REF_ID}.png`), identityRefBytes);
+  assert.deepEqual(entries.get(`references/assets/${STYLE_REF_ID}.png`), styleRefBytes);
+});
+
+test("missing referenced asset fails closed", () => {
+  const evidence = baseEvidence({
+    referenceAssets: baseEvidence().referenceAssets.filter((asset) => asset.id !== IDENTITY_REF_ID),
+  });
+  assert.throws(() => buildDiagnosticsArchive(evidence), (error) => error?.kind === "not-found");
+});
+
+test("reference asset hash mismatch fails closed", () => {
+  const evidence = baseEvidence({
+    referenceAssets: baseEvidence().referenceAssets.map((asset) => (
+      asset.id === STYLE_REF_ID
+        ? { ...asset, sha256: identityRefSha }
+        : asset
+    )),
+  });
+  assert.throws(() => buildDiagnosticsArchive(evidence), (error) => error?.kind === "invalid-output");
+});
+
+test("reference export still excludes planted credentials", () => {
+  const archive = buildDiagnosticsArchive(baseEvidence());
+  assertNoPlantedSecrets(readZipArchive(archive.bytes));
 });

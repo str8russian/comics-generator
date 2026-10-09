@@ -3,7 +3,7 @@ import test from "node:test";
 import { createPool } from "../../db/pool.mjs";
 import { migrate } from "../../db/migrate.mjs";
 import { encodeRgbPng } from "../../image-matte.mjs";
-import { readZipArchive } from "../../visual-diagnostics.mjs";
+import { readZipArchive, sha256Hex } from "../../visual-diagnostics.mjs";
 import { createVisualStore } from "../../visual-store.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
@@ -1583,6 +1583,57 @@ test("hybrid state, placement, provenance, and diagnostics stay isolated across 
     assert.equal(textA.includes(ids.resultA), true);
     assert.equal(textA.includes(versionA), true);
     assert.match(textA, /1\.7/);
+
+    assert.equal(zipA.has("references/manifest.json"), true);
+    const refsA = JSON.parse(zipA.get("references/manifest.json").toString("utf8"));
+    assert.ok(Array.isArray(refsA.references));
+    assert.ok(refsA.references.length >= 2);
+    const styleOccA = refsA.references.find((entry) => entry.role === "style");
+    const identityOccA = refsA.references.find((entry) => entry.role === "identity");
+    assert.ok(styleOccA?.assetId);
+    assert.ok(identityOccA?.assetId);
+    assert.equal(zipA.has(styleOccA.archivePath), true);
+    assert.equal(zipA.has(identityOccA.archivePath), true);
+    assert.equal(sha256Hex(zipA.get(styleOccA.archivePath)), styleOccA.sha256);
+    assert.equal(sha256Hex(zipA.get(identityOccA.archivePath)), identityOccA.sha256);
+    assert.equal(refsA.references.every((entry) => entry.providerInvocationOccurred === true), true);
+
+    const unrelatedAssetId = "90000000-0000-4000-8000-000000000099";
+    const unrelatedBytes = encodeRgbPng(2, 2, Buffer.from([9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]));
+    await pool.query(`
+      INSERT INTO visual_asset (id, kind, mime, width, height, byte_length, sha256, bytes)
+      VALUES ($1, 'identity-reference', 'image/png', 2, 2, $2, $3, $4)
+    `, [unrelatedAssetId, unrelatedBytes.length, sha256Hex(unrelatedBytes), unrelatedBytes]);
+    const exportAAgain = await store.exportFrameDiagnostics({ frameId: "frame-1" });
+    assert.equal(exportAAgain.ok, true);
+    const zipAAgain = readZipArchive(exportAAgain.bytes);
+    assert.equal(zipAAgain.has(`references/assets/${unrelatedAssetId}.png`), false);
+    assert.equal(Buffer.concat([...zipAAgain.values()]).includes(unrelatedBytes), false);
+
+    // Shared current background from another frame still contributes its style reference.
+    await store.ensureHybridHeads({ frameId: "frame-2", compositionMode: "near-frontal-pair" });
+    const opFrame2 = await store.createFrameOperation({ frameId: "frame-2" });
+    assert.equal(opFrame2.ok, true);
+    const reuse = await store.claimOrReuseSceneBackground({
+      operationId: opFrame2.operationId,
+      preferReuse: true,
+    });
+    assert.equal(reuse.ok, true);
+    const resultFrame2 = await store.orchestrateHybridFrameOperation({
+      operationId: opFrame2.operationId,
+      providerConfig,
+      env: {},
+      generateImage,
+    });
+    assert.equal(resultFrame2.ok, true);
+    const exportFrame2 = await store.exportFrameDiagnostics({ frameId: "frame-2" });
+    assert.equal(exportFrame2.ok, true);
+    const zipFrame2 = readZipArchive(exportFrame2.bytes);
+    const refsFrame2 = JSON.parse(zipFrame2.get("references/manifest.json").toString("utf8"));
+    const sharedStyle = refsFrame2.references.find((entry) => entry.role === "style");
+    assert.ok(sharedStyle?.assetId);
+    assert.equal(zipFrame2.has(sharedStyle.archivePath), true);
+    assert.equal(sha256Hex(zipFrame2.get(sharedStyle.archivePath)), sharedStyle.sha256);
 
     await insertResult(pool, ids.resultB, "2026-10-09T18:01:00Z", splitDialogueFrames());
     const loadedB = await store.load();

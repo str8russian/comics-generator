@@ -3,7 +3,7 @@ import { inspectImage } from "./image-info.mjs";
 import { normalizeProviderOutcome, resolveImageProviderConfig } from "./image-provider.mjs";
 import { extractChromakeyMatte } from "./image-matte.mjs";
 import { buildHybridVisualIntent } from "./visual-intent.mjs";
-import { buildDiagnosticsArchive } from "./visual-diagnostics.mjs";
+import { buildDiagnosticsArchive, sha256Hex } from "./visual-diagnostics.mjs";
 import {
   compileCharacterStatePrompt,
   compileSceneBackgroundPrompt,
@@ -2883,24 +2883,56 @@ function mapGenerationRecordRow(row, extras = {}) {
   };
 }
 
-async function enrichReferenceManifest(client, manifest) {
-  if (!Array.isArray(manifest)) return [];
-  const enriched = [];
-  for (const entry of manifest) {
-    const assetId = entry?.assetId ?? entry?.asset_id ?? null;
-    const asset = assetId ? await assetRow(client, assetId) : null;
-    enriched.push({
-      role: entry?.role ?? null,
-      assetId,
-      required: Boolean(entry?.required),
-      mime: asset?.mime ?? null,
-      width: asset?.width ?? null,
-      height: asset?.height ?? null,
-      byteLength: asset?.byte_length ?? null,
-      sha256: asset?.sha256 ?? null,
-    });
+/**
+ * Resolve reference image bytes only through ordered generation-record manifests.
+ * Fail closed when a named asset is missing or its stored hash does not match bytes.
+ */
+async function resolveProvenanceReferenceAssets(client, generations) {
+  const referenceAssets = [];
+  const seen = new Set();
+  for (const generation of generations) {
+    const source = Array.isArray(generation.referenceManifest) ? generation.referenceManifest : [];
+    const enriched = [];
+    for (let referenceIndex = 0; referenceIndex < source.length; referenceIndex += 1) {
+      const entry = source[referenceIndex];
+      const assetId = entry?.assetId ?? entry?.asset_id ?? null;
+      if (!assetId) return failed("not-found", 404);
+      const asset = await assetRow(client, assetId);
+      if (!asset?.bytes || !asset.sha256 || !asset.mime) {
+        return failed("not-found", 404);
+      }
+      const bytes = Buffer.isBuffer(asset.bytes) ? asset.bytes : Buffer.from(asset.bytes);
+      if (sha256Hex(bytes) !== asset.sha256) {
+        return failed("invalid-output", 500);
+      }
+      enriched.push({
+        role: entry?.role ?? null,
+        assetId: asset.id,
+        required: Boolean(entry?.required),
+        mime: asset.mime,
+        width: asset.width ?? null,
+        height: asset.height ?? null,
+        byteLength: asset.byte_length ?? bytes.length,
+        sha256: asset.sha256,
+        referenceIndex,
+      });
+      if (!seen.has(asset.id)) {
+        seen.add(asset.id);
+        referenceAssets.push({
+          id: asset.id,
+          kind: asset.kind,
+          mime: asset.mime,
+          width: asset.width,
+          height: asset.height,
+          byteLength: asset.byte_length ?? bytes.length,
+          sha256: asset.sha256,
+          bytes,
+        });
+      }
+    }
+    generation.referenceManifest = enriched;
   }
-  return enriched;
+  return { ok: true, referenceAssets };
 }
 
 /**
@@ -3003,7 +3035,7 @@ export async function loadFrameDiagnosticsEvidence(pool, { frameId } = {}) {
       const generations = [];
       for (const row of frameRecords.rows) {
         generations.push(mapGenerationRecordRow(row, {
-          referenceManifest: await enrichReferenceManifest(client, row.reference_manifest_json),
+          referenceManifest: row.reference_manifest_json ?? [],
           sharedBackground: row.operation_type === "scene-background" && row.frame_id !== frameId,
           originatingFrameId: row.frame_id,
           originatingOperationId: row.operation_id,
@@ -3015,10 +3047,7 @@ export async function loadFrameDiagnosticsEvidence(pool, { frameId } = {}) {
         const shared = currentBackgroundRecord.frame_id !== frameId;
         if (shared || currentBackgroundRecord.operation_type === "scene-background") {
           generations.push(mapGenerationRecordRow(currentBackgroundRecord, {
-            referenceManifest: await enrichReferenceManifest(
-              client,
-              currentBackgroundRecord.reference_manifest_json,
-            ),
+            referenceManifest: currentBackgroundRecord.reference_manifest_json ?? [],
             sharedBackground: shared,
             originatingFrameId: currentBackgroundRecord.frame_id,
             originatingOperationId: currentBackgroundRecord.operation_id,
@@ -3047,16 +3076,17 @@ export async function loadFrameDiagnosticsEvidence(pool, { frameId } = {}) {
         );
         if (record.rowCount !== 1) continue;
         generations.push(mapGenerationRecordRow(record.rows[0], {
-          referenceManifest: await enrichReferenceManifest(
-            client,
-            record.rows[0].reference_manifest_json,
-          ),
+          referenceManifest: record.rows[0].reference_manifest_json ?? [],
           sharedBackground: false,
           originatingFrameId: frameId,
           originatingOperationId: row.operation_id,
         }));
         recordIds.add(row.generation_record_id);
       }
+
+      const resolvedRefs = await resolveProvenanceReferenceAssets(client, generations);
+      if (!resolvedRefs.ok) return resolvedRefs;
+      const referenceAssets = resolvedRefs.referenceAssets;
 
       const assets = [];
       const pushAsset = async (role, assetId, extras = {}) => {
@@ -3183,6 +3213,7 @@ export async function loadFrameDiagnosticsEvidence(pool, { frameId } = {}) {
         operations: frameOperations.rows.map((row) => mapOperationRow(row)),
         generations,
         assets,
+        referenceAssets,
         appGitCommit: generations.find((entry) => entry.appGitCommit)?.appGitCommit ?? null,
         promptCompilerVersion: HYBRID_PROMPT_COMPILER_VERSION,
         specVersion: "006-reproducible-hybrid-dialogue-frame",
@@ -3199,7 +3230,9 @@ export async function exportFrameDiagnostics(pool, { frameId } = {}) {
   try {
     return buildDiagnosticsArchive(evidence);
   } catch (error) {
-    return failed(error?.kind || "invalid-request", error?.kind === "not-found" ? 404 : 400);
+    const kind = error?.kind || "invalid-request";
+    const httpStatus = kind === "not-found" ? 404 : kind === "invalid-output" ? 500 : 400;
+    return failed(kind, httpStatus);
   }
 }
 
