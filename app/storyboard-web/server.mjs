@@ -17,6 +17,7 @@ import {
   aspectRatioForFrame,
   assembleAnchorReferences,
   assemblePanelReferences,
+  isEligibleHybridDialogueFrame,
   panelPrompt,
 } from "./visual-model.mjs";
 import { createVisualStore } from "./visual-store.mjs";
@@ -756,6 +757,16 @@ function visualAnchorApprovalPath(pathname) {
 }
 
 function visualFramePath(pathname) {
+  const operation = pathname.match(
+    /^\/api\/visual\/frames\/([^/]+)\/operations\/([0-9a-f-]{36})$/i,
+  );
+  if (operation) {
+    return {
+      frameId: decodeURIComponent(operation[1]),
+      operationId: operation[2],
+      kind: "operation",
+    };
+  }
   const frame = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/generate$/);
   if (frame) return { frameId: decodeURIComponent(frame[1]), kind: "frame" };
   const panel = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/panels\/(\d+)\/(generate|placement)$/);
@@ -765,6 +776,54 @@ function visualFramePath(pathname) {
     panelIndex: Number(panel[2]),
     kind: panel[3],
   };
+}
+
+function validateHybridAuthorities(visual, frame) {
+  if (!visual?.styleSeedAssetId) {
+    return { ok: false, kind: "style-required", httpStatus: 409 };
+  }
+  for (const panel of frame.panels || []) {
+    const subject = panel.subject;
+    if (!subject) {
+      return { ok: false, kind: "anchor-required", httpStatus: 409 };
+    }
+    const character = (visual.characters || []).find((entry) => entry.name === subject);
+    if (!character?.approvedAnchorId) {
+      return { ok: false, kind: "anchor-required", httpStatus: 409 };
+    }
+  }
+  return { ok: true };
+}
+
+function mapHybridFailureKind(kind) {
+  const allowed = new Set([
+    "configuration",
+    "invalid-request",
+    "invalid-image",
+    "unsupported-image-format",
+    "anchor-required",
+    "style-required",
+    "frame-generation-required",
+    "provider",
+    "timeout",
+    "invalid-output",
+    "matte-failed",
+    "assembly-failed",
+    "database",
+    "conflict",
+    "not-found",
+  ]);
+  return allowed.has(kind) ? kind : "provider";
+}
+
+function scheduleHybridDeferredWork(work) {
+  setImmediate(() => {
+    Promise.resolve()
+      .then(work)
+      .catch(() => {
+        // Contained: orchestration/finalizers convert failures into terminal outcomes.
+      });
+  });
 }
 
 async function readVisualBody(req, res, maxBytes = DEFAULT_MAX_BODY_BYTES) {
@@ -1063,6 +1122,47 @@ function failedVisual(kind, httpStatus) {
   return { ok: false, status: "failed", kind, httpStatus };
 }
 
+async function handleHybridOperationPoll(req, res, {
+  runtime,
+  target,
+}) {
+  if (req.method !== "GET") {
+    sendEmpty(res, 405, { Allow: "GET" });
+    req.resume();
+    return;
+  }
+  if (typeof runtime.visualStore.getFrameOperation !== "function") {
+    sendJson(res, 404, { status: "failed", kind: "not-found" });
+    return;
+  }
+  const operation = await runtime.visualStore.getFrameOperation({
+    frameId: target.frameId,
+    operationId: target.operationId,
+  });
+  if (!operation?.ok) {
+    sendJson(res, operation?.httpStatus || 404, {
+      status: "failed",
+      kind: mapHybridFailureKind(operation?.kind || "not-found"),
+    });
+    return;
+  }
+  sendJson(res, 200, {
+    operationId: operation.operationId,
+    frameId: operation.frameId,
+    storyboardVersionId: operation.storyboardVersionId,
+    writeVersion: operation.writeVersion,
+    phase: operation.phase,
+    status: operation.status,
+    errorKind: operation.errorKind,
+    componentFailures: operation.componentFailures || [],
+    visualReady: Boolean(operation.visualReady),
+    hybrid: operation.hybrid,
+    createdAt: operation.createdAt,
+    updatedAt: operation.updatedAt,
+    finishedAt: operation.finishedAt,
+  });
+}
+
 async function handleVisualGeneration(req, res, {
   runtime,
   target,
@@ -1073,6 +1173,10 @@ async function handleVisualGeneration(req, res, {
   nextRequest,
 }) {
   const request = nextRequest ? nextRequest() : undefined;
+  if (target.kind === "operation") {
+    await handleHybridOperationPoll(req, res, { runtime, target });
+    return;
+  }
   if (target.kind === "placement") {
     if (req.method !== "PATCH") {
       sendEmpty(res, 405, { Allow: "PATCH" });
@@ -1144,6 +1248,23 @@ async function handleVisualGeneration(req, res, {
     sendJson(res, 404, { status: "failed", kind: "not-found" });
     return;
   }
+  if (isEligibleHybridDialogueFrame(frame)) {
+    // Re-read body already consumed — handleHybridFrameAccept reads body again.
+    // Body was already parsed above; pass through a thin wrapper.
+    await handleHybridFrameAcceptFromParsed({
+      res,
+      runtime,
+      target,
+      frame,
+      visual,
+      imageGenerator,
+      env,
+      fetchImpl,
+      logger,
+      request,
+    });
+    return;
+  }
   const started = Date.now();
   logVisual(logger, request, "visual-frame-start", {
     operation: "frame-generate",
@@ -1177,6 +1298,83 @@ async function handleVisualGeneration(req, res, {
   });
   const refreshed = await runtime.visualStore.load();
   sendJson(res, 200, { ...refreshed, generationFailures: failures });
+}
+
+async function handleHybridFrameAcceptFromParsed({
+  res,
+  runtime,
+  target,
+  frame,
+  visual,
+  imageGenerator,
+  env,
+  fetchImpl,
+}) {
+  const authorities = validateHybridAuthorities(visual, frame);
+  if (!authorities.ok) {
+    sendJson(res, authorities.httpStatus, {
+      status: "failed",
+      kind: mapHybridFailureKind(authorities.kind),
+    });
+    return;
+  }
+  if (typeof runtime.visualStore.ensureHybridHeads === "function") {
+    const heads = await runtime.visualStore.ensureHybridHeads({
+      frameId: target.frameId,
+      compositionMode: frame.hybrid?.compositionMode || "near-frontal-pair",
+    });
+    if (!heads?.ok) {
+      sendVisualFailure(res, heads || failedVisual("database", 503));
+      return;
+    }
+  }
+  if (typeof runtime.visualStore.createFrameOperation !== "function") {
+    sendJson(res, 503, { status: "failed", kind: "configuration" });
+    return;
+  }
+  const created = await runtime.visualStore.createFrameOperation({
+    frameId: target.frameId,
+    scope: "frame",
+    phase: "queued",
+  });
+  if (!created?.ok) {
+    sendVisualFailure(res, created || failedVisual("database", 503));
+    return;
+  }
+  sendJson(res, 202, {
+    status: "accepted",
+    operationId: created.operationId,
+    frameId: created.frameId,
+    storyboardVersionId: created.storyboardVersionId,
+    phase: created.phase || "queued",
+    writeVersion: created.writeVersion,
+  });
+  const operationId = created.operationId;
+  scheduleHybridDeferredWork(async () => {
+    try {
+      if (typeof runtime.visualStore.orchestrateHybridFrameOperation !== "function") {
+        return;
+      }
+      await runtime.visualStore.orchestrateHybridFrameOperation({
+        operationId,
+        generateImage: (input) => imageGenerator({
+          ...input,
+          env,
+          fetchImpl,
+        }),
+      });
+    } catch {
+      if (typeof runtime.visualStore.updateFrameOperation === "function") {
+        await runtime.visualStore.updateFrameOperation({
+          operationId,
+          phase: "failed",
+          status: "failed",
+          errorKind: "provider",
+          componentFailures: [{ component: "operation", kind: "provider" }],
+        }).catch(() => {});
+      }
+    }
+  });
 }
 
 async function handleVisualEdit(req, res, { runtime, env, fetchImpl, logger, nextRequest }) {
