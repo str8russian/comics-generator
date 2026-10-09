@@ -1,0 +1,68 @@
+{
+  "setup": "comics_test + in-process image provider double + seeded split dialogue frame",
+  "liveImageProviderRequests": 0,
+  "liveTextProviderRequests": 0,
+  "providerDoubleCalls": 12,
+  "happyPath": {
+    "notes": [
+      "accept:202 operationId=e2a938d2-57ab-49bc-8149-94db4e5e7998 phase=queued",
+      "progress phase=preparing-background visualReady=false",
+      "complete visualReady=true phase=complete",
+      "assembly background=35579309-9327-454f-b6e2-8d2558dfbc3b chars=c73c182c-5f25-48d2-b649-077bf2932c0d,8ea95fa9-6c8c-47b2-9dea-6b2007b58e42",
+      "provider_double_calls_for_generate=3",
+      "placement survives without provider or background mutation",
+      "reload preserves complete assembly + placement",
+      "diagnostics zip bytes=26691"
+    ],
+    "operationId": "e2a938d2-57ab-49bc-8149-94db4e5e7998",
+    "providerCalls": 3
+  },
+  "reloadResume": {
+    "operationId": "d9751a8e-637a-46b8-a45b-58877c8d9362",
+    "resumedWithoutReplacement": true,
+    "previousAssemblyRetainedDuringRun": true
+  },
+  "forcedFailures": [
+    {
+      "path": "provider-failure-double",
+      "errorKind": "provider",
+      "retainedVisualReady": true,
+      "russianUiKind": "provider"
+    },
+    {
+      "path": "matte-failure-double",
+      "status": "failed",
+      "errorKind": "matte-failed",
+      "note": "matte-failed reached terminal state"
+    },
+    {
+      "path": "retry-new-operation",
+      "previousOperationId": "dc0b39d1-ab32-47e9-9e3e-171a0c1034cf",
+      "retryOperationId": "f947a16c-9517-4034-9279-738e62c2d384"
+    },
+    {
+      "path": "no-unintentional-pending",
+      "pendingCount": 0
+    },
+    {
+      "path": "previous-assembly-retained",
+      "backgroundAssetId": "97b6e68d-efce-4211-90a0-8bf5c01ae0fb",
+      "characterAssetIds": [
+        "b266631f-136b-40b8-b48e-6a0fd8ec31ce",
+        "17f25fb3-2725-4811-a25e-fa614f844973"
+      ],
+      "assemblyStatus": "ready"
+    },
+    {
+      "path": "storage-failure-double",
+      "deferredTo": "T051-if-needed",
+      "limitation": "No dedicated storage-fault double is wired without mutating production pool helpers; provider/matte retention paths cover previous-assembly safety."
+    }
+  ],
+  "consoleErrors": [],
+  "serverErrors": [],
+  "incompleteWithoutPrior": {
+    "operationId": "d2e6f78f-0fb1-4f95-aaad-6c90b7cec972",
+    "incompleteNotPresentedAsVisual": true
+  }
+}

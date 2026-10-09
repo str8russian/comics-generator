@@ -1,0 +1,68 @@
+{
+  "claimScope": "synthetic-composite-inspection-only",
+  "notProofOf": [
+    "live-provider-edge-quality",
+    "human-visual-acceptance"
+  ],
+  "thresholds": {
+    "minGreen": 140,
+    "minGreenDominance": 40,
+    "greenOverChannel": 20,
+    "maxOpaqueGreenSpill": 0,
+    "maxEdgeFringeRatio": 0.02,
+    "minTransparentRatio": 0.02,
+    "minOpaqueSubjectRatio": 0.05,
+    "edgeBand": 2,
+    "spillDesatStrength": 0.65
+  },
+  "acceptable": {
+    "ok": true,
+    "observed": {
+      "transparent": 1632,
+      "opaque": 672,
+      "opaqueGreenSpill": 0,
+      "edgeOpaque": 100,
+      "edgeGreenFringe": 0,
+      "transparentRatio": 0.7083333333333334,
+      "opaqueSubjectRatio": 0.2916666666666667,
+      "edgeFringeRatio": 0,
+      "accepted": true,
+      "reasons": []
+    },
+    "checks": {
+      "opaqueGreenSpill": {
+        "threshold": 0,
+        "observed": 0,
+        "pass": true
+      },
+      "edgeFringeRatio": {
+        "threshold": 0.02,
+        "observed": 0,
+        "pass": true
+      },
+      "opaqueSubjectRatio": {
+        "threshold": 0.05,
+        "observed": 0.2916666666666667,
+        "pass": true
+      },
+      "transparentRatio": {
+        "threshold": 0.02,
+        "observed": 0.7083333333333334,
+        "pass": true
+      }
+    },
+    "composites": [
+      "acceptable-composite-light.png",
+      "acceptable-composite-dark.png",
+      "acceptable-composite-contrast.png"
+    ]
+  },
+  "unacceptable": {
+    "ok": false,
+    "kind": "matte-failed",
+    "reasons": [
+      "subject-erased"
+    ],
+    "failClosed": true
+  }
+}
