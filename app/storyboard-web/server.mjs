@@ -12,7 +12,13 @@ import { stageStoryboard } from "./stage.mjs";
 import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
 import { generateImage } from "./image-provider.mjs";
 import { editStoryboard } from "./storyboard-edit.mjs";
-import { anchorPrompt, aspectRatioForFrame, panelPrompt } from "./visual-model.mjs";
+import {
+  anchorPrompt,
+  aspectRatioForFrame,
+  assembleAnchorReferences,
+  assemblePanelReferences,
+  panelPrompt,
+} from "./visual-model.mjs";
 import { createVisualStore } from "./visual-store.mjs";
 
 export const DEFAULT_MAX_BODY_BYTES = 262144;
@@ -765,29 +771,69 @@ async function readVisualBody(req, res, maxBytes = DEFAULT_MAX_BODY_BYTES) {
   return readJsonBody(req, res, maxBytes);
 }
 
-async function sendVisualState(res, runtime) {
+function logVisual(logger, request, event, fields = {}) {
+  const safe = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value == null || value === "") continue;
+    if (typeof value === "string" && value.length > 120) continue;
+    safe[key] = value;
+  }
+  logLine(logger, { request, event, ...safe });
+}
+
+function imageMeta(image) {
+  if (!image?.ok && !image?.mime && !image?.bytes) return {};
+  return {
+    mime: image.mime || image.image?.mime,
+    width: image.width ?? image.image?.width,
+    height: image.height ?? image.image?.height,
+    byteLength: image.byteLength ?? image.bytes?.length ?? image.image?.bytes?.length,
+  };
+}
+
+async function sendVisualState(res, runtime, { logger, request } = {}) {
   const visual = await runtime.visualStore.load();
   if (!visual?.ok) {
+    logVisual(logger, request, "visual-load-failed", {
+      status: "failed",
+      kind: safeKind(visual?.kind) || "database",
+      http: visual?.httpStatus || 503,
+    });
     sendVisualFailure(res, visual);
     return;
   }
   sendJson(res, 200, visual);
 }
 
-async function handleVisualIdentity(req, res, { runtime, characterName }) {
+async function handleVisualIdentity(req, res, { runtime, characterName, logger, nextRequest }) {
   if (req.method !== "POST") {
     sendEmpty(res, 405, { Allow: "POST" });
     req.resume();
     return;
   }
+  const request = nextRequest ? nextRequest() : undefined;
+  const started = Date.now();
+  logVisual(logger, request, "visual-identity-start", { operation: "identity-save" });
   const body = await readVisualBody(req, res, IMAGE_MAX_BODY_BYTES);
   if (body.done) return;
   if (body.invalid) {
+    logVisual(logger, request, "visual-identity-outcome", {
+      status: "failed",
+      kind: "invalid-request",
+      http: 400,
+      latencyMs: Date.now() - started,
+    });
     sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
   const image = parseIdentityImage(body.payload?.imageDataUrl);
   if (!image.ok) {
+    logVisual(logger, request, "visual-identity-outcome", {
+      status: "failed",
+      kind: safeKind(image.kind),
+      http: 400,
+      latencyMs: Date.now() - started,
+    });
     sendJson(res, 400, { status: "failed", kind: image.kind });
     return;
   }
@@ -796,26 +842,50 @@ async function handleVisualIdentity(req, res, { runtime, characterName }) {
     image,
     comment: body.payload?.comment || "",
   });
+  logVisual(logger, request, "visual-identity-outcome", {
+    status: result.ok ? "ok" : "failed",
+    kind: result.ok ? undefined : safeKind(result.kind),
+    http: result.ok ? 200 : result.httpStatus,
+    latencyMs: Date.now() - started,
+    ...imageMeta(image),
+  });
   if (!result.ok) {
     sendVisualFailure(res, result);
     return;
   }
-  await sendVisualState(res, runtime);
+  await sendVisualState(res, runtime, { logger, request });
 }
 
 function imageInput(asset) {
   return asset ? { mime: asset.mime, bytes: asset.bytes } : null;
 }
 
-async function handleVisualAnchor(req, res, { runtime, characterName, imageGenerator, env, fetchImpl }) {
+async function handleVisualAnchor(req, res, {
+  runtime,
+  characterName,
+  imageGenerator,
+  env,
+  fetchImpl,
+  logger,
+  nextRequest,
+}) {
   if (req.method !== "POST") {
     sendEmpty(res, 405, { Allow: "POST" });
     req.resume();
     return;
   }
+  const request = nextRequest ? nextRequest() : undefined;
+  const started = Date.now();
+  logVisual(logger, request, "visual-anchor-start", { operation: "anchor-generate" });
   const body = await readVisualBody(req, res);
   if (body.done) return;
   if (body.invalid) {
+    logVisual(logger, request, "visual-anchor-provider", {
+      status: "failed",
+      kind: "invalid-request",
+      http: 400,
+      latencyMs: Date.now() - started,
+    });
     sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
@@ -824,37 +894,69 @@ async function handleVisualAnchor(req, res, { runtime, characterName, imageGener
     instruction: body.payload?.instruction || "",
   });
   if (!pending.ok) {
+    logVisual(logger, request, "visual-anchor-provider", {
+      status: "failed",
+      kind: safeKind(pending.kind),
+      http: pending.httpStatus,
+      latencyMs: Date.now() - started,
+    });
     sendVisualFailure(res, pending);
     return;
   }
-  const images = [pending.identity, pending.previous, pending.style].filter(Boolean).slice(0, 3).map(imageInput);
+  const assembled = assembleAnchorReferences({
+    identity: pending.identity,
+    previous: pending.previous,
+    style: pending.style,
+  });
+  const providerStarted = Date.now();
   const result = await imageGenerator({
     prompt: anchorPrompt({
       characterName,
       identityComment: pending.identityComment,
       instruction: pending.instruction,
-      hasPrevious: Boolean(pending.previous),
-      hasStyle: Boolean(pending.style) && images.length > (pending.previous ? 2 : 1),
+      hasPrevious: assembled.hasPrevious,
+      hasStyle: assembled.hasStyle,
     }),
-    images,
+    images: assembled.images.map(imageInput),
     aspectRatio: "4:5",
     env,
     fetchImpl,
   });
+  logVisual(logger, request, "visual-anchor-provider", {
+    status: result?.ok ? "ok" : "failed",
+    kind: result?.ok ? undefined : safeKind(result?.kind),
+    providerStatus: Number.isInteger(result?.diagnostics?.providerStatus)
+      ? result.diagnostics.providerStatus
+      : undefined,
+    latencyMs: Date.now() - providerStarted,
+    model: typeof result?.metadata?.model === "string" ? result.metadata.model : undefined,
+    hasStyle: assembled.hasStyle,
+    hasPrevious: assembled.hasPrevious,
+    generationId: pending.id,
+  });
   const finished = await runtime.visualStore.finishAnchor({ id: pending.id, result });
+  logVisual(logger, request, "visual-anchor-storage", {
+    status: finished.ok ? "ok" : "failed",
+    kind: finished.ok ? undefined : safeKind(finished.kind),
+    http: finished.ok ? 200 : finished.httpStatus,
+    generationId: pending.id,
+    latencyMs: Date.now() - started,
+    ...imageMeta(result?.image),
+  });
   if (!finished.ok) {
     sendVisualFailure(res, finished);
     return;
   }
-  await sendVisualState(res, runtime);
+  await sendVisualState(res, runtime, { logger, request });
 }
 
-async function handleVisualAnchorApproval(req, res, { runtime, target }) {
+async function handleVisualAnchorApproval(req, res, { runtime, target, logger, nextRequest }) {
   if (req.method !== "POST") {
     sendEmpty(res, 405, { Allow: "POST" });
     req.resume();
     return;
   }
+  const request = nextRequest ? nextRequest() : undefined;
   const body = await readVisualBody(req, res);
   if (body.done) return;
   if (body.invalid) {
@@ -862,18 +964,40 @@ async function handleVisualAnchorApproval(req, res, { runtime, target }) {
     return;
   }
   const result = await runtime.visualStore.approveAnchor(target);
+  logVisual(logger, request, "visual-anchor-approve", {
+    status: result.ok ? "ok" : "failed",
+    kind: result.ok ? undefined : safeKind(result.kind),
+    http: result.ok ? 200 : result.httpStatus,
+    generationId: target.anchorId,
+    styleSeedAssetId: result.styleSeedAssetId,
+  });
   if (!result.ok) {
     sendVisualFailure(res, result);
     return;
   }
-  await sendVisualState(res, runtime);
+  await sendVisualState(res, runtime, { logger, request });
 }
 
-async function generateOnePanel({ runtime, frameId, panelIndex, body, imageGenerator, env, fetchImpl }) {
+async function generateOnePanel({
+  runtime,
+  frameId,
+  panelIndex,
+  body,
+  imageGenerator,
+  env,
+  fetchImpl,
+  logger,
+  request,
+}) {
   const performanceImage = body?.performanceImageDataUrl
     ? parseImageDataUrl(body.performanceImageDataUrl)
     : null;
   if (body?.performanceImageDataUrl && !performanceImage) return failedVisual("invalid-image", 400);
+  logVisual(logger, request, "visual-panel-start", {
+    operation: "panel-generate",
+    frameId,
+    panelIndex,
+  });
   const pending = await runtime.visualStore.beginPanelGeneration({
     frameId,
     panelIndex,
@@ -881,13 +1005,18 @@ async function generateOnePanel({ runtime, frameId, panelIndex, body, imageGener
     performanceImage,
     clearPerformance: body?.clearPerformance === true,
   });
-  if (!pending.ok) return pending;
-  const refs = [];
-  if (pending.refs.anchor) refs.push(["anchor", pending.refs.anchor]);
-  if (pending.refs.previous) refs.push(["previous", pending.refs.previous]);
-  if (pending.refs.performance) refs.push(["performance", pending.refs.performance]);
-  if (!pending.refs.previous && refs.length < 3 && pending.refs.style) refs.push(["style", pending.refs.style]);
-  const roles = new Set(refs.map(([role]) => role));
+  if (!pending.ok) {
+    logVisual(logger, request, "visual-panel-provider", {
+      status: "failed",
+      kind: safeKind(pending.kind),
+      http: pending.httpStatus,
+      frameId,
+      panelIndex,
+    });
+    return pending;
+  }
+  const assembled = assemblePanelReferences(pending.refs);
+  const providerStarted = Date.now();
   const result = await imageGenerator({
     prompt: panelPrompt({
       characterName: pending.subject,
@@ -896,16 +1025,38 @@ async function generateOnePanel({ runtime, frameId, panelIndex, body, imageGener
       layout: pending.frame.layout,
       panelIndex,
       speakerPanel: pending.frame.speakerPanel,
-      hasPrevious: roles.has("previous"),
-      hasPerformance: roles.has("performance"),
-      hasStyle: roles.has("style"),
+      hasPrevious: assembled.hasPrevious,
+      hasPerformance: assembled.hasPerformance,
+      hasStyle: assembled.hasStyle,
     }),
-    images: refs.map(([, asset]) => imageInput(asset)),
+    images: assembled.images.map(imageInput),
     aspectRatio: aspectRatioForFrame(pending.frame),
     env,
     fetchImpl,
   });
-  return runtime.visualStore.finishPanelGeneration({ id: pending.id, result });
+  logVisual(logger, request, "visual-panel-provider", {
+    status: result?.ok ? "ok" : "failed",
+    kind: result?.ok ? undefined : safeKind(result?.kind),
+    providerStatus: Number.isInteger(result?.diagnostics?.providerStatus)
+      ? result.diagnostics.providerStatus
+      : undefined,
+    latencyMs: Date.now() - providerStarted,
+    frameId,
+    panelIndex,
+    generationId: pending.id,
+    storyboardVersionId: pending.storyboardVersionId,
+  });
+  const finished = await runtime.visualStore.finishPanelGeneration({ id: pending.id, result });
+  logVisual(logger, request, "visual-panel-storage", {
+    status: finished.ok ? "ok" : "failed",
+    kind: finished.ok ? undefined : safeKind(finished.kind),
+    http: finished.ok ? 200 : finished.httpStatus,
+    frameId,
+    panelIndex,
+    generationId: pending.id,
+    ...imageMeta(result?.image),
+  });
+  return finished;
 }
 
 function failedVisual(kind, httpStatus) {
@@ -918,7 +1069,10 @@ async function handleVisualGeneration(req, res, {
   imageGenerator,
   env,
   fetchImpl,
+  logger,
+  nextRequest,
 }) {
+  const request = nextRequest ? nextRequest() : undefined;
   if (target.kind === "placement") {
     if (req.method !== "PATCH") {
       sendEmpty(res, 405, { Allow: "PATCH" });
@@ -934,11 +1088,18 @@ async function handleVisualGeneration(req, res, {
       positionX: body.payload?.positionX,
       positionY: body.payload?.positionY,
     });
+    logVisual(logger, request, "visual-placement", {
+      status: result.ok ? "ok" : "failed",
+      kind: result.ok ? undefined : safeKind(result.kind),
+      http: result.ok ? 200 : result.httpStatus,
+      frameId: target.frameId,
+      panelIndex: target.panelIndex,
+    });
     if (!result.ok) {
       sendVisualFailure(res, result);
       return;
     }
-    await sendVisualState(res, runtime);
+    await sendVisualState(res, runtime, { logger, request });
     return;
   }
   if (req.method !== "POST") {
@@ -961,20 +1122,36 @@ async function handleVisualGeneration(req, res, {
       imageGenerator,
       env,
       fetchImpl,
+      logger,
+      request,
     });
     if (!result.ok) {
       sendVisualFailure(res, result);
       return;
     }
-    await sendVisualState(res, runtime);
+    await sendVisualState(res, runtime, { logger, request });
     return;
   }
   const visual = await runtime.visualStore.load();
   const frame = visual?.frames?.find((entry) => entry.id === target.frameId);
   if (!frame) {
+    logVisual(logger, request, "visual-frame-outcome", {
+      status: "failed",
+      kind: "not-found",
+      http: 404,
+      frameId: target.frameId,
+    });
     sendJson(res, 404, { status: "failed", kind: "not-found" });
     return;
   }
+  const started = Date.now();
+  logVisual(logger, request, "visual-frame-start", {
+    operation: "frame-generate",
+    frameId: target.frameId,
+    panelCount: frame.panels.length,
+    storyboardResultId: visual.storyboardResultId,
+    storyboardVersionId: visual.storyboardVersionId,
+  });
   const failures = [];
   for (let panelIndex = 0; panelIndex < frame.panels.length; panelIndex += 1) {
     const result = await generateOnePanel({
@@ -985,9 +1162,19 @@ async function handleVisualGeneration(req, res, {
       imageGenerator,
       env,
       fetchImpl,
+      logger,
+      request,
     });
     if (!result.ok) failures.push({ panelIndex, kind: safeKind(result.kind) || "provider" });
   }
+  logVisual(logger, request, "visual-frame-outcome", {
+    status: failures.length ? "partial" : "ok",
+    frameId: target.frameId,
+    failureCount: failures.length,
+    latencyMs: Date.now() - started,
+    storyboardResultId: visual.storyboardResultId,
+    storyboardVersionId: visual.storyboardVersionId,
+  });
   const refreshed = await runtime.visualStore.load();
   sendJson(res, 200, { ...refreshed, generationFailures: failures });
 }
@@ -1146,7 +1333,7 @@ async function handle(req, res, {
       sendJson(res, 503, { status: "failed", kind: "database" });
       return;
     }
-    await sendVisualState(res, runtime);
+    await sendVisualState(res, runtime, { logger, request: nextRequest() });
     return;
   }
   const assetMatch = pathname.match(/^\/api\/visual\/assets\/([0-9a-f-]{36})$/i);
@@ -1184,22 +1371,48 @@ async function handle(req, res, {
   }
   const identityCharacter = visualCharacterPath(pathname, "identity");
   if (identityCharacter) {
-    await handleVisualIdentity(req, res, { runtime, characterName: identityCharacter });
+    await handleVisualIdentity(req, res, {
+      runtime,
+      characterName: identityCharacter,
+      logger,
+      nextRequest,
+    });
     return;
   }
   const anchorCharacter = visualCharacterPath(pathname, "anchor");
   if (anchorCharacter) {
-    await handleVisualAnchor(req, res, { runtime, characterName: anchorCharacter, imageGenerator, env, fetchImpl });
+    await handleVisualAnchor(req, res, {
+      runtime,
+      characterName: anchorCharacter,
+      imageGenerator,
+      env,
+      fetchImpl,
+      logger,
+      nextRequest,
+    });
     return;
   }
   const anchorApproval = visualAnchorApprovalPath(pathname);
   if (anchorApproval) {
-    await handleVisualAnchorApproval(req, res, { runtime, target: anchorApproval });
+    await handleVisualAnchorApproval(req, res, {
+      runtime,
+      target: anchorApproval,
+      logger,
+      nextRequest,
+    });
     return;
   }
   const visualTarget = visualFramePath(pathname);
   if (visualTarget) {
-    await handleVisualGeneration(req, res, { runtime, target: visualTarget, imageGenerator, env, fetchImpl });
+    await handleVisualGeneration(req, res, {
+      runtime,
+      target: visualTarget,
+      imageGenerator,
+      env,
+      fetchImpl,
+      logger,
+      nextRequest,
+    });
     return;
   }
   const route = routesByPath.get(pathname);

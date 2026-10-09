@@ -36,7 +36,7 @@ function frames(description = "Абстрактный предмет на сто
 async function reset(pool) {
   await pool.query(`
     TRUNCATE visual_approval, panel_generation, panel_visual_state,
-             character_anchor_version, character_identity, visual_asset,
+             project_style_seed, character_anchor_version, character_identity, visual_asset,
              storyboard_head, storyboard_version CASCADE
   `);
   await pool.query(`
@@ -136,7 +136,15 @@ test("panel assignments stay isolated between storyboard results with the same f
       anchorId: pendingAnchor.id,
     });
     assert.equal(approvedAnchor.ok, true);
-    assert.equal((await store.load()).allAnchorsApproved, true);
+    const loadedAfterApprove = await store.load();
+    assert.equal(loadedAfterApprove.allAnchorsApproved, true);
+    assert.equal(loadedAfterApprove.styleSeedAssetId, finishedAnchor.assetId);
+    const secondPending = await store.beginAnchor({
+      characterName: "Персонаж",
+      instruction: "revise against the same seed",
+    });
+    assert.equal(secondPending.ok, true);
+    assert.equal(secondPending.style?.id, finishedAnchor.assetId);
 
     const pending = await store.beginPanelGeneration({
       frameId: "frame-1",

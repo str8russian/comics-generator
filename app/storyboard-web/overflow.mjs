@@ -62,11 +62,20 @@ function splitIndex(text, composition, measure) {
   return cut;
 }
 
+function copyPanel(panel) {
+  return { ...panel };
+}
+
+function frameVisualReady(panels) {
+  return Array.isArray(panels) && panels.length > 0 && panels.every((panel) => Boolean(panel?.assetId));
+}
+
 function piece(frame, text, composition, offset, fontSize) {
+  const panels = (composition.panels || []).map(copyPanel);
   return {
     layout: composition.layout,
     origin: "source",
-    panels: composition.panels.map((panel) => ({ description: panel.description })),
+    panels,
     sourceItemId: frame.sourceItemId,
     sourceRole: "utterance",
     speakerPanel: composition.speakerPanel,
@@ -77,6 +86,7 @@ function piece(frame, text, composition, offset, fontSize) {
       end: offset + text.length,
     },
     fontSize,
+    visualReady: frameVisualReady(panels),
   };
 }
 
@@ -133,9 +143,11 @@ function compileDirecting(frame, measure) {
 }
 
 function copySilent(frame) {
+  const panels = Array.isArray(frame.panels) ? frame.panels.map(copyPanel) : [];
   const copy = {
     ...frame,
-    panels: Array.isArray(frame.panels) ? frame.panels.map((panel) => ({ ...panel })) : [],
+    panels,
+    visualReady: frameVisualReady(panels),
   };
   delete copy.fontSize;
   return copy;

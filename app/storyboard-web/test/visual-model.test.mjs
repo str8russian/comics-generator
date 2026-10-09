@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   anchorPrompt,
   aspectRatioForFrame,
+  assembleAnchorReferences,
+  assemblePanelReferences,
   expandStoryboardFrames,
   panelPrompt,
   resolvePanelSubject,
@@ -23,6 +25,8 @@ test("prompts keep identity, performance, and style authority separate", () => {
   assert.match(anchor, /real identity reference/);
   assert.match(anchor, /previous anchor candidate/);
   assert.match(anchor, /project style anchor/);
+  assert.match(anchor, /sole authority for rendering language/);
+  assert.match(anchor, /do not preserve its rendering language/);
   const panel = panelPrompt({
     characterName: "Песков",
     description: "Песков просыпается в панике",
@@ -37,6 +41,41 @@ test("prompts keep identity, performance, and style authority separate", () => {
   assert.match(panel, /performance reference/);
   assert.match(panel, /never identity/);
   assert.match(panel, /eyes wider/);
+});
+
+test("anchor reference assembly keeps identity first and style when distinct", () => {
+  const identity = { id: "id-1", mime: "image/png" };
+  const previous = { id: "prev-1", mime: "image/png" };
+  const style = { id: "style-1", mime: "image/png" };
+  const first = assembleAnchorReferences({ identity, style });
+  assert.deepEqual([...first.roles], ["identity", "style"]);
+  assert.equal(first.hasStyle, true);
+  const revision = assembleAnchorReferences({ identity, previous, style });
+  assert.deepEqual([...revision.roles], ["identity", "previous", "style"]);
+  assert.equal(revision.hasPrevious, true);
+  assert.equal(revision.hasStyle, true);
+  const seedRevision = assembleAnchorReferences({
+    identity,
+    previous: style,
+    style,
+  });
+  assert.deepEqual([...seedRevision.roles], ["identity", "previous"]);
+  assert.equal(seedRevision.hasStyle, true);
+  assert.equal(seedRevision.styleDropped, false);
+});
+
+test("panel reference assembly never drops identity for style under the three-image limit", () => {
+  const assembled = assemblePanelReferences({
+    anchor: { id: "anchor" },
+    previous: { id: "prev" },
+    performance: { id: "perf" },
+    style: { id: "style" },
+  });
+  assert.ok(assembled.roles.has("anchor"));
+  assert.ok(assembled.roles.has("previous"));
+  assert.ok(assembled.roles.has("performance"));
+  assert.equal(assembled.roles.has("style"), false);
+  assert.equal(assembled.images[0].id, "anchor");
 });
 
 test("single and split panels request panel-compatible aspect ratios", () => {

@@ -3,6 +3,7 @@ import http from "node:http";
 import test from "node:test";
 import { createServer, IMAGE_MAX_BODY_BYTES } from "../server.mjs";
 import { IDENTITY_MAX_BODY_BYTES } from "../image-info.mjs";
+import { compileOverflow } from "../overflow.mjs";
 import { expandStoryboardFrames } from "../visual-model.mjs";
 import { heicLike, putinBoard, tinyJpeg } from "./visual-repair-fixtures.mjs";
 
@@ -241,6 +242,179 @@ test("identity save accepts JPEG and PNG, never calls the image provider, and re
 
     assert.equal(calls.length, 0);
     assert.equal(saved.length, 2);
+  } finally {
+    await close(server);
+  }
+});
+
+test("stable style seed is reused for later anchors and survives approval of other characters", async () => {
+  const logs = [];
+  const style = { id: "style-seed", mime: "image/png", bytes: png };
+  const identityB = { id: "id-b", mime: "image/png", bytes: png };
+  const previousB = { id: "prev-b", mime: "image/png", bytes: png };
+  let approved = ["Путин"];
+  const calls = [];
+  const store = {
+    load: async () => ({
+      ...visualState(),
+      styleSeedAssetId: style.id,
+      characters: [
+        { name: "Путин", approvedAnchorId: "a1", approvedAssetId: style.id },
+        { name: "Дуров", approvedAnchorId: approved.includes("Дуров") ? "a2" : null },
+      ],
+    }),
+    beginAnchor: async ({ characterName }) => ({
+      ok: true,
+      id: `anchor-${characterName}`,
+      identityComment: "",
+      instruction: "match project style",
+      identity: characterName === "Дуров" ? identityB : { id: "id-a", mime: "image/png", bytes: png },
+      previous: characterName === "Дуров" ? previousB : null,
+      style,
+    }),
+    finishAnchor: async () => ({ ok: true }),
+    approveAnchor: async ({ characterName }) => {
+      approved.push(characterName);
+      return { ok: true, styleSeedAssetId: style.id };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    logger: { log: (line) => logs.push(line) },
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png, mime: "image/png", width: 1, height: 1, byteLength: png.length }, metadata: { model: "test-model" } };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const first = await request(port, {
+      method: "POST",
+      path: `/api/visual/characters/${encodeURIComponent("Дуров")}/anchor`,
+      body: { instruction: "match project style" },
+    });
+    assert.equal(first.status, 200);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].images.length, 3);
+    assert.match(calls[0].prompt, /real identity reference/);
+    assert.match(calls[0].prompt, /project style anchor/);
+    assert.match(calls[0].prompt, /previous anchor candidate/);
+
+    const approve = await request(port, {
+      method: "POST",
+      path: `/api/visual/characters/${encodeURIComponent("Дуров")}/anchors/00000000-0000-4000-8000-000000000222/approve`,
+      body: {},
+    });
+    assert.equal(approve.status, 200);
+    assert.equal(approve.body.styleSeedAssetId, style.id);
+
+    const joined = logs.join("\n");
+    assert.match(joined, /visual-anchor-start/);
+    assert.match(joined, /visual-anchor-provider/);
+    assert.match(joined, /visual-anchor-storage/);
+    assert.match(joined, /visual-anchor-approve/);
+    assert.equal(joined.includes("match project style"), false);
+    assert.equal(joined.includes(dataUrl), false);
+    assert.equal(joined.includes("test-token"), false);
+    assert.equal(joined.includes("BASE_URL"), false);
+  } finally {
+    await close(server);
+  }
+});
+
+test("successful panel assets survive loadVisual fitting and partial frame failures stay visible", async () => {
+  const logs = [];
+  let panelCalls = 0;
+  const readyState = {
+    ...visualState(),
+    storyboardResultId: "result-1",
+    storyboardVersionId: "version-1",
+    frames: [{
+      id: "f1",
+      layout: "split2",
+      dialogue: "Короткий текст.",
+      speakerPanel: 0,
+      visualReady: true,
+      panels: [
+        {
+          description: "Путин",
+          subject: "Путин",
+          assetId: "p0",
+          asset: "/api/visual/assets/p0",
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+          generationStatus: "ready",
+        },
+        {
+          description: "Дуров",
+          subject: "Дуров",
+          assetId: "p1",
+          asset: "/api/visual/assets/p1",
+          zoom: 1.2,
+          position: "45% 28%",
+          align: "45% 28%",
+          generationStatus: "ready",
+        },
+      ],
+    }],
+  };
+  const store = {
+    load: async () => readyState,
+    beginPanelGeneration: async ({ panelIndex }) => {
+      panelCalls += 1;
+      if (panelIndex === 1) return { ok: false, status: "failed", kind: "timeout", httpStatus: 504 };
+      return {
+        ok: true,
+        id: `gen-${panelIndex}`,
+        storyboardVersionId: "version-1",
+        frame: readyState.frames[0],
+        panel: readyState.frames[0].panels[panelIndex],
+        panelIndex,
+        subject: readyState.frames[0].panels[panelIndex].subject,
+        instruction: "",
+        refs: {
+          anchor: { id: "anchor", mime: "image/png", bytes: png },
+          previous: null,
+          performance: null,
+          style: { id: "style", mime: "image/png", bytes: png },
+        },
+      };
+    },
+    finishPanelGeneration: async () => ({ ok: true, generationId: "gen-0", assetId: "p0" }),
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    logger: { log: (line) => logs.push(line) },
+    imageGenerator: async () => ({ ok: true, image: { bytes: png }, metadata: {} }),
+  });
+  const port = await listen(server);
+  try {
+    const fitted = compileOverflow(readyState.frames, () => true);
+    assert.equal(fitted.ok, true);
+    assert.equal(fitted.frames[0].panels[0].assetId, "p0");
+    assert.equal(fitted.frames[0].panels[1].assetId, "p1");
+    assert.equal(fitted.frames[0].visualReady, true);
+
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 200);
+    assert.equal(panelCalls, 2);
+    assert.deepEqual(generated.body.generationFailures, [{ panelIndex: 1, kind: "timeout" }]);
+    assert.equal(generated.body.frames[0].panels[0].assetId, "p0");
+    const joined = logs.join("\n");
+    assert.match(joined, /visual-frame-start/);
+    assert.match(joined, /visual-panel-start/);
+    assert.match(joined, /visual-frame-outcome/);
+    assert.equal(joined.includes("Короткий текст"), false);
+    assert.equal(joined.includes(dataUrl), false);
   } finally {
     await close(server);
   }

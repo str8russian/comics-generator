@@ -272,9 +272,21 @@ function actionMessage(kind) {
     timeout: "Генерация заняла слишком много времени. Попробуйте ещё раз.",
     provider: "Провайдер не завершил генерацию. Уже готовые результаты сохранены.",
     "invalid-output": "Провайдер не вернул пригодное изображение.",
+    database: "Не удалось сохранить результат. Попробуйте ещё раз.",
+    "stale-version": "Раскадровка уже изменилась. Обновите страницу и повторите действие.",
+    "asset-load-failed": "Изображение не удалось показать. Обновите страницу или создайте панель заново.",
     "nothing-to-undo": "Предыдущей структурной версии пока нет.",
   };
   return messages[kind] || "Не удалось выполнить действие. Попробуйте ещё раз.";
+}
+
+function failureNotice(failures) {
+  if (!failures?.length) return null;
+  if (failures.length === 1) {
+    const entry = failures[0];
+    return `Не удалось создать панель ${entry.panelIndex + 1}. ${actionMessage(entry.kind)}`;
+  }
+  return `Кадр создан частично. Не удалось создать панели: ${failures.map((entry) => entry.panelIndex + 1).join(", ")}.`;
 }
 
 async function runBusy(message, operation) {
@@ -322,6 +334,16 @@ function fileAsDataUrl(file) {
   });
 }
 
+function withVisualReady(frames) {
+  return (frames || []).map((frame) => {
+    const panels = Array.isArray(frame?.panels) ? frame.panels : [];
+    return {
+      ...frame,
+      visualReady: panels.length > 0 && panels.every((panel) => Boolean(panel?.assetId)),
+    };
+  });
+}
+
 function fitFrames(frames) {
   try {
     const fitted = compileOverflow(frames, (text, options) => FrameRenderer.measureDialogue(document, {
@@ -330,9 +352,11 @@ function fitFrames(frames) {
       panels: options.panels,
       dialogue: text,
     }, options.fontSize));
-    return fitted.ok ? fitted.frames : frames;
-  } catch {
-    return frames;
+    if (!fitted.ok) return withVisualReady(frames);
+    return withVisualReady(fitted.frames);
+  } catch (error) {
+    console.warn("[visual] fitFrames failed", { kind: "measurement" });
+    return withVisualReady(frames);
   }
 }
 
@@ -487,9 +511,14 @@ async function refreshVisual() {
 }
 
 async function generateFrame(frameId, button, index) {
-  await runBusy("Создаю изображения этого кадра по утверждённым образам…", async () => {
+  const source = (visual?.frames || []).find((frame) => frame.id === frameId);
+  const panelCount = source?.panels?.length || 1;
+  const progress = panelCount > 1
+    ? `Создаю изображения этого кадра: ${panelCount} панели…`
+    : "Создаю изображение этого кадра…";
+  await runBusy(progress, async () => {
     const previous = button.textContent;
-    button.textContent = "Создаю…";
+    button.textContent = panelCount > 1 ? `Создаю ${panelCount} панели…` : "Создаю…";
     try {
       const next = await fetchJson(`/api/visual/frames/${encodeURIComponent(frameId)}/generate`, {
         method: "POST",
@@ -497,13 +526,22 @@ async function generateFrame(frameId, button, index) {
         body: "{}",
       });
       applyVisual(next);
-      if (Number.isInteger(index) && next.frames?.some((frame) => frame.id === frameId && frame.visualReady)) {
-        openDetail(index);
+      const fittedIndex = readyFrames.findIndex((frame) => frame.id === frameId);
+      const openIndex = fittedIndex >= 0 ? fittedIndex : index;
+      if (Number.isInteger(openIndex) && readyFrames[openIndex]) {
+        openDetail(openIndex);
       }
       const failures = next.generationFailures || [];
-      showActionNotice(failures.length
-        ? `Кадр создан частично. Не удалось создать панелей: ${failures.map((entry) => entry.panelIndex + 1).join(", ")}.`
-        : "Кадр готов. Откройте его, чтобы проверить панели.", failures.length ? "error" : "info");
+      const notice = failureNotice(failures);
+      showActionNotice(
+        notice || (next.frames?.find((frame) => frame.id === frameId)?.visualReady
+          ? "Кадр готов. Проверьте изображения."
+          : "Генерация завершилась, но кадр ещё не полностью готов."),
+        notice ? "error" : "info",
+      );
+    } catch (error) {
+      console.error("[visual] frame generation failed", { kind: error?.kind || "request-failed", frameId });
+      throw error;
     } finally {
       button.textContent = previous;
     }
@@ -522,6 +560,12 @@ function renderPanelControls(frame) {
     const description = document.createElement("p");
     description.className = "panel-description-copy";
     description.textContent = panel.description;
+    const failure = panel.generationStatus === "failed"
+      ? Object.assign(document.createElement("p"), {
+        className: "panel-failure",
+        textContent: actionMessage(panel.generationError || "provider"),
+      })
+      : null;
     const instruction = document.createElement("textarea");
     instruction.placeholder = "Опишите, что изменить в этой панели";
     const performanceLabel = document.createElement("label");
@@ -539,19 +583,30 @@ function renderPanelControls(frame) {
       await runBusy(`Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`, async () => {
         const file = performance.files?.[0];
         const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
-        const next = await fetchJson(
-          `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ instruction: instruction.value, performanceImageDataUrl }),
-          },
-        );
-        applyVisual(next);
-        showActionNotice(`Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`);
+        try {
+          const next = await fetchJson(
+            `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ instruction: instruction.value, performanceImageDataUrl }),
+            },
+          );
+          applyVisual(next);
+          showActionNotice(`Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`);
+        } catch (error) {
+          console.error("[visual] panel generation failed", {
+            kind: error?.kind || "request-failed",
+            frameId: frame.id,
+            panelIndex,
+          });
+          throw error;
+        }
       });
     });
-    section.append(title, description, instruction, performanceLabel, regenerate);
+    section.append(title, description);
+    if (failure) section.append(failure);
+    section.append(instruction, performanceLabel, regenerate);
     if (panel.assetId) {
       const zoomLabel = document.createElement("label");
       zoomLabel.className = "zoom-control";

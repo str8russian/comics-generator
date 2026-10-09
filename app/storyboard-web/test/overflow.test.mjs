@@ -122,6 +122,82 @@ test("keeps a directing segment's composition when that segment splits further",
   assert.deepEqual(result.frames.map((piece) => piece.id), ["beat#1", "beat#2", "beat#3"]);
 });
 
+test("preserves panel visual metadata when dialogue already fits", () => {
+  const frame = utterance({
+    dialogue: "Нет.",
+    visualReady: true,
+    panels: [{
+      description: "Путин отвечает",
+      assetId: "asset-1",
+      asset: "/api/visual/assets/asset-1",
+      zoom: 1.25,
+      position: "40% 35%",
+      align: "40% 35%",
+      subject: "Путин",
+      generationStatus: "ready",
+      performanceAssetId: "perf-1",
+      performanceAssetUrl: "/api/visual/assets/perf-1",
+    }],
+  });
+  const result = compileOverflow([frame], () => true);
+  assert.equal(result.ok, true);
+  assert.equal(result.frames.length, 1);
+  const panel = result.frames[0].panels[0];
+  assert.equal(panel.assetId, "asset-1");
+  assert.equal(panel.asset, "/api/visual/assets/asset-1");
+  assert.equal(panel.zoom, 1.25);
+  assert.equal(panel.position, "40% 35%");
+  assert.equal(panel.generationStatus, "ready");
+  assert.equal(panel.performanceAssetId, "perf-1");
+  assert.equal(result.frames[0].visualReady, true);
+});
+
+test("keeps the same panel assets on every dialogue overflow piece", () => {
+  const dialogue = "аб вг";
+  const panels = [
+    {
+      description: "Левая",
+      assetId: "left",
+      asset: "/api/visual/assets/left",
+      zoom: 1.1,
+      position: "50% 30%",
+      subject: "Путин",
+      generationStatus: "ready",
+    },
+    {
+      description: "Правая",
+      assetId: "right",
+      asset: "/api/visual/assets/right",
+      zoom: 1,
+      position: "50% 30%",
+      subject: "Дуров",
+      generationStatus: "ready",
+    },
+  ];
+  const frame = utterance({
+    dialogue,
+    layout: "split2",
+    speakerPanel: 1,
+    panels,
+    displayBlock: { sourceItemId: "u1", start: 0, end: dialogue.length },
+    visualReady: true,
+  });
+  const minimum = FONT_LADDER.split2.at(-1);
+  const result = compileOverflow([frame], (text, options) => {
+    if (text.length <= 2) return true;
+    return options.fontSize === minimum && text.length <= 4;
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.frames.length, 2);
+  for (const piece of result.frames) {
+    assert.equal(piece.visualReady, true);
+    assert.equal(piece.panels[0].assetId, "left");
+    assert.equal(piece.panels[1].assetId, "right");
+    assert.equal(piece.panels[0].zoom, 1.1);
+    assert.equal(piece.panels[1].subject, "Дуров");
+  }
+});
+
 test("does not split an emoji grapheme and leaves a silent frame without a font size", () => {
   const dialogue = "а😀";
   const silent = {
