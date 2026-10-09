@@ -79,3 +79,32 @@ test("directing-beat segments become the same numbered frames used for visual as
   assert.equal(result[1].speakerPanel, 1);
   assert.deepEqual(result[1].displayBlock, { sourceItemId: "item-1", start: 8, end: 15 });
 });
+
+test("visible frame 14 maps to structure frame-12 when the opening directing beat has three segments", () => {
+  const frames = [{
+    id: "frame-1",
+    origin: "source",
+    directingBeat: true,
+    panels: [{ description: "a" }, { description: "b" }],
+    segments: [
+      { quote: "A", layout: "split2", speakerPanel: 0, panels: [{ description: "a" }, { description: "b" }] },
+      { quote: "B", layout: "split2", speakerPanel: 0, panels: [{ description: "a" }, { description: "b" }] },
+      { quote: "C", layout: "split2", speakerPanel: 0, panels: [{ description: "a" }, { description: "b" }] },
+    ],
+  }];
+  for (let index = 2; index <= 16; index += 1) {
+    frames.push({
+      id: `frame-${index}`,
+      origin: "source",
+      layout: "split2",
+      panels: [{ description: "Путин" }, { description: "Дуров" }],
+    });
+  }
+  const visible = expandStoryboardFrames(frames);
+  assert.equal(visible.length, 18);
+  assert.equal(visible[13].id, "frame-12");
+  assert.equal(visible[13].structureFrameId, "frame-12");
+  assert.equal(visible[13].structureSegmentIndex, null);
+  assert.equal(visible[0].structureFrameId, "frame-1");
+  assert.equal(visible[0].structureSegmentIndex, 0);
+});

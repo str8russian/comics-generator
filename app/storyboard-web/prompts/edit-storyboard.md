@@ -7,6 +7,7 @@ Rules:
 - The user refers to the visible `numberedStoryboard` by its `number` values. Resolve those numbers to `structureFrameId` and, when present, `structureSegmentIndex`, then edit the corresponding frame or directing-beat segment in `currentStoryboard`.
 - `numberedStoryboard` is a read-only targeting aid. Return only the schema-shaped storyboard; never copy `number`, `structureFrameId`, or `structureSegmentIndex` into the response.
 - The sourceItems are authoritative. Preserve their order and ownership.
+- Keep every context and note source item in `review`. Never return an empty review when those items exist.
 - Never rewrite, paraphrase, invent, or remove spoken words.
 - Reuse every existing panel description that remains applicable.
 - You may add a concise panel description only when the requested structure introduces a newly visible listener, reaction, object, or action.

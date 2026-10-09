@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { completeStage } from "./provider.mjs";
 import { buildChecked } from "./stage.mjs";
+import { expandStoryboardFrames, resolvePanelSubject } from "./visual-model.mjs";
 
 const schema = JSON.parse(readFileSync(
   new URL("../../specs/001-structure-storyboard-tracer/contracts/stage-response.schema.json", import.meta.url),
@@ -44,10 +45,109 @@ function stageFrame(frame) {
   return copy;
 }
 
+export function canonicalReview(sourceItems) {
+  return (sourceItems || [])
+    .filter((item) => item?.kind === "context" || item?.kind === "note")
+    .map((item) => item.id);
+}
+
+function structureRejected(result) {
+  if (result?.ok) return result;
+  if (result?.status === "blocked") {
+    return { ...result, httpStatus: 409, kind: "structure-rejected" };
+  }
+  return result;
+}
+
+export function parseFullFrameOnlyCommand(instruction, characters = []) {
+  const text = String(instruction ?? "").trim();
+  if (!text) return null;
+  const numberMatch = text.match(/кадр(?:а|е|у)?\s+(\d+)/iu);
+  if (!numberMatch) return null;
+  if (!/только/iu.test(text)) return null;
+  if (!/на весь кадр|во весь кадр|одним кадром|полн(?:ый|ым) кадр/iu.test(text)) return null;
+  const names = [...characters]
+    .map((entry) => entry?.name)
+    .filter((name) => typeof name === "string" && name.trim())
+    .sort((left, right) => right.length - left.length);
+  const lower = text.toLocaleLowerCase("ru");
+  const characterName = names.find((name) => lower.includes(name.toLocaleLowerCase("ru")));
+  if (!characterName) return null;
+  return { frameNumber: Number(numberMatch[1]), characterName };
+}
+
+function panelForCharacter(panels, characterName, characters) {
+  const existing = (panels || []).find((panel) => {
+    const subject = resolvePanelSubject(panel.description, characters, []);
+    if (subject === characterName) return true;
+    return String(panel.description || "").toLocaleLowerCase("ru").includes(characterName.toLocaleLowerCase("ru"));
+  });
+  return { description: existing?.description || `${characterName} на весь кадр.` };
+}
+
+function cloneStructure(frames) {
+  return JSON.parse(JSON.stringify(frames.map(stageFrame)));
+}
+
+export function applyFullFrameOnlyCharacter({ frames, displayFrames, frameNumber, characterName, characters }) {
+  const visible = displayFrames[frameNumber - 1];
+  if (!visible) return { ok: false, httpStatus: 409, status: "failed", kind: "structure-rejected" };
+  const next = cloneStructure(frames);
+  const structure = next.find((frame) => frame.id === (visible.structureFrameId || visible.id));
+  if (!structure) return { ok: false, httpStatus: 409, status: "failed", kind: "structure-rejected" };
+  const panel = panelForCharacter(
+    Number.isInteger(visible.structureSegmentIndex) && structure.segments?.[visible.structureSegmentIndex]
+      ? structure.segments[visible.structureSegmentIndex].panels
+      : structure.panels,
+    characterName,
+    characters,
+  );
+  if (Number.isInteger(visible.structureSegmentIndex) && Array.isArray(structure.segments)) {
+    const segment = structure.segments[visible.structureSegmentIndex];
+    if (!segment) return { ok: false, httpStatus: 409, status: "failed", kind: "structure-rejected" };
+    segment.layout = "single";
+    segment.speakerPanel = 0;
+    segment.panels = [panel];
+    if (visible.structureSegmentIndex === 0) {
+      structure.layout = "single";
+      structure.speakerPanel = 0;
+      structure.panels = [{ description: panel.description }];
+    }
+  } else {
+    if (structure.sourceRole === "action") {
+      structure.layout = "single";
+      delete structure.speakerPanel;
+      structure.panels = [panel];
+    } else {
+      structure.layout = "single";
+      structure.speakerPanel = 0;
+      structure.panels = [panel];
+    }
+  }
+  return { ok: true, frames: next };
+}
+
 export async function editStoryboard({ draft, sourceItems, cast, frames, displayFrames, instruction, env, fetchImpl }) {
   const text = String(instruction ?? "").trim();
   if (!text || text.length > 4000) {
     return { ok: false, httpStatus: 400, status: "failed", kind: "invalid-request" };
+  }
+  const numbered = (displayFrames && displayFrames.length > 0)
+    ? displayFrames
+    : expandStoryboardFrames(frames);
+  const review = canonicalReview(sourceItems);
+  const characters = cast?.characters || [];
+  const simple = parseFullFrameOnlyCommand(text, characters);
+  if (simple) {
+    const applied = applyFullFrameOnlyCharacter({
+      frames,
+      displayFrames: numbered,
+      frameNumber: simple.frameNumber,
+      characterName: simple.characterName,
+      characters,
+    });
+    if (!applied.ok) return applied;
+    return structureRejected(buildChecked(draft, sourceItems, { frames: applied.frames, review }));
   }
   const result = await completeStage({
     messages: [
@@ -58,8 +158,8 @@ export async function editStoryboard({ draft, sourceItems, cast, frames, display
           instruction: text,
           sourceItems: sourceItems.map(modelItem),
           cast,
-          currentStoryboard: { frames: frames.map(stageFrame), review: [] },
-          numberedStoryboard: (displayFrames || []).map((frame, index) => ({
+          currentStoryboard: { frames: frames.map(stageFrame), review },
+          numberedStoryboard: numbered.map((frame, index) => ({
             number: index + 1,
             id: frame.id,
             structureFrameId: frame.structureFrameId || frame.id,
@@ -78,5 +178,8 @@ export async function editStoryboard({ draft, sourceItems, cast, frames, display
     fetchImpl,
   });
   if (!result.ok) return { ok: false, httpStatus: result.httpStatus, status: "failed", kind: result.kind };
-  return buildChecked(draft, sourceItems, result.value);
+  return structureRejected(buildChecked(draft, sourceItems, {
+    ...result.value,
+    review,
+  }));
 }
