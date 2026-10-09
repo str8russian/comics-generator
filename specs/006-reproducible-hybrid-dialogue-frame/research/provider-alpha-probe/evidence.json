@@ -1,0 +1,107 @@
+{
+  "startedAt": "2026-10-09T19:13:43.147Z",
+  "requestCount": 2,
+  "requests": [
+    {
+      "id": "R1-transparent-request",
+      "ok": true,
+      "kind": null,
+      "latencyMs": 40226,
+      "providerLatencyMs": 40226,
+      "model": "gemini-3-pro-image-preview",
+      "output": {
+        "path": "/Users/andrey/Documents/Projects/comics-pipeline-visual-workflow-spike/specs/006-reproducible-hybrid-dialogue-frame/research/provider-alpha-probe/R1-transparent-request.png",
+        "mimeFromInspect": "image/png",
+        "width": 928,
+        "height": 1152,
+        "byteLength": 1040677,
+        "sha256": "bb30d5b80346b92ff944d6ae7f964911fbd0c20c778eb3313cc3ef2883127624",
+        "colorType": 2,
+        "bitDepth": 8,
+        "hasTrns": false,
+        "hasAlphaChannel": false,
+        "nonOpaqueAlphaSamples": 0,
+        "alphaSampleCount": 0,
+        "minAlpha": null,
+        "maxAlpha": null,
+        "edgeNonOpaqueRatio": null,
+        "decodeError": null
+      }
+    },
+    {
+      "id": "R2-chromakey-green",
+      "ok": true,
+      "kind": null,
+      "latencyMs": 23098,
+      "providerLatencyMs": 23098,
+      "model": "gemini-3-pro-image-preview",
+      "referenceCount": 1,
+      "raw": {
+        "path": "/Users/andrey/Documents/Projects/comics-pipeline-visual-workflow-spike/specs/006-reproducible-hybrid-dialogue-frame/research/provider-alpha-probe/R2-chromakey-raw.png",
+        "mimeFromInspect": "image/png",
+        "width": 928,
+        "height": 1152,
+        "byteLength": 1173415,
+        "sha256": "09167fb8429def187274e9790ef99cacc95afffc10cb8ff922d6e0088e0dad6f",
+        "colorType": 2,
+        "bitDepth": 8,
+        "hasTrns": false,
+        "hasAlphaChannel": false,
+        "nonOpaqueAlphaSamples": 0,
+        "alphaSampleCount": 0,
+        "minAlpha": null,
+        "maxAlpha": null,
+        "edgeNonOpaqueRatio": null,
+        "decodeError": null
+      },
+      "greenishPixelRatio": 0.3686252170138889,
+      "cutout": {
+        "path": "/Users/andrey/Documents/Projects/comics-pipeline-visual-workflow-spike/specs/006-reproducible-hybrid-dialogue-frame/research/provider-alpha-probe/R2-chromakey-cutout.png",
+        "mimeFromInspect": "image/png",
+        "width": 928,
+        "height": 1152,
+        "byteLength": 1451955,
+        "sha256": "2f449c27655b70b4db112be2ee0420b701e64a49affea5b452961d1f8467c003",
+        "colorType": 6,
+        "bitDepth": 8,
+        "hasTrns": false,
+        "hasAlphaChannel": true,
+        "nonOpaqueAlphaSamples": 0,
+        "alphaSampleCount": 267264,
+        "minAlpha": null,
+        "maxAlpha": null,
+        "edgeNonOpaqueRatio": null,
+        "decodeError": "Maximum call stack size exceeded",
+        "keyStats": {
+          "removed": 394081,
+          "kept": 674975,
+          "removedRatio": 0.3686252170138889,
+          "edgeRemoved": 5628,
+          "opaqueKeptRatio": 0.6313747829861112
+        },
+        "statsFixed": {
+          "width": 928,
+          "height": 1152,
+          "colorType": 6,
+          "minAlpha": 0,
+          "maxAlpha": 255,
+          "opaque": 674975,
+          "transparent": 394081,
+          "partial": 0,
+          "edgeTransparentRatio": 0.6779078185328186,
+          "remainingGreenOpaquePixels": 0
+        }
+      }
+    }
+  ],
+  "finishedAt": "2026-10-09T19:14:46.714Z",
+  "conclusions": {
+    "providerNativeAlpha": false,
+    "transparentPromptProducesCheckerboardRgb": true,
+    "chromakeyBackingFeasible": true,
+    "localMattingProducesRgba": true,
+    "remainingGreenOpaquePixels": 0,
+    "edgeCleanupRecommended": true,
+    "exactProviderRequestCount": 2
+  }
+}
