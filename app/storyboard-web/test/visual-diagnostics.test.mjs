@@ -969,7 +969,7 @@ test("unrelated reference assets and original identity photos are not exported",
   assert.equal(joined.toString("utf8").includes(ORIGINAL_IDENTITY_PHOTO_ID), false);
 });
 
-test("failed generation retains intended reference bytes without claiming provider completion", () => {
+test("failed generation retains intended reference bytes without inventing provider invocation claims", () => {
   const failedRecordId = "30000000-0000-4000-8000-000000000055";
   const evidence = baseEvidence({
     generations: [
@@ -1026,9 +1026,98 @@ test("failed generation retains intended reference bytes without claiming provid
   const refs = JSON.parse(entries.get("references/manifest.json").toString("utf8")).references;
   const failedRefs = refs.filter((entry) => entry.generationRecordId === failedRecordId);
   assert.equal(failedRefs.length, 2);
-  assert.equal(failedRefs.every((entry) => entry.providerInvocationOccurred === false), true);
+  // Ambiguous historical failure: conflict alone does not prove pre-provider abort.
+  assert.equal(failedRefs.every((entry) => entry.providerInvocationOccurred === null), true);
+  const failedRecord = JSON.parse(entries.get(`generations/${failedRecordId}/record.json`).toString("utf8"));
+  assert.equal(failedRecord.providerInvocationOccurred, null);
   assert.deepEqual(entries.get(`references/assets/${IDENTITY_REF_ID}.png`), identityRefBytes);
   assert.deepEqual(entries.get(`references/assets/${STYLE_REF_ID}.png`), styleRefBytes);
+});
+
+test("providerInvocationOccurred is evidence-based for ready, timeout latency, provider status, and ambiguous failures", () => {
+  const readyId = "30000000-0000-4000-8000-000000000061";
+  const timeoutId = "30000000-0000-4000-8000-000000000062";
+  const statusFailedId = "30000000-0000-4000-8000-000000000063";
+  const ambiguousId = "30000000-0000-4000-8000-000000000064";
+  const baseGen = {
+    operationType: "character-state",
+    storyboardResultId: "10000000-0000-4000-8000-000000000006",
+    storyboardVersionId: "10000000-0000-4000-8000-000000000010",
+    frameId: "frame-1",
+    panelIndex: 0,
+    componentGenerationId: "50000000-0000-4000-8000-000000000061",
+    operationId: "40000000-0000-4000-8000-000000000061",
+    visualIntent: {},
+    compiledPrompt: "INVOCATION SEMANTICS PROMPT",
+    promptCompilerVersion: "hybrid-dialogue-v1",
+    model: "test-model",
+    generationSettings: { aspectRatio: "5:4", component: "character-state" },
+    referenceManifest: [{
+      role: "identity",
+      assetId: IDENTITY_REF_ID,
+      required: true,
+      mime: "image/png",
+      width: 2,
+      height: 2,
+      byteLength: identityRefBytes.length,
+      sha256: identityRefSha,
+    }],
+    omittedReferences: [],
+    outputAssetId: null,
+    sharedBackground: false,
+    originatingFrameId: "frame-1",
+    originatingOperationId: "40000000-0000-4000-8000-000000000061",
+  };
+  const evidence = baseEvidence({
+    generations: [
+      {
+        ...baseGen,
+        recordId: readyId,
+        status: "ready",
+        errorKind: null,
+        providerStatus: "200",
+        latencyMs: 15,
+        outputAssetId: "20000000-0000-4000-8000-000000000001",
+      },
+      {
+        ...baseGen,
+        recordId: timeoutId,
+        status: "failed",
+        errorKind: "timeout",
+        providerStatus: null,
+        latencyMs: 30_000,
+      },
+      {
+        ...baseGen,
+        recordId: statusFailedId,
+        status: "failed",
+        errorKind: "provider",
+        providerStatus: "500",
+        latencyMs: null,
+      },
+      {
+        ...baseGen,
+        recordId: ambiguousId,
+        status: "failed",
+        errorKind: "conflict",
+        providerStatus: null,
+        latencyMs: null,
+      },
+    ],
+  });
+  const entries = readZipArchive(buildDiagnosticsArchive(evidence).bytes);
+  const readOccurred = (recordId) => JSON.parse(
+    entries.get(`generations/${recordId}/record.json`).toString("utf8"),
+  ).providerInvocationOccurred;
+  assert.equal(readOccurred(readyId), true, "successful generation confirms invocation");
+  assert.equal(readOccurred(timeoutId), true, "timeout with recorded latency confirms invocation");
+  assert.equal(readOccurred(statusFailedId), true, "failed response with provider status confirms invocation");
+  assert.equal(readOccurred(ambiguousId), null, "ambiguous failure must not invent true or false");
+  const refs = JSON.parse(entries.get("references/manifest.json").toString("utf8")).references;
+  assert.equal(refs.find((entry) => entry.generationRecordId === readyId).providerInvocationOccurred, true);
+  assert.equal(refs.find((entry) => entry.generationRecordId === timeoutId).providerInvocationOccurred, true);
+  assert.equal(refs.find((entry) => entry.generationRecordId === statusFailedId).providerInvocationOccurred, true);
+  assert.equal(refs.find((entry) => entry.generationRecordId === ambiguousId).providerInvocationOccurred, null);
 });
 
 test("missing referenced asset fails closed", () => {

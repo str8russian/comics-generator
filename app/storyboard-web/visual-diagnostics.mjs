@@ -264,9 +264,17 @@ function sanitizeReferenceManifest(manifest) {
 }
 
 function providerInvocationOccurred(generation) {
+  // Evidence-based only: never invent a negative claim from ambiguous failures.
+  // true  = reliable persisted evidence that provider I/O happened
+  // null  = insufficient evidence to determine invocation
+  // false = reserved for an explicit persisted fact that the provider was not invoked
+  //         (no such fact exists in current records; conflict alone is insufficient)
   if (generation?.status === "ready") return true;
-  if (generation?.providerStatus != null && generation.providerStatus !== "") return true;
-  return false;
+  const providerStatus = generation?.providerStatus;
+  if (providerStatus != null && providerStatus !== "") return true;
+  const latencyMs = generation?.latencyMs;
+  if (typeof latencyMs === "number" && Number.isFinite(latencyMs) && latencyMs >= 0) return true;
+  return null;
 }
 
 function indexReferenceAssets(evidence) {
