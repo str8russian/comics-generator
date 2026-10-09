@@ -3,6 +3,7 @@ import { inspectImage } from "./image-info.mjs";
 import { normalizeProviderOutcome, resolveImageProviderConfig } from "./image-provider.mjs";
 import { extractChromakeyMatte } from "./image-matte.mjs";
 import { buildHybridVisualIntent } from "./visual-intent.mjs";
+import { buildDiagnosticsArchive } from "./visual-diagnostics.mjs";
 import {
   compileCharacterStatePrompt,
   compileSceneBackgroundPrompt,
@@ -806,6 +807,7 @@ export async function updatePlacement(pool, {
   positionX,
   positionY,
   fitMode = "manual",
+  expectedStoryboardVersionId = null,
 } = {}) {
   const numbers = [zoom, positionX, positionY].map(Number);
   const mode = fitMode == null || fitMode === "" ? "manual" : String(fitMode);
@@ -821,6 +823,12 @@ export async function updatePlacement(pool, {
     return await withClient(pool, async (client) => {
       const target = await panelContext(client, frameId, panelIndex);
       if (!target) return failed("not-found", 404);
+      if (
+        expectedStoryboardVersionId
+        && target.context.version.id !== expectedStoryboardVersionId
+      ) {
+        return failed("stale-version", 409);
+      }
       await client.query(`
         UPDATE panel_visual_state
         SET zoom = $2,
@@ -829,8 +837,9 @@ export async function updatePlacement(pool, {
             fit_mode = $5,
             updated_at = clock_timestamp()
         WHERE id = $1
-      `, [target.state.id, ...numbers, mode]);
-      return { ok: true, fitMode: mode };
+          AND storyboard_version_id = $6
+      `, [target.state.id, ...numbers, mode, target.context.version.id]);
+      return { ok: true, fitMode: mode, storyboardVersionId: target.context.version.id };
     });
   } catch {
     return failed("database", 503);
@@ -2839,6 +2848,361 @@ export async function orchestrateHybridFrameOperation(pool, {
   }
 }
 
+function mapGenerationRecordRow(row, extras = {}) {
+  return {
+    recordId: row.id,
+    operationType: row.operation_type,
+    storyboardResultId: row.storyboard_result_id,
+    storyboardVersionId: row.storyboard_version_id,
+    frameId: row.frame_id,
+    panelIndex: row.panel_index,
+    sceneKey: row.scene_key,
+    componentGenerationId: row.component_generation_id,
+    operationId: row.operation_id,
+    visualIntent: row.visual_intent_json ?? {},
+    compiledPrompt: row.compiled_prompt,
+    promptCompilerVersion: row.prompt_compiler_version,
+    model: row.model,
+    generationSettings: row.generation_settings_json ?? {},
+    referenceManifest: row.reference_manifest_json ?? [],
+    omittedReferences: row.omitted_references_json ?? [],
+    appGitCommit: row.app_git_commit,
+    status: row.status,
+    errorKind: row.error_kind,
+    providerStatus: row.provider_status,
+    latencyMs: row.latency_ms,
+    outputAssetId: row.output_asset_id,
+    outputSha256: row.output_sha256,
+    outputMime: row.output_mime,
+    outputWidth: row.output_width,
+    outputHeight: row.output_height,
+    outputByteLength: row.output_byte_length,
+    createdAt: row.created_at?.toISOString?.() ?? row.created_at ?? null,
+    finishedAt: row.finished_at?.toISOString?.() ?? row.finished_at ?? null,
+    ...extras,
+  };
+}
+
+async function enrichReferenceManifest(client, manifest) {
+  if (!Array.isArray(manifest)) return [];
+  const enriched = [];
+  for (const entry of manifest) {
+    const assetId = entry?.assetId ?? entry?.asset_id ?? null;
+    const asset = assetId ? await assetRow(client, assetId) : null;
+    enriched.push({
+      role: entry?.role ?? null,
+      assetId,
+      required: Boolean(entry?.required),
+      mime: asset?.mime ?? null,
+      width: asset?.width ?? null,
+      height: asset?.height ?? null,
+      byteLength: asset?.byte_length ?? null,
+      sha256: asset?.sha256 ?? null,
+    });
+  }
+  return enriched;
+}
+
+/**
+ * Version-scoped diagnostic evidence for one semantic frame.
+ * Includes failed/stale attempts for this frame and shared primary background provenance.
+ */
+export async function loadFrameDiagnosticsEvidence(pool, { frameId } = {}) {
+  if (!frameId || typeof frameId !== "string") return failed("invalid-request");
+  try {
+    return await withClient(pool, async (client) => {
+      const context = await ensureVersion(client);
+      if (!context) return failed("not-found", 404);
+      const frames = expandStoryboardFrames(context.version.frames);
+      const frameIndex = frames.findIndex((entry) => entry.id === frameId);
+      const frame = frameIndex >= 0 ? frames[frameIndex] : null;
+      if (!frame) return failed("not-found", 404);
+
+      const cast = await castFor(client, context.result.material_state_id);
+      await ensurePanelRows(client, context, cast);
+
+      const frameRecords = await client.query(`
+        SELECT * FROM generation_record
+        WHERE storyboard_version_id = $1
+          AND storyboard_result_id = $2
+          AND frame_id = $3
+        ORDER BY created_at ASC, id ASC
+      `, [context.version.id, context.result.id, frameId]);
+
+      const frameOperations = await client.query(`
+        SELECT * FROM visual_frame_operation
+        WHERE storyboard_version_id = $1
+          AND storyboard_result_id = $2
+          AND frame_id = $3
+        ORDER BY created_at ASC, id ASC
+      `, [context.version.id, context.result.id, frameId]);
+
+      const characterGens = await client.query(`
+        SELECT character_visual_state_generation.*,
+               panel_visual_state.panel_index,
+               panel_visual_state.subject
+        FROM character_visual_state_generation
+        JOIN panel_visual_state
+          ON panel_visual_state.id = character_visual_state_generation.panel_visual_state_id
+        WHERE panel_visual_state.storyboard_version_id = $1
+          AND panel_visual_state.frame_id = $2
+        ORDER BY character_visual_state_generation.created_at ASC,
+                 character_visual_state_generation.id ASC
+      `, [context.version.id, frameId]);
+
+      const scene = await ensureSceneBackgroundState(client, context.version.id);
+      let currentBackgroundGeneration = null;
+      let currentBackgroundRecord = null;
+      if (scene.current_generation_id) {
+        const bg = await client.query(
+          `SELECT * FROM scene_background_generation WHERE id = $1`,
+          [scene.current_generation_id],
+        );
+        currentBackgroundGeneration = bg.rows[0] ?? null;
+        if (currentBackgroundGeneration?.generation_record_id) {
+          const record = await client.query(
+            `SELECT * FROM generation_record
+             WHERE id = $1
+               AND storyboard_version_id = $2
+               AND storyboard_result_id = $3`,
+            [
+              currentBackgroundGeneration.generation_record_id,
+              context.version.id,
+              context.result.id,
+            ],
+          );
+          currentBackgroundRecord = record.rows[0] ?? null;
+        }
+      }
+
+      const opBackgroundGens = await client.query(`
+        SELECT scene_background_generation.*
+        FROM scene_background_generation
+        JOIN visual_frame_operation
+          ON visual_frame_operation.id = scene_background_generation.operation_id
+        WHERE visual_frame_operation.storyboard_version_id = $1
+          AND visual_frame_operation.storyboard_result_id = $2
+          AND visual_frame_operation.frame_id = $3
+        ORDER BY scene_background_generation.created_at ASC,
+                 scene_background_generation.id ASC
+      `, [context.version.id, context.result.id, frameId]);
+
+      const hasEvidence = frameRecords.rowCount > 0
+        || characterGens.rowCount > 0
+        || opBackgroundGens.rowCount > 0
+        || Boolean(currentBackgroundRecord && currentBackgroundRecord.frame_id === frameId);
+      if (!hasEvidence && !currentBackgroundRecord) {
+        return failed("not-found", 404);
+      }
+      // Shared background alone does not constitute frame generation evidence.
+      if (!hasEvidence) {
+        return failed("not-found", 404);
+      }
+
+      const recordIds = new Set(frameRecords.rows.map((row) => row.id));
+      const generations = [];
+      for (const row of frameRecords.rows) {
+        generations.push(mapGenerationRecordRow(row, {
+          referenceManifest: await enrichReferenceManifest(client, row.reference_manifest_json),
+          sharedBackground: row.operation_type === "scene-background" && row.frame_id !== frameId,
+          originatingFrameId: row.frame_id,
+          originatingOperationId: row.operation_id,
+        }));
+      }
+
+      let sharedBackground = null;
+      if (currentBackgroundRecord && !recordIds.has(currentBackgroundRecord.id)) {
+        const shared = currentBackgroundRecord.frame_id !== frameId;
+        if (shared || currentBackgroundRecord.operation_type === "scene-background") {
+          generations.push(mapGenerationRecordRow(currentBackgroundRecord, {
+            referenceManifest: await enrichReferenceManifest(
+              client,
+              currentBackgroundRecord.reference_manifest_json,
+            ),
+            sharedBackground: shared,
+            originatingFrameId: currentBackgroundRecord.frame_id,
+            originatingOperationId: currentBackgroundRecord.operation_id,
+          }));
+          recordIds.add(currentBackgroundRecord.id);
+          if (shared) {
+            sharedBackground = {
+              sceneKey: PRIMARY_SCENE_KEY,
+              generationRecordId: currentBackgroundRecord.id,
+              originatingFrameId: currentBackgroundRecord.frame_id,
+              originatingOperationId: currentBackgroundRecord.operation_id,
+              componentGenerationId: currentBackgroundGeneration?.id ?? null,
+            };
+          }
+        }
+      }
+
+      for (const row of characterGens.rows) {
+        if (!row.generation_record_id || recordIds.has(row.generation_record_id)) continue;
+        const record = await client.query(
+          `SELECT * FROM generation_record
+           WHERE id = $1
+             AND storyboard_version_id = $2
+             AND storyboard_result_id = $3`,
+          [row.generation_record_id, context.version.id, context.result.id],
+        );
+        if (record.rowCount !== 1) continue;
+        generations.push(mapGenerationRecordRow(record.rows[0], {
+          referenceManifest: await enrichReferenceManifest(
+            client,
+            record.rows[0].reference_manifest_json,
+          ),
+          sharedBackground: false,
+          originatingFrameId: frameId,
+          originatingOperationId: row.operation_id,
+        }));
+        recordIds.add(row.generation_record_id);
+      }
+
+      const assets = [];
+      const pushAsset = async (role, assetId, extras = {}) => {
+        if (!assetId || assets.some((entry) => entry.id === assetId && entry.role === role)) return;
+        const asset = await assetRow(client, assetId);
+        if (!asset) return;
+        assets.push({
+          id: asset.id,
+          role,
+          kind: asset.kind,
+          mime: asset.mime,
+          width: asset.width,
+          height: asset.height,
+          byteLength: asset.byte_length,
+          sha256: asset.sha256,
+          bytes: asset.bytes,
+          ...extras,
+        });
+      };
+
+      if (currentBackgroundGeneration?.output_asset_id) {
+        await pushAsset("background", currentBackgroundGeneration.output_asset_id, {
+          generationId: currentBackgroundGeneration.id,
+          generationRecordId: currentBackgroundGeneration.generation_record_id,
+        });
+      }
+      for (const row of opBackgroundGens.rows) {
+        if (row.output_asset_id) {
+          await pushAsset("background", row.output_asset_id, {
+            generationId: row.id,
+            generationRecordId: row.generation_record_id,
+          });
+        }
+      }
+      for (const row of characterGens.rows) {
+        if (row.raw_asset_id) {
+          await pushAsset("character-raw", row.raw_asset_id, {
+            panelIndex: row.panel_index,
+            generationId: row.id,
+            generationRecordId: row.generation_record_id,
+          });
+        }
+        if (row.output_asset_id) {
+          await pushAsset("character-rgba", row.output_asset_id, {
+            panelIndex: row.panel_index,
+            generationId: row.id,
+            generationRecordId: row.generation_record_id,
+          });
+        }
+      }
+
+      const panels = await client.query(`
+        SELECT panel_index, subject, zoom, position_x, position_y, fit_mode,
+               current_character_generation_id
+        FROM panel_visual_state
+        WHERE storyboard_version_id = $1 AND frame_id = $2
+        ORDER BY panel_index
+      `, [context.version.id, frameId]);
+
+      const hybrid = await client.query(`
+        SELECT * FROM frame_hybrid_state
+        WHERE storyboard_version_id = $1 AND frame_id = $2
+      `, [context.version.id, frameId]);
+
+      const panelInputs = (frame.panels || []).map((panel, index) => ({
+        ...panel,
+        panelIndex: index,
+        subject: resolvePanelSubject(panel.description, cast.characters, cast.aliases),
+      }));
+      const intentBundle = buildHybridVisualIntent({
+        frame,
+        panels: panelInputs,
+        scene: { sceneKey: PRIMARY_SCENE_KEY },
+      });
+
+      const characterAssetIds = [];
+      for (const row of panels.rows) {
+        if (!row.current_character_generation_id) {
+          characterAssetIds.push(null);
+          continue;
+        }
+        const current = characterGens.rows.find((entry) => entry.id === row.current_character_generation_id);
+        characterAssetIds.push(current?.output_asset_id ?? null);
+      }
+
+      return {
+        ok: true,
+        storyboardResultId: context.result.id,
+        storyboardVersionId: context.version.id,
+        frameId,
+        visibleFrameNumber: frameIndex + 1,
+        visibleFrameId: frame.id,
+        briefs: {
+          gridDescription: intentBundle.gridDescription,
+          detailedBrief: intentBundle.detailedBrief,
+        },
+        assembly: {
+          assemblyStatus: hybrid.rows[0]?.assembly_status ?? "not-ready",
+          readiness: hybrid.rows[0]?.assembly_status === "ready",
+          compositionMode: hybrid.rows[0]?.composition_mode ?? null,
+          sceneKey: hybrid.rows[0]?.scene_key ?? PRIMARY_SCENE_KEY,
+          activeOperationId: hybrid.rows[0]?.active_operation_id ?? null,
+          backgroundAssetId: currentBackgroundGeneration?.output_asset_id ?? null,
+          characterAssetIds,
+          pointers: {
+            sceneBackgroundStateId: scene.id,
+            currentBackgroundGenerationId: scene.current_generation_id,
+            sceneWriteVersion: Number(scene.write_version),
+            frameActiveOperationId: hybrid.rows[0]?.active_operation_id ?? null,
+            panelCharacterGenerationIds: panels.rows.map((row) => row.current_character_generation_id),
+          },
+        },
+        sharedBackground,
+        composite: { present: false, reason: "no-deterministic-composite-stored" },
+        panels: panels.rows.map((row) => ({
+          panelIndex: row.panel_index,
+          subject: row.subject,
+          zoom: Number(row.zoom),
+          positionX: Number(row.position_x),
+          positionY: Number(row.position_y),
+          fitMode: row.fit_mode,
+          currentCharacterGenerationId: row.current_character_generation_id,
+        })),
+        operations: frameOperations.rows.map((row) => mapOperationRow(row)),
+        generations,
+        assets,
+        appGitCommit: generations.find((entry) => entry.appGitCommit)?.appGitCommit ?? null,
+        promptCompilerVersion: HYBRID_PROMPT_COMPILER_VERSION,
+        specVersion: "006-reproducible-hybrid-dialogue-frame",
+      };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+export async function exportFrameDiagnostics(pool, { frameId } = {}) {
+  const evidence = await loadFrameDiagnosticsEvidence(pool, { frameId });
+  if (!evidence?.ok) return evidence;
+  try {
+    return buildDiagnosticsArchive(evidence);
+  } catch (error) {
+    return failed(error?.kind || "invalid-request", error?.kind === "not-found" ? 404 : 400);
+  }
+}
+
 export function createVisualStore(pool) {
   return {
     load: () => loadVisual(pool),
@@ -2873,5 +3237,7 @@ export function createVisualStore(pool) {
     finalizeCharacterStateLifecycle: (input) => finalizeCharacterStateLifecycle(pool, input),
     evaluateHybridAssembly: (input) => evaluateHybridAssembly(pool, input),
     orchestrateHybridFrameOperation: (input) => orchestrateHybridFrameOperation(pool, input),
+    loadFrameDiagnosticsEvidence: (input) => loadFrameDiagnosticsEvidence(pool, input),
+    exportFrameDiagnostics: (input) => exportFrameDiagnostics(pool, input),
   };
 }
