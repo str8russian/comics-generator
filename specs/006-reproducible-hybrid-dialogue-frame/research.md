@@ -85,11 +85,11 @@ Evidence file: `research/provider-alpha-probe/evidence.json`
 
 ### D2: Stable scene background lifecycle
 
-**Decision**: Use version-scoped scene identity `"primary"` for all ordinary dialogue frames in this slice. Sole current-background pointer is `scene_background_state.current_generation_id`. Frames resolve the background through `frame_hybrid_state.scene_key` → scene background state and never store a second current-background pointer. During selected-frame hybrid generation, create the people-free background if none is ready; otherwise reuse it while generating/retrying character states. Retries may regenerate a failed background via a new frame operation. No mandatory background-approval gate and no dedicated user-facing background-edit workflow in feature 006.
+**Decision**: Use version-scoped scene identity `"primary"` for all ordinary dialogue frames in this slice. Sole current-background pointer is `scene_background_state.current_generation_id`. Scene-level write authority lives on the same row as `active_operation_id` + monotonically increasing `write_version`; those fields coordinate create/replace claims and are not a second generation pointer. Frames resolve the background through `frame_hybrid_state.scene_key` → scene background state. During selected-frame hybrid generation, create the people-free background if none is ready (after claiming scene write authority); otherwise reuse it without claiming replacement authority while generating/retrying character states. Retries may regenerate a failed background via a new frame operation that reclaims scene write authority. No mandatory background-approval gate and no dedicated user-facing background-edit workflow in feature 006.
 
-**Rationale**: Matches the approved editorial clarification, avoids dual mutable background pointers, and keeps continuity without inventing multi-scene UI.
+**Rationale**: Matches the approved editorial clarification, avoids dual mutable background pointers, protects the shared primary-scene background against concurrent frame operations, and keeps continuity without inventing multi-scene UI.
 
-**Alternatives rejected**: Independent background per panel; mandatory background approval step; silent full-scene fallback when background fails; inferring scene identity from mutable descriptions/prompts; dual current-background fields on frame and scene heads.
+**Alternatives rejected**: Independent background per panel; mandatory background approval step; silent full-scene fallback when background fails; inferring scene identity from mutable descriptions/prompts; dual current-background fields on frame and scene heads; relying only on frame-level operation tokens to guard the shared background pointer.
 
 ### D3: Character visual-state authority for first generation
 
@@ -97,10 +97,10 @@ Evidence file: `research/provider-alpha-probe/evidence.json`
 
 First-generation hybrid character states use ordered references:
 
-1. approved identity anchor (mandatory when subject exists);
-2. approved project style authority as a distinct required role.
+1. approved identity anchor (required when subject exists);
+2. approved project style authority as a distinct required role (even if the same underlying asset as identity).
 
-Background generation receives project style authority and no character identity. Missing required style authority fails with `style-required`; text-only style continuation while claiming reproducible project style is prohibited.
+Background generation receives required project style authority and no character identity. Missing required style or identity is validated before creating an operation and returns `409` (`style-required` / `anchor-required`) with no operation, no generation record, and no provider request. Text-only style continuation while claiming reproducible project style is prohibited. Panel regenerate additionally requires a ready primary-scene background; otherwise `409 frame-generation-required` with no operation/provider work.
 
 Performance references and previous-result revision precedence remain outside this feature’s first-generation path. Later revision features may add them without changing the hybrid assembly contract.
 
@@ -133,7 +133,7 @@ Provider prompts for ordinary dialogue character states MUST:
 
 ### D6: Async and stale-operation model
 
-**Decision**: Use a persisted `visual_frame_operation` resource. `POST /api/visual/frames/:frameId/generate` validates, creates the operation, and returns `202` with `operationId`. The UI polls `GET /api/visual/frames/:frameId/operations/:operationId` for real phases (`preparing-background`, `generating-background`, `generating-character-states`, `assembling`, `complete`, `failed`). No fabricated percentages and no timer-simulated phases. Each operation has a stale-write/`write_version` token so obsolete completions cannot replace newer heads. Reload recovers the active operation. Previous ready assets remain visible during pending/failed replacements.
+**Decision**: Use a persisted `visual_frame_operation` resource with statuses `running` \| `complete` \| `failed` only (no cancellation). Validate required authorities before creating an operation; on validation failure return `409` and create nothing. Accepted `POST /api/visual/frames/:frameId/generate` returns `202` with `operationId`. Canonical live phase polling is `GET /api/visual/frames/:frameId/operations/:operationId` for real phases (`preparing-background`, `generating-background`, `generating-character-states`, `assembling`, `complete`, `failed`). `GET /api/visual` may expose the latest operation summary only to restore `activeOperationId` after reload; the client then resumes canonical polling while running. No fabricated percentages, no timer-simulated phases, and no client-invented phase override. Frame operation `write_version` protects character/assembly heads; scene `active_operation_id` + `write_version` protect the shared background pointer. Previous ready assets remain visible during pending/failed replacements.
 
 ### D7: Finalize-once generation provenance + diagnostic export
 
@@ -158,7 +158,7 @@ Diagnostic export is concrete: `GET /api/visual/frames/:frameId/diagnostics` ret
 ### Assumptions carried into plan
 
 - Version-scoped `"primary"` scene identity is sufficient for this prototype slice (no multi-scene manager).
-- Persisted operations + polling fit the existing local Node server better than streaming for honest phase visibility.
+- Persisted operations + canonical polling fit the existing local Node server better than streaming for honest phase visibility.
 - Browser ZIP download is the diagnostic export format.
 - Chromakey + cleanup can meet measurable acceptance thresholds for hard-outline comic cutouts after implementation tuning; this remains an implementation verification burden, not a planning claim of full visual acceptance.
 - Ordinary dialogue success path uses hybrid components; historical full-panel assets remain readable under precedence rules without silent hybrid-success fallback.

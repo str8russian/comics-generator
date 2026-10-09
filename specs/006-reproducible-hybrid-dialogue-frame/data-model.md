@@ -70,8 +70,8 @@ Append-only immutable candidates. The head pointer on `panel_visual_state` selec
 | `id` | uuid PK |
 | `panel_visual_state_id` | FK → `panel_visual_state.id` |
 | `parent_generation_id` | nullable FK to prior character-state generation |
-| `anchor_version_id` | identity authority used |
-| `style_asset_id` | project style authority used (required when policy demands it) |
+| `anchor_version_id` | required identity authority for a panel with an assigned subject |
+| `style_asset_id` | required project style authority (distinct role even if same underlying asset as identity) |
 | `raw_asset_id` | chromakey RGB asset |
 | `output_asset_id` | matted RGBA asset when ready |
 | `status` | `pending` \| `ready` \| `failed` |
@@ -87,17 +87,30 @@ Candidate rows are not rewritten after terminal finalization. Retries insert new
 
 ### `scene_background_state`
 
-Sole current-background pointer for the version-scoped primary scene.
+Sole current-background pointer and scene-level write-authority owner for the version-scoped primary scene.
 
 | Field | Notes |
 |-------|-------|
 | `id` | uuid PK |
 | `storyboard_version_id` | FK, isolation boundary |
 | `scene_key` | always `"primary"` in feature 006 |
-| `current_generation_id` | **sole** current-background pointer → `scene_background_generation` |
+| `current_generation_id` | **sole** current-background-generation pointer → `scene_background_generation` |
+| `active_operation_id` | nullable FK → `visual_frame_operation`; scene write claimant when creating/replacing the background |
+| `write_version` | monotonically increasing integer; scene-level stale-write token |
 | `updated_at` | timestamptz |
 
 Unique `(storyboard_version_id, scene_key)`.
+
+`active_operation_id` / `write_version` coordinate shared-background writes. They are **not** a second background-generation pointer. `current_generation_id` remains the only current background asset pointer.
+
+Scene-level stale-write rules:
+
+1. When an operation needs to create or replace the primary-scene background, it atomically claims scene write authority (`active_operation_id`, bump/capture `write_version`).
+2. A completing background generation may advance `current_generation_id` only when both its `operation_id` and captured scene `write_version` still match the scene state.
+3. A stale completion may finalize its own generation and provenance records but must not change `current_generation_id`.
+4. A ready background is reused without claiming replacement authority.
+5. Concurrent operations must not silently overwrite a newer background selection.
+6. Frame-level `frame_hybrid_state.active_operation_id` / operation `write_version` remain for frame/panel character-state and assembly coordination; they do not alone authorize shared background pointer updates.
 
 ### `scene_background_generation`
 
@@ -111,13 +124,14 @@ Append-only background attempts.
 | `status` | `pending` \| `ready` \| `failed` |
 | `error_kind` | safe kind |
 | `output_asset_id` | FK `visual_asset` nullable |
-| `style_asset_id` | project style authority used |
+| `style_asset_id` | required project style authority used |
+| `captured_scene_write_version` | scene `write_version` claimed when this generation started |
 | `generation_record_id` | FK provenance |
 | `operation_id` | FK → `visual_frame_operation` when created by a frame operation |
 | `created_at` | timestamptz |
 | `finished_at` | nullable |
 
-`scene_background_state.current_generation_id` advances on success only when the completing operation is still the active write authority for that scene state.
+`scene_background_state.current_generation_id` advances on success only when scene write authority still matches (`active_operation_id` + `write_version`).
 
 ### Background resolution for a frame
 
@@ -172,9 +186,9 @@ Persisted selected-frame generation operation. Enables honest phase visibility w
 | `frame_id` | text |
 | `scope` | `frame` \| `panel` |
 | `panel_index` | nullable; required when `scope = panel` |
-| `write_version` | monotonic integer / token for stale-write protection |
+| `write_version` | monotonic integer / token for frame-scoped stale-write protection (character states / assembly) |
 | `phase` | `queued` \| `preparing-background` \| `generating-background` \| `generating-character-states` \| `assembling` \| `complete` \| `failed` |
-| `status` | `running` \| `complete` \| `failed` \| `cancelled` |
+| `status` | `running` \| `complete` \| `failed` |
 | `error_kind` | safe kind when failed |
 | `component_failures_json` | optional `[{ component, panelIndex?, kind }]` |
 | `created_at` | timestamptz |
@@ -183,10 +197,14 @@ Persisted selected-frame generation operation. Enables honest phase visibility w
 
 Rules:
 
-- Starting generation creates a new operation and sets `frame_hybrid_state.active_operation_id`.
+- Required authorities are validated before creating an operation. Missing style → `409 style-required` with no operation and no generation record. Panel regenerate without a ready primary background → `409 frame-generation-required` with no operation and no generation record.
+- Starting an accepted generation creates a new operation and sets `frame_hybrid_state.active_operation_id`.
+- If the operation must create/replace the shared background, it also claims `scene_background_state` write authority; reuse of a ready background does not claim replacement authority.
 - Worker/orchestrator advances `phase` as real work begins/ends.
-- Completions that do not carry the current `write_version` / active operation id must not advance head pointers.
+- Frame/panel head pointer advances require matching frame operation authority; background pointer advances require matching scene write authority.
+- Completions that fail those checks may finalize their own records but must not advance current pointers.
 - Retries create a new operation (and new generation records), never reuse a terminal operation.
+- Cancellation is out of scope; statuses are only `running`, `complete`, `failed`.
 
 ## Generation record finalize-once semantics
 
@@ -221,11 +239,15 @@ Terminology used across artifacts:
 - **Immutable candidate / append-only generation** — component generation rows are not edited after terminal status; new attempts are new rows.
 - Do not say “immutable generation record” to mean the whole row never changes status.
 
-## Style authority requirements
+## Authority field requirements
 
-- Character-state generation MUST receive identity authority and project style authority as distinct reference roles when the style asset is distinct from identity.
-- Background generation MUST receive project style authority and MUST NOT receive character identity references.
-- If required project style authority is unavailable, generation fails with actionable kind `style-required`.
+For ordinary dialogue hybrid generation in this feature:
+
+- Character-state `anchor_version_id` is required when the panel has an assigned subject; absence fails with `anchor-required` before any operation/provider work.
+- Character-state `style_asset_id` is required; absence fails with `style-required` before any operation/provider work.
+- Background `style_asset_id` is required; absence fails with `style-required` before any operation/provider work.
+- Identity authority and project style authority remain distinct reference roles even when both currently resolve to the same underlying asset.
+- Background generation MUST NOT receive character identity references.
 - The system MUST NOT silently proceed with text-only style instructions while claiming reproducible project style.
 
 ## Hybrid vs historical full-panel read precedence
@@ -247,8 +269,9 @@ For a given current storyboard version and frame:
                 ↘ failed
 ```
 
-- Retry creates a new generation row (`pending`) under a new or continuing active operation’s write authority.
-- Success advances the relevant head pointer only if the operation/`write_version` is still authoritative.
+- Retry creates a new generation row (`pending`) under a new operation’s write authority.
+- Character-state head advances only if frame operation/`write_version` is still authoritative.
+- Background head advances only if scene `active_operation_id` + captured scene `write_version` still match.
 - Failure never clears a previous ready pointer.
 
 ### Frame operation

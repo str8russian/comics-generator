@@ -4,11 +4,16 @@
 
 - Version-scoped scene identity: `(storyboard_version_id, "primary")`
 - Sole background pointer: `scene_background_state.current_generation_id`
+- Scene write authority: `scene_background_state.active_operation_id` + `write_version` (not a second generation pointer)
 - Panel head/placement: `panel_visual_state` (+ `current_character_generation_id`, zoom/pan/`fit_mode`)
 - Character candidates: append-only `character_visual_state_generation`
-- Async: `POST /api/visual/frames/:frameId/generate` → `202` + `operationId`; poll `GET /api/visual/frames/:frameId/operations/:operationId`
+- Async: validate authorities → `POST .../generate` → `202` + `operationId`
+- Canonical live phases: `GET /api/visual/frames/:frameId/operations/:operationId`
+- Reload restore: `GET /api/visual` exposes `activeOperationId`; client resumes canonical polling while running
+- Operation statuses: `running` \| `complete` \| `failed` only
 - Diagnostics: `GET /api/visual/frames/:frameId/diagnostics` → `application/zip`
-- Style authority required for background and character states; missing style → `style-required`
+- Required style authority for background and character states; required identity for assigned subjects
+- Missing style/identity → `409` before operation creation; panel regenerate without ready background → `409 frame-generation-required`
 
 See [plan.md](./plan.md), [data-model.md](./data-model.md), and [contracts/hybrid-dialogue-frame-api.md](./contracts/hybrid-dialogue-frame-api.md).
 
@@ -38,11 +43,13 @@ Required coverage areas:
 - contrasting-background composite checks for cutouts
 - visual-intent compiler: relational off-screen rules, no split-layout provider wording
 - human brief vs compiled prompt separation
-- required style-authority wiring and `style-required` failure
+- required style/identity wiring and pre-operation `style-required` / `anchor-required`
+- panel regenerate precondition `frame-generation-required`
 - renderer layered composition + character-only zoom/pan/fit
 - overflow/fitting preserves hybrid fields
 - finalize-once generation-record semantics
-- operation accept (`202`), phase polling, stale-write protection
+- operation accept (`202`), canonical phase polling, reload restore via `GET /api/visual`
+- frame-scoped and scene-scoped stale-write protection
 - diagnostic ZIP contents and credential exclusions
 - hybrid vs historical full-panel read precedence
 
@@ -57,6 +64,7 @@ Must cover:
 
 - additive migration compatibility with existing visual rows
 - sole background pointer ownership and primary-scene resolution
+- scene write authority claim/reuse/stale-completion behavior for shared background
 - `panel_visual_state` head + character-generation candidates
 - result/version isolation for backgrounds, character states, placement, operations, provenance
 - reload recovery of active operation and hybrid readiness/placement
@@ -81,19 +89,21 @@ The probe proves technical RGBA creation. Visual fringe quality is **not** fully
 
 1. Open the approved storyboard with approved anchors/style seed.
 2. Open the target split dialogue frame (acceptance may use current visible frame 1).
-3. Start generation; confirm `202` + `operationId` and polled real phases (no fake percents).
-4. Confirm Visual mode only after background + both character states are ready and assembly validates.
-5. Visually accept:
+3. Start generation; confirm pre-accept validation, then `202` + `operationId`, and phases from the canonical operation poll endpoint (no fake percents).
+4. Reload mid-run; confirm `GET /api/visual` restores `activeOperationId` and polling resumes on the canonical endpoint.
+5. Confirm Visual mode only after background + both character states are ready and assembly validates.
+6. Visually accept:
    - one shared primary-scene background;
    - exactly one assigned character per panel;
    - no nested layout/dialogue/text in character layers;
    - near-frontal pair with compatible scale/eye-line and subtle inward direction;
    - cutouts composited over light/dark/contrast backgrounds without unacceptable green fringe.
-6. Change zoom/pan/fit; confirm immediate crop, unchanged background, zero provider calls, survives reload.
-7. Force one component failure; confirm previous valid result remains and retry creates a new operation.
-8. `GET /api/visual/frames/:frameId/diagnostics`; confirm ZIP download contents and exclusions.
-9. Confirm dialogue wording/order/speaker ownership unchanged.
-10. Confirm missing style authority fails with `style-required` rather than text-only silent continuation.
+7. Change zoom/pan/fit; confirm immediate crop, unchanged background, zero provider calls, survives reload.
+8. Force one component failure; confirm previous valid result remains and retry creates a new operation.
+9. Attempt panel regenerate before any ready background; confirm `409 frame-generation-required` and no provider call.
+10. `GET /api/visual/frames/:frameId/diagnostics`; confirm ZIP download contents and exclusions.
+11. Confirm dialogue wording/order/speaker ownership unchanged.
+12. Confirm missing style authority fails with `409 style-required` before operation creation rather than text-only silent continuation.
 
 ## Distinction of proof
 

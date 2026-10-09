@@ -126,11 +126,13 @@ Mapping of approved functional areas:
 1. **Panel head**: extend existing `panel_visual_state` with `current_character_generation_id` and `fit_mode`; keep zoom/pan there. No `character_visual_state` table.
 2. **Character candidates**: append-only `character_visual_state_generation` referencing `panel_visual_state.id`.
 3. **Background pointer**: only `scene_background_state.current_generation_id`.
-4. **Frame head**: `frame_hybrid_state` owns composition mode, `scene_key="primary"`, `active_operation_id`, assembly status—not a second background pointer.
-5. **Scene identity**: version-scoped `"primary"` for all ordinary dialogue frames in this slice.
-6. **Async**: persisted `visual_frame_operation`; `POST` returns `202`; UI polls status.
-7. **Provenance**: finalize-once records (immutable inputs; one terminal lifecycle transition).
-8. **Diagnostics**: `GET /api/visual/frames/:frameId/diagnostics` → `application/zip`.
+4. **Scene write authority**: `scene_background_state.active_operation_id` + monotonically increasing `write_version` protect shared background pointer updates; not a second generation pointer.
+5. **Frame head**: `frame_hybrid_state` owns composition mode, `scene_key="primary"`, `active_operation_id`, assembly status—not a background pointer.
+6. **Scene identity**: version-scoped `"primary"` for all ordinary dialogue frames in this slice.
+7. **Async**: persisted `visual_frame_operation` (`running`\|`complete`\|`failed`); `POST` returns `202`; live phases from canonical poll endpoint only.
+8. **Validation before accept**: missing style/anchor → `409` with no operation/provider work; panel regenerate without ready background → `409 frame-generation-required`.
+9. **Provenance**: finalize-once records (immutable inputs; one terminal lifecycle transition).
+10. **Diagnostics**: `GET /api/visual/frames/:frameId/diagnostics` → `application/zip`.
 
 Details: [data-model.md](./data-model.md), [contracts/hybrid-dialogue-frame-api.md](./contracts/hybrid-dialogue-frame-api.md).
 
@@ -152,10 +154,12 @@ Details: [data-model.md](./data-model.md), [contracts/hybrid-dialogue-frame-api.
 
 ### Phase C — Store lifecycle and async server orchestration
 
+- Validate required style/identity (and panel-regenerate background readiness) before creating an operation.
 - `POST .../generate` → create operation → `202`.
-- Orchestrate real phases; poll endpoint exposes them.
-- Reuse ready primary-scene background; retry failed background inside a new operation without a background-approval UI.
-- Stale-write protection via operation id / `write_version`.
+- Orchestrate real phases; canonical poll endpoint exposes them.
+- Reuse ready primary-scene background without claiming scene replacement authority; create/replace background only after claiming scene `active_operation_id` / `write_version`.
+- Retry failed background inside a new frame operation without a background-approval UI.
+- Frame-scoped stale-write protection for character/assembly heads; scene-scoped stale-write protection for `current_generation_id`.
 - Placement remains provider-free and character-only.
 
 ### Phase D — Renderer and UI
@@ -184,16 +188,18 @@ Planning probe proved technical alpha creation but did **not** fully accept visu
 
 - Scope: `(storyboard_version_id, scene_key="primary")`.
 - Sole current pointer: `scene_background_state.current_generation_id`.
+- Scene write authority: `scene_background_state.active_operation_id` + `write_version`.
 - Frame resolves background only through `frame_hybrid_state.scene_key` → scene background state.
-- Prompt uses project style authority only; never character identity.
-- Reuse ready background while retrying character states; retry failed background via a new frame operation; no dedicated background-edit/approval UI.
+- Prompt uses required project style authority only; never character identity.
+- Reuse ready background while retrying character states (no replacement claim); retry failed background via a new frame operation that claims scene write authority; no dedicated background-edit/approval UI.
 
 ### 3. Character visual states
 
 - Head: `panel_visual_state`.
 - Candidates: `character_visual_state_generation`.
-- Authorities: identity anchor + required project style authority as distinct roles.
-- Missing style → `style-required` (no text-only silent fallback).
+- Authorities: required identity anchor for assigned subjects + required project style authority as distinct roles (even if same underlying asset).
+- Missing style/identity → `409` before operation creation (no text-only silent fallback).
+- Panel regenerate requires a ready primary background; otherwise `409 frame-generation-required`.
 - Off-screen relational names may influence gaze only.
 - Previous ready candidate remains visible while a replacement is pending/failed.
 
@@ -208,7 +214,7 @@ Extend existing renderer only. Zoom/pan/fit apply to character layers owned by `
 
 ### 6. Honest asynchronous state
 
-Persisted operation resource with real phases. `POST` accepts quickly with `202`; UI polls. No timer-simulated phases. Stale completions ignored. Visual mode only after complete hybrid readiness + assembly validation.
+Persisted operation resource with real phases and statuses `running` \| `complete` \| `failed` only. Validate authorities before accept; `POST` returns `202`. Canonical live polling is `GET .../operations/:operationId`. `GET /api/visual` restores `activeOperationId` after reload, then the client resumes canonical polling while running. No timer-simulated phases and no client-invented phase override. Frame write versions protect character/assembly heads; scene write versions protect the shared background pointer. Visual mode only after complete hybrid readiness + assembly validation.
 
 ### 7. Finalize-once generation provenance
 
@@ -257,11 +263,12 @@ Measurable checks (baseline; tune only with recorded evidence):
 
 ## Transaction and failure boundaries
 
+- Validate required authorities (and panel-regenerate background readiness) before creating an operation.
 - Create operation + pending component generation + pending generation record before provider I/O.
 - Provider I/O outside DB transactions.
-- On success: store raw/matted assets, finalize generation record once, advance head pointer only if operation/`write_version` is still authoritative.
-- On failure: finalize failed once; leave previous ready pointer unchanged.
-- Client observes partial/terminal failure through operation polling and `GET /api/visual`.
+- On success: store raw/matted assets, finalize generation record once; advance character/assembly heads only with frame write authority; advance background pointer only with matching scene write authority.
+- On failure or stale authority: finalize own records as needed; leave previous ready pointers unchanged.
+- Client observes live phases through the canonical operation poll endpoint; uses `GET /api/visual` for reload restore.
 
 ## Privacy / logging boundaries
 
@@ -282,10 +289,12 @@ Allowed: request serial, operation/event, result/version/frame/panel/component/o
 | Green fringe / hair holes | Edge cleanup + measurable acceptance thresholds + saved composites; fail closed with `matte-failed` |
 | Relational prose pulls second person | Compiler prohibitions for visible interlocutors |
 | Nested layout regression | Remove split-layout provider wording |
-| Long sync request hides phases | Persisted operation + `202` + polling |
-| Dual background pointers drift | Sole pointer on `scene_background_state` |
-| Stale async races | operation id / `write_version` |
-| Missing style seed silently weakens style | Fail with `style-required` |
+| Long sync request hides phases | Persisted operation + `202` + canonical poll |
+| Dual background pointers drift | Sole pointer on `scene_background_state.current_generation_id` |
+| Shared background races across frames | Scene `active_operation_id` + `write_version` |
+| Stale frame/panel races | Frame operation id / `write_version` |
+| Missing style/identity silently weakens authority | Validate before accept → `style-required` / `anchor-required` |
+| Panel regenerate invents background workflow | Require ready background → else `frame-generation-required` |
 | Overflow drops hybrid fields | Preserve hybrid + placement metadata |
 | Historical full-panel confusion | Explicit read precedence; no hybrid-success fallback |
 
