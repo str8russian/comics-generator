@@ -76,23 +76,23 @@
 
 **Independent Test**: Controlled doubles show zero provider calls on preflight blocks; partial replacement keeps previous ready `assetId` while `generationFailures` / latest status show failure; UI never claims full attempt success.
 
-### Tests (must fail before implementation)
+### Tests (record initial result; fail before production change only when behavior is missing)
 
-- [ ] T014 [US2] Add failing preflight tests in `app/storyboard-web/test/visual-workflow.test.mjs` (and store helpers if needed): before first provider call, eligible frame blocks on unresolved subject, missing approved identity for either panel, or missing project style; assert call count `0` and kinds `subject-required` / `anchor-required` / `style-required` per [contracts/panel-ready-frame-api.md](./contracts/panel-ready-frame-api.md). **FR-029, FR-030, SC-006**. **Done when**: tests fail (style currently not blocked). **Proof**: failing style-required case.
+- [ ] T014 [US2] Add preflight tests in `app/storyboard-web/test/visual-workflow.test.mjs` (and store helpers if needed): before first provider call, eligible frame blocks on unresolved subject, missing approved identity for either panel, or missing project style; assert call count `0` and kinds `subject-required` / `anchor-required` / `style-required` per [contracts/panel-ready-frame-api.md](./contracts/panel-ready-frame-api.md). **FR-029, FR-030, SC-006**. **Done when**: new requirement assertions are recorded; they must fail before production changes while style/subject preflight is missing. **Proof**: failing style-required (and related) cases before T018.
 
-- [ ] T015 [US2] Add failing tests for invalid performance input on panel generate in `app/storyboard-web/test/visual-workflow.test.mjs`: `invalid-image` (or existing parse kind), zero provider calls, previous ready pointer unchanged. **FR-031, SC-007**. **Done when**: documented initial failure or new assertion fails if behavior drifts. **Proof**: test file case present.
+- [ ] T015 [US2] Add or extend requirement coverage for invalid performance input on panel generate in `app/storyboard-web/test/visual-workflow.test.mjs`: `invalid-image` (or existing parse kind), zero provider calls, previous ready pointer unchanged. **FR-031, SC-007**. **Initial result rule**: if the existing implementation already satisfies the requirement, the added regression assertion may be green and must not be forced to fail artificially; if behavior is missing, the new assertion must fail before any production change. **Done when**: coverage exists and the initial red/green result is recorded. **Proof**: test case + recorded initial result.
 
-- [ ] T016 [US2] Add failing/extend tests in `app/storyboard-web/test/visual-workflow.test.mjs` for provider failure, timeout, and invalid-output on a panel: honest kind; previous ready preserved when present; failed panel without previous ⇒ not ready. **FR-032–FR-034, SC-007**. **Done when**: cases assert preservation + readiness rules (extend existing partial coverage as needed). **Proof**: tests fail until behavior/assertions complete.
+- [ ] T016 [US2] Add or extend requirement coverage in `app/storyboard-web/test/visual-workflow.test.mjs` for provider failure, timeout, and invalid-output on a panel: honest kind; previous ready preserved when present; failed panel without previous ⇒ not ready. **FR-032–FR-034, SC-007**. **Initial result rule**: same as T015 — green regression is acceptable when behavior already correct; fail-before-change applies only to missing behavior. **Done when**: coverage exists and initial red/green result is recorded. **Proof**: test cases + recorded initial result.
 
-- [ ] T017 [US2] Add failing tests distinguishing latest attempt vs readiness: partial two-panel attempt; partial with retained previous on failed panel (`visualReady` may stay true); response must include `generationFailures`; must not imply latest attempt fully succeeded. **FR-035, FR-036, SC-008**. **Done when**: tests encode SC-008. **Proof**: failing or newly red assertions before UI/server honesty fix.
+- [ ] T017 [US2] Add failing workflow + UI coverage for latest attempt vs readiness before T020: (a) workflow assertions in `app/storyboard-web/test/visual-workflow.test.mjs` for partial two-panel attempt, retained previous on failed panel (`visualReady` may stay true), and `generationFailures` present; (b) focused automated UI test at exact path `app/storyboard-web/test/visual-page.test.mjs` using the existing lightweight page/DOM pattern (e.g. patterns from `app/storyboard-web/test/draft-autosave.test.mjs` / `draft-page-loader.mjs` where useful) covering: `generationFailures` prevents full-success attempt copy even when assembled frame remains `visualReady`; failed replacement can retain and display the previous ready asset; `style-required` and `subject-required` have clear Russian messages. Do not introduce a new runtime architecture or state machine merely to test the UI. **FR-035, FR-036, SC-008**. **Done when**: workflow SC-008 assertions and `visual-page.test.mjs` exist; UI cases fail for missing honesty/copy before T020. **Proof**: red `visual-page.test.mjs` cases + workflow assertions.
 
 ### Implementation
 
 - [ ] T018 [US2] Implement eligible-frame preflight in `app/storyboard-web/server.mjs` and minimal helpers in `app/storyboard-web/visual-store.mjs` / `app/storyboard-web/visual-model.mjs` (adapt narrowly 006 `validateStyleRequired` / `validateAnchorRequired` only) so T014 passes with zero provider calls and no ready-pointer movement. **FR-029, FR-030**. **Done when**: T014 green. **Proof**: workflow preflight tests pass; provider spy count 0.
 
-- [ ] T019 [US2] Ensure invalid performance and provider/timeout/invalid-output paths in `app/storyboard-web/server.mjs` + `app/storyboard-web/visual-store.mjs` satisfy T015–T016 without new persistence; reuse existing `finishPanelGeneration` non-advance on failure. Do not add `normalizeProviderOutcome` from 006. **FR-031–FR-034, FR-026**. **Done when**: T015–T016 green. **Proof**: workflow failure tests pass.
+- [ ] T019 [US2] Change production code in `app/storyboard-web/server.mjs` + `app/storyboard-web/visual-store.mjs` only for genuinely red T015/T016 requirement coverage; reuse existing `finishPanelGeneration` non-advance on failure; no new persistence; do not add `normalizeProviderOutcome` from 006. If T015/T016 recorded green because behavior already correct, leave production paths unchanged and document that. **FR-031–FR-034, FR-026**. **Done when**: T015–T016 green and any production edits are limited to previously red gaps. **Proof**: workflow failure tests pass + note of red-only edits or no-op.
 
-- [ ] T020 [US2] Implement attempt-vs-readiness honesty in `app/storyboard-web/public/app.js` and any minimal server response clarification needed: when `generationFailures.length > 0`, never show full-success attempt copy even if `visualReady`; surface retained previous vs failed replacement using existing `generationStatus`/`assetId`; add Russian copy for `style-required` and `subject-required`. No history browser or readiness state machine. **FR-004, FR-020, FR-035, FR-036, SC-008**. **Done when**: T017 green and UI message map covers new kinds. **Proof**: workflow/UI-focused tests or documented double-driven browser check in Phase 5 prep notes.
+- [ ] T020 [US2] Implement attempt-vs-readiness honesty in `app/storyboard-web/public/app.js` and any minimal server response clarification needed: when `generationFailures.length > 0`, never show full-success attempt copy even if `visualReady`; surface retained previous vs failed replacement using existing `generationStatus`/`assetId`; add Russian copy for `style-required` and `subject-required`. No history browser or readiness state machine. **FR-004, FR-020, FR-035, FR-036, SC-008**. **Done when**: T017 workflow assertions and `app/storyboard-web/test/visual-page.test.mjs` are both green. **Proof**: `node --test test/visual-workflow.test.mjs test/visual-page.test.mjs` (from `app/storyboard-web/`) covers honesty + Russian kinds.
 
 **Checkpoint**: Browser-observable failure/partial behavior with controlled doubles is ready for Phase 5 verification.
 
@@ -104,17 +104,17 @@
 
 **Independent Test**: Existing suites prove no provider on zoom; panel regenerate isolates performance; source/speaker/renderer unchanged; out-of-scope path unchanged.
 
-- [ ] T021 [P] [US3] Add or extend regression in `app/storyboard-web/test/visual-workflow.test.mjs` that panel-scoped regeneration remains available and only the targeted panel is requested. **FR-021, SC-005**. **Done when**: test green (implement only if red). **Proof**: test output.
+- [ ] T021 [US3] Add or extend regression in `app/storyboard-web/test/visual-workflow.test.mjs` that panel-scoped regeneration remains available and only the targeted panel is requested. Not `[P]` with T023 (same file). **FR-021, SC-005**. **Done when**: test green (implement only if red). **Proof**: test output.
 
-- [ ] T022 [P] [US3] Add or extend regression in `app/storyboard-web/test/visual-model.test.mjs` / workflow tests that optional performance reference stays panel-scoped and does not displace identity/style authority. **FR-009, FR-022, SC-003**. **Done when**: test green (implement only if red). **Proof**: test output.
+- [ ] T022 [P] [US3] Add or extend regression restricted to `app/storyboard-web/test/visual-model.test.mjs` that optional performance reference stays panel-scoped and does not displace identity/style authority (do not edit `visual-workflow.test.mjs` in this task). **FR-009, FR-022, SC-003**. **Done when**: test green (implement only if red). **Proof**: test output.
 
-- [ ] T023 [P] [US3] Confirm zoom/placement PATCH in `app/storyboard-web/test/visual-workflow.test.mjs` never calls the image provider; no implementation unless red. **FR-023, FR-024, SC-004**. **Done when**: existing or extended test green. **Proof**: provider spy unused on placement.
+- [ ] T023 [US3] Confirm zoom/placement PATCH in `app/storyboard-web/test/visual-workflow.test.mjs` never calls the image provider; no implementation unless red. Serialize with T021 (same file). **FR-023, FR-024, SC-004**. **Done when**: existing or extended test green. **Proof**: provider spy unused on placement.
 
-- [ ] T024 [P] [US3] Confirm source wording and speaker ownership regressions remain green via existing fidelity/stage suites used by the app (run the project’s established fidelity-related `node --test` targets from `app/storyboard-web/`); no implementation unless red. **FR-028, SC-010**. **Done when**: suite green. **Proof**: terminal summary.
+- [ ] T024 [P] [US3] Confirm source wording and speaker ownership regressions remain green by only running the project’s established fidelity-related `node --test` targets from `app/storyboard-web/` (no edits to `visual-workflow.test.mjs` / `visual-model.test.mjs` in this task); no implementation unless red. **FR-028, SC-010**. **Done when**: suite green. **Proof**: terminal summary.
 
 - [ ] T025 [US3] Confirm `prototypes/storyboard-viewer/frame-renderer.mjs` still has no feature diff and overflow visual metadata tests in `app/storyboard-web/test/overflow.test.mjs` remain green. **FR-025**. **Done when**: no renderer diff; overflow green. **Proof**: `git diff -- prototypes/storyboard-viewer/frame-renderer.mjs` empty.
 
-- [ ] T026 [US3] Add/extend assertion that recorded `panel_generation` attempts are not deleted and latest/current status remains exposed on `/api/visual` load path (`app/storyboard-web/visual-store.mjs` + tests); no attempt-history UI. **FR-020**. **Done when**: test green proving append-only + latest status fields. **Proof**: test output.
+- [ ] T026 [US3] Add/extend append-only `panel_generation` persistence coverage in `app/storyboard-web/test/postgres/visual-isolation.test.mjs`, and `/api/visual` latest/current status exposure coverage in `app/storyboard-web/test/visual-workflow.test.mjs` if both levels are required; no attempt-history UI. **FR-020**. **Done when**: postgres append-only proof and workflow latest/current status proof are green (or postgres blocked with explicit `comics_test` environment reason). **Proof**: test output.
 
 - [ ] T027 [US3] Add/extend regression that out-of-scope layouts keep the historical generation path (not forced through panel-ready preflight/compiler contract) in `app/storyboard-web/test/visual-workflow.test.mjs` or `visual-model.test.mjs`. **FR-037**. **Done when**: test green. **Proof**: test output.
 
@@ -128,19 +128,19 @@
 
 **Purpose**: After deterministic doubles and US1–US3 checks pass, run broader regression and browser evidence. Owner acceptance is not claimed by the agent.
 
-- [ ] T029 Run focused application Visual + overflow + image-provider suites from `app/storyboard-web/` and fix only regressions caused by this feature. **FR-015 (suite continuity), SC-001–SC-008**. **Done when**: focused suites green. **Proof**: terminal summary.
+- [ ] T029 Run focused application Visual + overflow + image-provider suites from `app/storyboard-web/` (including `test/visual-page.test.mjs` once present) and fix only regressions caused by this feature. This is integration verification of the applicable implemented requirements and **SC-001–SC-008**; do not redefine FR-015. **Done when**: focused suites green. **Proof**: terminal summary.
 
 - [ ] T030 Run PostgreSQL visual isolation tests in `app/storyboard-web/test/postgres/visual-isolation.test.mjs` when `STORYBOARD_TEST_DATABASE_URL` points at `comics_test`; confirm style seed + ready-pointer preservation still hold. **FR-026, FR-008**. **Done when**: postgres suite green or blocked with explicit environment reason (not skipped silently). **Proof**: terminal summary or recorded blocker.
 
-- [ ] T031 Perform browser Happy Path on an assembled eligible `split2` frame per [quickstart.md](./quickstart.md) using provider doubles or local app configuration as available; record observations for busy state, two panel-ready images, FrameRenderer dialogue geometry. **US1, SC-001–SC-003**. **Done when**: written browser notes with pass/fail per quickstart Happy Path steps. **Proof**: notes path in implementation report (no image bytes committed).
+- [ ] T031 Perform mechanical browser Happy Path proof on an assembled eligible `split2` frame per [quickstart.md](./quickstart.md) using provider doubles: busy state, two successful panel results, and unchanged FrameRenderer assembly/dialogue geometry. Doubles prove browser flow and assembly only — they must not claim actual panel-ready visual quality (identity/style/background/gaze/role/crop quality remains T033). **US1, SC-001**. **Done when**: written browser notes for mechanical flow/assembly steps. **Proof**: notes in implementation report (no image bytes committed).
 
 - [ ] T032 Perform browser failure/partial checks per quickstart (missing style/anchor, partial with retained previous, zoom without provider) using controlled doubles. **US2, SC-006–SC-008**. **Done when**: notes show honest attempt outcome vs readiness. **Proof**: browser notes.
 
-- [ ] T033 Live-provider panel-ready quality validation when `BASE_URL` and `CONTEST_API_TOKEN` are available. **Purpose**: validate actual panel-ready output quality and pair coherence on one ordinary eligible split2. **Evidence**: assembled-frame observations for identity, style, uniform background, gaze, speaking/listening role, crop safety, and prohibited content (human review of the pair, not isolated portraits). **Stop**: stop when the user-visible quality question is answered or repeated calls cease adding decision-relevant evidence. **Policy**: DEC-049 — no default numeric quota; never log/commit credentials, provider host, raw protected responses, protected user material, or image bytes; leave local generated outputs uncommitted unless explicitly approved. If credentials are absent, record “blocked: no credentials” and skip without inventing success. **FR-007–FR-017, SC-002–SC-003, DEC-049**. **Done when**: sanitized evidence note exists or explicit credential blocker recorded. **Proof**: sanitized note in report.
+- [ ] T033 Live-provider panel-ready quality validation when `BASE_URL` and `CONTEST_API_TOKEN` are available. **Purpose**: validate actual panel-ready output quality and pair coherence on one ordinary eligible split2. **Evidence**: assembled-frame observations for identity, style, uniform background, gaze, speaking/listening role, crop safety, and prohibited content (human review of the pair, not isolated portraits). **Stop**: stop when the user-visible quality question is answered or repeated calls cease adding decision-relevant evidence. **Policy**: DEC-049 — no default numeric quota; never log/commit credentials, provider host, raw protected responses, protected user material, or image bytes; leave local generated outputs uncommitted unless explicitly approved. If credentials are unavailable, record the blocker and make no call; a credential blocker may close the implementation attempt operationally but does **not** satisfy live visual-quality evidence — the final report must state that product acceptance of provider output remains blocked/unverified until a live assembled pair is reviewed. Do not claim owner acceptance. **FR-007–FR-017, SC-002–SC-003, DEC-049**. **Done when**: sanitized live-quality evidence note exists, or an explicit credential/blocker note stating live quality remains unverified. **Proof**: sanitized note in report.
 
 - [ ] T034 Prepare the owner browser-acceptance scenario (short steps from quickstart Happy Path + one partial-failure check) in the implementation report without asserting owner acceptance. **SC-009**. **Done when**: scenario text ready for coordinator/owner. **Proof**: report section present.
 
-**Checkpoint**: Evidence prepared for coordinator/owner review; agent does not declare product acceptance.
+**Checkpoint**: Mechanical browser evidence prepared; live provider quality either verified or explicitly blocked/unverified; owner product acceptance still pending and not agent-claimed.
 
 ---
 
@@ -154,9 +154,9 @@
 
 - [ ] T037 Verify the implementation diff contains no new migration/table/column/asset kind, no operation resource/poller/recovery, no hybrid renderer/compositor, no history UI, no diagnostics ZIP/provenance subsystem; verify no FrameRenderer geometry or source-fidelity weakening. Inspect with `git diff --stat` and targeted path review of `app/storyboard-web/db/migrations/`, `prototypes/storyboard-viewer/frame-renderer.mjs`, and fidelity tests. **FR-037, FR-038, FR-025, FR-028**. **Done when**: scope audit recorded pass. **Proof**: audit notes in report.
 
-- [ ] T038 Prepare the structured implementation report (completed task IDs, files changed, initial failures, final checks, browser observations, provider-call count/purpose/evidence/stop, commit hashes, residual risks including any explicit-authority conflict deferral) and stop for coordinator/owner review. **Done when**: report delivered; no further phase started. **Proof**: report artifact/message.
+- [ ] T038 Prepare the structured implementation report (completed task IDs, files changed, initial failures, final checks, browser observations, provider-call count/purpose/evidence/stop, commit hashes, residual risks including any explicit-authority conflict deferral) and stop for coordinator/owner review. The report must distinguish: (1) implementation/code verification complete; (2) live provider quality verified **or** explicitly blocked/unverified; (3) owner product acceptance still pending. Do not claim owner acceptance. **Done when**: report delivered with those three distinctions; no further phase started. **Proof**: report artifact/message.
 
-**Checkpoint**: Implementation pass complete pending owner acceptance.
+**Checkpoint**: Implementation/code verification complete; live provider quality verified or explicitly blocked/unverified; owner product acceptance still pending.
 
 ---
 
@@ -176,13 +176,15 @@
 
 ### Within Each Story
 
-- Tests T004–T007 before T008–T010; T011 before T012; T014–T017 before T018–T020
+- Tests T004–T007 before T008–T010; T011 before T012; T014–T017 before T018–T020 (T017 UI test before T020)
+- T015/T016: do not artificially fail already-correct behavior; T019 edits production only for genuinely red gaps
 - Do not invent conflict resolution for two explicit gaze authorities
 - Do not schedule `image-provider.mjs` / `image-info.mjs` / FrameRenderer geometry edits unless a task’s failing proof requires it (unexpected)
 
 ### Parallel Opportunities
 
-- T021, T022, T023, T024 may run in parallel after US1/US2 core path exists (different primary concerns; avoid concurrent edits to the same test file—split cases or serialize if conflict)
+- After US1/US2 core path exists: **T022** `[P]` (edits only `visual-model.test.mjs`) and **T024** `[P]` (run-only established fidelity suites) may proceed beside serialized `visual-workflow.test.mjs` work
+- **T021** and **T023** are **not** `[P]` — both edit `app/storyboard-web/test/visual-workflow.test.mjs` and must be serialized
 - No other `[P]` tasks: compiler/reference/server/UI tasks share files and must stay sequential
 
 ### Suggested bounded implementation ranges
@@ -191,7 +193,7 @@
 |-------|---------|
 | T001–T003 | Baseline only |
 | T004–T013 | US1 Happy Path MVP |
-| T014–T020 | US2 preflight/failures |
+| T014–T020 | US2 preflight/failures (incl. `visual-page.test.mjs`) |
 | T021–T028 | US3 regressions |
 | T029–T034 | Integration + live validation evidence |
 | T035–T038 | Final verification + stop |
@@ -201,10 +203,14 @@
 ## Parallel Example: US3 regressions
 
 ```bash
-# After US1/US2 path exists, these may proceed without overlapping the same unfinished impl file:
-Task: "T021 panel-scoped regeneration regression in visual-workflow.test.mjs"
-Task: "T023 placement-without-provider regression in visual-workflow.test.mjs"
-# Serialize if both need conflicting edits to the same test file.
+# Safe parallel pair after US1/US2 core path exists (different files / run-only):
+Task: "T022 performance-authority regression in visual-model.test.mjs only"
+Task: "T024 run established fidelity suites (no shared test-file edits)"
+
+# Serialize same-file workflow regressions:
+Task: "T021 panel-scoped regeneration in visual-workflow.test.mjs"
+# then
+Task: "T023 placement-without-provider in visual-workflow.test.mjs"
 ```
 
 ---
