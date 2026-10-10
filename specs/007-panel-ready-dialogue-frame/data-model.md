@@ -52,7 +52,7 @@ These are compiler or response concepts, **not** new tables:
 | Concept | Representation |
 |---------|----------------|
 | Eligible ordinary split-dialogue frame | Deterministic predicate over existing frame JSON |
-| Panel-ready intent | Ephemeral compiler structure (side, role, gaze default, prohibitions) |
+| Panel-ready intent | Ephemeral compiler structure (side, role, gaze fallback when applicable, prohibitions) |
 | Latest generation-attempt outcome | `generationFailures` on frame response + latest `generationStatus`/`generationError` |
 | Current assembled-frame readiness | Every panel `assetId` present → `visualReady` |
 

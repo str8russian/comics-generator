@@ -16,12 +16,18 @@ Focused validation guide for Plan acceptance. Exact commands may follow the repo
 
 From `app/storyboard-web` (or repo scripts used by the project), run the focused Visual suites after implementation:
 
-- `visual-model` tests: eligibility, intent/prompt rules, reference ordering, prohibitions, gaze/role defaults
+- `visual-model` tests: eligibility, intent/prompt rules, reference ordering, prohibitions, gaze fallback vs explicit direction/performance suppression, speaking/listening roles
 - `visual-workflow` tests with provider doubles: preflight zero-calls, partial failures, readiness vs attempt
 - PostgreSQL visual isolation tests: ready-pointer preservation, style seed presence
 - Existing fidelity / overflow / placement regressions must stay green
 
-Expect provider doubles only in automated tests unless a task explicitly authorizes live calls.
+### Provider policy (DEC-049)
+
+- Deterministic automated tests use provider doubles.
+- Real provider validation is performed when it materially advances an approved implementation or acceptance task.
+- Each live run states its purpose, required evidence, safe secret handling, and stop condition.
+- No default numeric quota applies.
+- Calls stop when the question is answered or repeated runs stop adding useful evidence.
 
 ## Browser Happy Path
 
@@ -59,7 +65,7 @@ Inspect the assembled frame (not only portrait crops):
 - [ ] Identity matches approved anchors
 - [ ] Project style is coherent across both panels
 - [ ] Performance reference (if used) affected only its panel
-- [ ] Panel side / inward gaze appropriate
+- [ ] Panel side awareness and gaze/head direction coherent (inward fallback only when no more specific intent applies)
 - [ ] Speaking vs listening/reaction readable
 - [ ] Shot scale and crop safe for the panel region
 - [ ] Uniform non-scenic backgrounds

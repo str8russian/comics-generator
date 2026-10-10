@@ -80,15 +80,17 @@ app/storyboard-web/
 ├── image-provider.mjs        # reuse as-is (3-image limit, timeout/invalid-output kinds)
 ├── image-info.mjs            # reuse performance/image parse validation
 ├── public/app.js             # busy/attempt honesty; style-required + retained-previous copy
-├── prototypes/storyboard-viewer/frame-renderer.mjs  # reuse only; no geometry change
 └── test/
     ├── visual-model.test.mjs
     ├── visual-workflow.test.mjs
     ├── image-provider.test.mjs
     └── postgres/visual-isolation.test.mjs
+
+prototypes/storyboard-viewer/
+└── frame-renderer.mjs        # reuse only; protected dependency; no geometry change
 ```
 
-**Structure Decision**: Extend the existing `app/storyboard-web/` Visual path only. No new app package, worker, or renderer.
+**Structure Decision**: Extend the existing `app/storyboard-web/` Visual path only. Reuse `prototypes/storyboard-viewer/frame-renderer.mjs` as a protected dependency without moving it under `app/storyboard-web/`. No new app package, worker, or renderer.
 
 ## Complexity Tracking
 
@@ -122,12 +124,26 @@ Introduce pure helpers in `visual-model.mjs` (names illustrative):
 - aspect ratio via existing `aspectRatioForFrame` (`5:4` for split2);
 - reference image list from updated assembly.
 
+**Gaze / head-direction rule (fallback, not override)**:
+
+- Panel-ready generation remains panel-side aware (left/right index).
+- Subtle inward gaze (panel 0 → subtle screen-right; panel 1 → subtle screen-left) is only the **fallback** for ordinary conversational panels when no more specific gaze or head-direction intent is supplied.
+- Do **not** add that fallback when the accepted panel description explicitly requests another direction.
+- Do **not** add that fallback when the current revision instruction explicitly requests another direction.
+- Do **not** add a prompt instruction that contradicts a supplied performance reference’s staging authority; when performance is included, the prompt states it owns pose/expression/gaze/head/crop, not identity.
+- The compiler must avoid simultaneously emitting contradictory gaze instructions.
+- This is not automatic composition-mode selection: no modes, ranking, or AI composition choice.
+
+**Bounded implementation risk**: If two explicit user-supplied authorities (for example an explicit description direction and an explicit revision instruction) conflict, do not invent a silent product tie-break in Plan. Record and surface the conflict as an implementation risk rather than choosing one authority without owner guidance.
+
 **Deterministic rules to test**:
 
 - eligible split2 → two independent panel requests, never one combined split image;
 - speaking panel vs listening/reaction derived from `speakerPanel`;
-- default inward gaze: left panel subtle screen-right, right panel subtle screen-left;
-- when performance reference is included, prompt states it owns pose/expression/gaze/head/crop, not identity;
+- inward gaze fallback applies only when no explicit direction and no performance staging authority apply;
+- explicit panel-description direction suppresses the inward fallback;
+- explicit revision-instruction direction suppresses the inward fallback;
+- supplied performance staging suppresses the inward fallback and must not be contradicted by a second gaze line;
 - prompt forbids extra people, nested/split-inside-panel, borders/text/bubbles/logos/watermarks, unwanted contradictory objects;
 - prompt requires simple uniform non-scenic background;
 - prompt must **not** contain “one side of a two-panel split screen” or finished comic-page assembly language.
@@ -139,11 +155,16 @@ Out-of-scope frames continue using the historical panel generation path so behav
 Update `assemblePanelReferences`:
 
 1. identity/anchor (required)
-2. style when distinct (required for eligible path)
+2. style when distinct (required for eligible path); when identity and style use the same asset, send one image and state both roles in prompt text
 3. performance when supplied and slot remains
 4. previous only if a slot remains
 
-Expose omission metadata (e.g. `previousDropped`) for tests and safe logs. Prompt must still declare identity and style authority when previous is omitted.
+When the previous candidate is omitted under the three-image limit:
+
+- the prompt MUST NOT label an absent image as a previous reference;
+- the prompt MUST NOT claim the provider can preserve visual details from an unseen previous candidate;
+- identity, style, and optional performance remain the actual authorities present in the request;
+- omission metadata such as `previousDropped` may support deterministic tests and sanitized lifecycle evidence only, and MUST NOT create a new diagnostic subsystem.
 
 ### 3. Eligibility and preflight
 
@@ -205,8 +226,9 @@ No changes to FrameRenderer geometry, dialogue fitting ownership, source wording
 
 ### Deterministic offline tests (provider doubles)
 
-- intent/prompt compilation rules (side, gaze defaults, speaking/listening, prohibitions, uniform background, no split-screen-layout request);
-- reference assembly priority and previous-dropped behavior;
+- intent/prompt compilation rules (side, speaking/listening, prohibitions, uniform background, no split-screen-layout request);
+- gaze fallback only when no explicit direction / performance staging applies; explicit description, explicit revision, and performance staging each suppress the fallback without contradictory gaze lines;
+- reference assembly priority and previous-dropped behavior (no absent-image previous labels in the prompt);
 - eligibility true/false matrix;
 - frame preflight blocks with zero `generateImage` calls for missing anchor/style/subject;
 - invalid performance rejected;
@@ -228,7 +250,7 @@ See [quickstart.md](./quickstart.md):
 5. Panel-scoped regeneration with optional performance reference.
 6. Human visual review of identity, style, gaze, role, crop, prohibitions — no automatic artistic approval.
 
-Live provider calls during implementation verification are authorized by task purpose under DEC-049; Plan stage used none.
+Real provider validation during implementation or acceptance follows DEC-049: stated purpose, evidence requirement, safe secret handling, and stop condition; no default numeric quota. Deterministic automated tests use provider doubles. Plan stage used none.
 
 ## Gatekeeper Confirmation
 

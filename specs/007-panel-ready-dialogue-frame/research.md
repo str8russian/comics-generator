@@ -1,7 +1,7 @@
 # Research: Panel-ready dialogue frame
 
-**Date**: 2026-10-10  
-**Branch**: `codex/007-panel-ready-dialogue-frame`  
+**Date**: 2026-10-10
+**Branch**: `codex/007-panel-ready-dialogue-frame`
 **Base**: `2715e2468d6b57e32a882efdd1c39024468d96c6`
 
 ## Evidence summary (starting base)
@@ -25,7 +25,7 @@ This already supports SC-008’s distinction. Gaps are mainly honesty of attempt
 
 ### Current panel prompt contradicts DEC-048
 
-`panelPrompt` currently says Layout: `one side of a two-panel split screen` and does not require a simple uniform non-scenic background, panel-side awareness, deterministic inward gaze defaults, or full prohibitions against nested panels / extra people / scene objects.
+`panelPrompt` currently says Layout: `one side of a two-panel split screen` and does not require a simple uniform non-scenic background, panel-side awareness, a restrained inward-gaze fallback for ordinary conversational panels, or full prohibitions against nested panels / extra people / scene objects.
 
 ### Reference limit is three images
 
@@ -67,16 +67,18 @@ No local `BASE_URL` / `CONTEST_API_TOKEN` credentials are present in this worktr
 - exactly one assigned character;
 - simple uniform non-scenic background;
 - panel side (left/right index);
-- gaze/head direction (deterministic inward defaults for split2: panel 0 subtle screen-right, panel 1 subtle screen-left, unless a performance reference owns staging);
+- gaze/head direction as a **fallback only**: for ordinary conversational panels with no more specific gaze or head-direction intent, panel 0 subtle screen-right and panel 1 subtle screen-left; do not add that fallback when the accepted panel description or current revision instruction explicitly requests another direction; do not add a gaze line that contradicts a supplied performance reference’s staging authority; never emit contradictory gaze instructions simultaneously;
 - speaking vs listening/reaction from `speakerPanel`;
 - shot scale chest-up with crop-safe margins for the actual panel aspect (`5:4` for split panels via existing `aspectRatioForFrame`);
 - prohibitions: no additional people; no nested panels / split-screen-inside-image; no borders, captions, speech bubbles, logos, watermarks, generated text; no unwanted contradictory scene objects.
 
 FrameRenderer remains the only assembler. Never ask the provider for “one side of a finished split comic.”
 
+This is not automatic composition-mode selection. Conflicts between two explicit user-supplied authorities are a bounded implementation risk, not a silent Plan-time tie-break.
+
 **Rationale**: Matches DEC-048 and FR-001–FR-017 with the smallest change surface: compile better panel requests on the existing sync path.
 
-**Alternatives rejected**: Hybrid background+cutout path (DEC-048 / FR-037); automatic composition-mode selection (deferred); whole-storyboard generation.
+**Alternatives rejected**: Hybrid background+cutout path (DEC-048 / FR-037); automatic composition-mode selection (deferred); whole-storyboard generation; treating inward gaze as an unconditional override of explicit panel or revision intent.
 
 ### D2: Eligibility gate; preserve historical behavior for other frames
 
@@ -101,13 +103,20 @@ Eligible frames use the panel-ready compiler + frame-level preflight. Single, ac
 1. **Identity anchor** (required when subject exists) — never dropped.
 2. **Project style** (required for eligible panel-ready generation; included when distinct from identity) — never dropped in favor of previous.
 3. **Performance** (optional, panel-scoped) — included when supplied and a free slot remains after identity+style.
-4. **Previous candidate** — revision aid only; included only when a free slot remains after the above. When omitted under the limit, prompt text may mention continuity without sending the previous image; identity and style remain authoritative.
+4. **Previous candidate** — revision aid only; included only when a free slot remains after the above.
+
+When the previous candidate is omitted under the three-image limit:
+
+- the prompt MUST NOT label an absent image as a previous reference;
+- the prompt MUST NOT claim the provider can preserve visual details from an unseen previous candidate;
+- identity, style, and optional performance remain the actual authorities in the request;
+- omission metadata such as `previousDropped` may support deterministic tests and sanitized lifecycle evidence only, and MUST NOT create a new diagnostic subsystem.
 
 When identity asset id equals style asset id, send one image and state both roles in prompt text (same pattern as anchor assembly).
 
 **Rationale**: Protects FR-009/FR-018 under the hard provider constraint already enforced in code.
 
-**Alternatives rejected**: Keep dropping style for previous (current bug); raise provider limit (not available); omit performance when present (breaks panel-scoped performance); omit style when performance present (rejects accepted authority).
+**Alternatives rejected**: Keep dropping style for previous (current bug); raise provider limit (not available); omit performance when present (breaks panel-scoped performance); omit style when performance present (rejects accepted authority); invent prompt text that pretends an omitted previous image is still attached.
 
 ### D4: Frame-level preflight before any provider call
 
@@ -154,7 +163,7 @@ UI/copy refinements only: when `generationFailures.length > 0`, never claim the 
 
 | Candidate | Classification | Rationale |
 |-----------|----------------|-----------|
-| `screenDirectionForCharacterPrompt` | **Adapt narrowly** | Useful inward left/right defaults; strip hybrid composition-mode vocabulary |
+| `screenDirectionForCharacterPrompt` | **Adapt narrowly** | Useful inward left/right fallback mapping; strip hybrid composition-mode vocabulary; only apply when no explicit direction or performance staging applies |
 | Default prohibitions list (nested panels, text, borders, second person) | **Adapt narrowly** | Aligns with FR-014–FR-017; rewrite for uniform-background panel-ready, not chromakey |
 | `validateStyleRequired` / `validateAnchorRequired` | **Adapt narrowly** | Small pure helpers for preflight kinds |
 | Eligibility predicate shape (`isEligibleHybridDialogueFrame`) | **Adapt narrowly** | Rename/repurpose to panel-ready eligibility; keep out-of-scope frames off the new contract |
