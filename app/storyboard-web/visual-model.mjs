@@ -14,8 +14,55 @@ function clean(value, max = 4000) {
 
 const EXPLICIT_DIRECTION_RE = /screen[- ]?(left|right)|look(?:s|ing)?\s+(?:to\s+the\s+)?(left|right)|gazes?\s+(?:to\s+the\s+)?(left|right)|to[- ]camera|at[- ]camera|toward(?:s)?\s+camera|facing\s+camera|смотрит\s+влево|смотрит\s+вправо|взгляд\s+влево|взгляд\s+вправо|на\s+камеру|в\s+камеру|повернут[ао]?\s+влево|повернут[ао]?\s+вправо/i;
 
+/** Relational look-at-partner language that must resolve to inward viewer-relative staging, not suppress it. */
+const RELATIONAL_PARTNER_RE = /looks?\s+at\s+the\s+other\s+panel\s+character|looking\s+at\s+the\s+other\s+panel\s+character|looks?\s+at\s+(?:the\s+)?(?:other|partner|counterpart)|looking\s+at\s+(?:the\s+)?(?:other|partner|counterpart)|toward(?:s)?\s+the\s+(?:other|partner)|at\s+(?:their\s+)?(?:interlocutor|partner)|смотрит\s+на\s+собеседник\w*|взгляд\s+на\s+собеседник\w*|смотрит\s+на\s+партн\w*/i;
+
 function hasExplicitDirection(...texts) {
   return texts.some((text) => EXPLICIT_DIRECTION_RE.test(String(text ?? "")));
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasRelationalPartnerDirection(texts, partnerName) {
+  for (const text of texts) {
+    const value = String(text ?? "");
+    if (!value.trim()) continue;
+    if (RELATIONAL_PARTNER_RE.test(value)) return true;
+    if (partnerName) {
+      // Avoid \\b: JS word boundaries do not treat Cyrillic letters as word chars.
+      const named = new RegExp(
+        `(?:смотрит|взглядом?|looks?|looking|gazes?|gazing)\\s+(?:на|at)\\s+${escapeRegExp(partnerName)}(?:а|у|ом|е)?(?=$|[\\s.,;:!?«»"'])`,
+        "i",
+      );
+      if (named.test(value)) return true;
+    }
+  }
+  return false;
+}
+
+function partnerNameForPanel(frame, panelIndex) {
+  const panels = Array.isArray(frame?.panels) ? frame.panels : [];
+  const other = panels[panelIndex === 0 ? 1 : 0];
+  const name = other?.subject;
+  return typeof name === "string" && name.trim() ? name.trim() : "";
+}
+
+function inwardGazeInstruction(panelSide, gazeFallback, { fromRelational = false } = {}) {
+  const inward = gazeFallback === "screen-right" ? "right" : "left";
+  const outer = gazeFallback === "screen-right" ? "left" : "right";
+  const resolvePrefix = fromRelational
+    ? "The description's request to look at the other panel character resolves to this inward viewer-relative direction. "
+    : "";
+  return (
+    `${resolvePrefix}`
+    + `Inward conversational staging for this ${panelSide} panel, from the viewer's perspective: `
+    + `gently turn the head and face toward the viewer's ${inward} (screen-${inward} / the inner edge of this panel), `
+    + `and direct both eyes toward the viewer's ${inward} (screen-${inward} / inner edge). `
+    + `Do not point the head, face, or either eye toward the viewer's ${outer} (screen-${outer} / the outer edge of this panel). `
+    + `Keep the gaze engaged across the gutter toward the partner, not away from the frame center.`
+  );
 }
 
 export function isEligiblePanelReadyDialogueFrame(frame) {
@@ -64,11 +111,17 @@ export function compilePanelReadyIntent({
   description,
   instruction,
   hasPerformance = false,
+  partnerName = null,
 }) {
   const side = panelIndex === 0 ? "left" : "right";
   const speaking = Number.isInteger(frame?.speakerPanel) && panelIndex === frame.speakerPanel;
   const role = speaking ? "speaking" : "listening";
+  const partner = clean(partnerName ?? partnerNameForPanel(frame, panelIndex), 160);
   const explicitDirection = hasExplicitDirection(description, instruction);
+  const relationalPartner = !explicitDirection
+    && hasRelationalPartnerDirection([description, instruction], partner);
+  // Performance and genuine viewer-relative explicit directions suppress inward fallback.
+  // Relational look-at-partner language does not suppress — it resolves to the inward direction.
   const suppressGazeFallback = explicitDirection || hasPerformance === true;
   const gazeFallback = suppressGazeFallback
     ? null
@@ -81,6 +134,7 @@ export function compilePanelReadyIntent({
     panelSide: side,
     speakingRole: role,
     gazeFallback,
+    gazeFromRelational: Boolean(gazeFallback && relationalPartner),
     hasPerformance: hasPerformance === true,
   };
 }
@@ -115,7 +169,9 @@ export function compilePanelReadyPrompt(intent, {
   }
 
   const gazeLine = intent.gazeFallback
-    ? `Gaze fallback for this ordinary conversational panel: subtle ${intent.gazeFallback}. Do not add any other gaze direction.`
+    ? inwardGazeInstruction(intent.panelSide, intent.gazeFallback, {
+      fromRelational: intent.gazeFromRelational === true,
+    })
     : hasPerformance
       ? "Do not add any independent gaze or head-direction instruction; the performance reference owns gaze and head angle."
       : "Follow any explicit gaze or head direction from the panel description or revision request. Do not add a conflicting inward gaze fallback.";

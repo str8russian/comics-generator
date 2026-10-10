@@ -1045,6 +1045,7 @@ async function generateOnePanel({
         description: pending.panel.description,
         instruction: pending.instruction,
         hasPerformance: assembled.hasPerformance,
+        partnerName: pending.frame?.panels?.[panelIndex === 0 ? 1 : 0]?.subject ?? null,
       }),
       {
         hasPrevious: assembled.hasPrevious,

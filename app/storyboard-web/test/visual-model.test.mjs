@@ -32,15 +32,21 @@ function eligibleDialogueFrame(overrides = {}) {
 }
 
 function panelReadyPrompt(overrides = {}) {
-  const frame = overrides.frame || eligibleDialogueFrame();
+  const frame = overrides.frame || eligibleDialogueFrame({
+    panels: [
+      { description: "Путин спокойно слушает", subject: "Путин" },
+      { description: "Дуров отвечает", subject: "Дуров" },
+    ],
+  });
   const panelIndex = overrides.panelIndex ?? 0;
   const intent = compilePanelReadyIntent({
     frame,
     panelIndex,
-    characterName: overrides.characterName ?? "Путин",
+    characterName: overrides.characterName ?? (panelIndex === 0 ? "Путин" : "Дуров"),
     description: overrides.description ?? frame.panels[panelIndex].description,
     instruction: overrides.instruction ?? "",
     hasPerformance: overrides.hasPerformance ?? false,
+    partnerName: overrides.partnerName ?? frame.panels[panelIndex === 0 ? 1 : 0]?.subject ?? null,
   });
   return compilePanelReadyPrompt(intent, {
     hasPrevious: overrides.hasPrevious ?? false,
@@ -183,22 +189,24 @@ test("panel-ready compiler states side, speaking role, uniform background, crop,
 
 test("panel-ready gaze fallback applies only when no explicit direction or performance staging", () => {
   const fallbackLeft = panelReadyPrompt({ panelIndex: 0, description: "Путин спокойно слушает" });
-  assert.match(fallbackLeft, /screen-right/i);
-  assert.equal(/screen-left/i.test(fallbackLeft), false);
+  assert.match(fallbackLeft, /screen-right|viewer'?s?\s+right/i);
+  assert.match(fallbackLeft, /direct both eyes toward the viewer'?s?\s+right/i);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+left/i.test(fallbackLeft), false);
 
   const fallbackRight = panelReadyPrompt({
     panelIndex: 1,
     characterName: "Дуров",
     description: "Дуров отвечает",
   });
-  assert.match(fallbackRight, /screen-left/i);
-  assert.equal(/screen-right/i.test(fallbackRight), false);
+  assert.match(fallbackRight, /screen-left|viewer'?s?\s+left/i);
+  assert.match(fallbackRight, /direct both eyes toward the viewer'?s?\s+left/i);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(fallbackRight), false);
 
   const descriptionDirection = panelReadyPrompt({
     panelIndex: 0,
     description: "Путин смотрит screen-left на дверь",
   });
-  assert.equal(/subtle screen-right|gaze .*screen-right|look .*screen-right/i.test(descriptionDirection), false);
+  assert.equal(/inward conversational staging|subtle screen-right|viewer'?s?\s+right \(screen-right/i.test(descriptionDirection), false);
 
   const revisionDirection = panelReadyPrompt({
     panelIndex: 1,
@@ -206,7 +214,7 @@ test("panel-ready gaze fallback applies only when no explicit direction or perfo
     description: "Дуров отвечает",
     instruction: "look screen-right instead",
   });
-  assert.equal(/subtle screen-left|gaze .*screen-left|look .*screen-left/i.test(revisionDirection), false);
+  assert.equal(/inward conversational staging|subtle screen-left|viewer'?s?\s+left \(screen-left/i.test(revisionDirection), false);
 
   const withPerformance = panelReadyPrompt({
     panelIndex: 0,
@@ -214,8 +222,91 @@ test("panel-ready gaze fallback applies only when no explicit direction or perfo
     hasPerformance: true,
   });
   assert.match(withPerformance, /performance reference/i);
-  assert.equal(/subtle screen-right|gaze .*screen-right/i.test(withPerformance), false);
+  assert.equal(/inward conversational staging|subtle screen-right|viewer'?s?\s+right \(screen-right/i.test(withPerformance), false);
   assert.match(withPerformance, /pose|expression|gaze|head/i);
+});
+
+test("panel-ready inward gaze names viewer-relative head and eye directions and forbids the outer edge", () => {
+  const leftIntent = compilePanelReadyIntent({
+    frame: eligibleDialogueFrame(),
+    panelIndex: 0,
+    characterName: "Путин",
+    description: "Путин спокойно говорит слева",
+    instruction: "",
+    hasPerformance: false,
+  });
+  assert.equal(leftIntent.gazeFallback, "screen-right");
+  const left = compilePanelReadyPrompt(leftIntent, { hasStyle: true });
+  assert.match(left, /viewer'?s?\s+perspective|from the viewer/i);
+  assert.match(left, /head|face/i);
+  assert.match(left, /eyes?/i);
+  assert.match(left, /viewer'?s?\s+right|screen-right/i);
+  assert.match(left, /inner edge/i);
+  assert.match(left, /outer edge/i);
+  assert.match(left, /do not point|must not point|not .*toward the viewer'?s?\s+left|not .*outer/i);
+  assert.equal(/Gaze fallback for this ordinary conversational panel: subtle screen-right\. Do not add any other gaze direction\./.test(left), false);
+
+  const rightIntent = compilePanelReadyIntent({
+    frame: eligibleDialogueFrame(),
+    panelIndex: 1,
+    characterName: "Дуров",
+    description: "Дуров слушает справа",
+    instruction: "",
+    hasPerformance: false,
+  });
+  assert.equal(rightIntent.gazeFallback, "screen-left");
+  const right = compilePanelReadyPrompt(rightIntent, { hasStyle: true });
+  assert.match(right, /viewer'?s?\s+perspective|from the viewer/i);
+  assert.match(right, /head|face/i);
+  assert.match(right, /eyes?/i);
+  assert.match(right, /viewer'?s?\s+left|screen-left/i);
+  assert.match(right, /inner edge/i);
+  assert.match(right, /outer edge/i);
+  assert.match(right, /do not point|must not point|not .*toward the viewer'?s?\s+right|not .*outer/i);
+  assert.equal(/Gaze fallback for this ordinary conversational panel: subtle screen-left\. Do not add any other gaze direction\./.test(right), false);
+
+  // No contradictory primary inward pair: left must not also instruct eyes toward viewer's left as the goal.
+  assert.equal(/direct both eyes toward the viewer'?s?\s+left/i.test(left), false);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(right), false);
+});
+
+test("panel-ready relational look-at-partner resolves to inward viewer-relative direction", () => {
+  const left = panelReadyPrompt({
+    panelIndex: 0,
+    characterName: "Путин",
+    description: "Путин looks at the other panel character while speaking",
+  });
+  assert.match(left, /resolves? to|viewer'?s?\s+right|screen-right/i);
+  assert.match(left, /head|face/i);
+  assert.match(left, /eyes?/i);
+  assert.match(left, /outer edge/i);
+  assert.equal(/Follow any explicit gaze or head direction from the panel description/i.test(left), false);
+  assert.equal(/do not add a conflicting inward gaze fallback/i.test(left), false);
+
+  const right = panelReadyPrompt({
+    panelIndex: 1,
+    characterName: "Дуров",
+    description: "Дуров смотрит на собеседника",
+  });
+  assert.match(right, /resolves? to|viewer'?s?\s+left|screen-left/i);
+  assert.match(right, /head|face/i);
+  assert.match(right, /eyes?/i);
+  assert.equal(/Follow any explicit gaze or head direction from the panel description/i.test(right), false);
+
+  const namedPartner = panelReadyPrompt({
+    panelIndex: 0,
+    characterName: "Путин",
+    description: "Путин смотрит на Дурова",
+    frame: eligibleDialogueFrame({
+      panels: [
+        { description: "Путин смотрит на Дурова", subject: "Путин" },
+        { description: "Дуров слушает", subject: "Дуров" },
+      ],
+    }),
+  });
+  assert.match(namedPartner, /viewer'?s?\s+right|screen-right/i);
+  assert.match(namedPartner, /head|face/i);
+  assert.match(namedPartner, /eyes?/i);
 });
 
 test("optional performance stays panel-scoped and does not displace identity or style", () => {
