@@ -21,6 +21,7 @@ import {
   compilePanelReadyPrompt,
   isEligiblePanelReadyDialogueFrame,
   panelPrompt,
+  validatePanelReadyAuthorities,
 } from "./visual-model.mjs";
 import { createVisualStore } from "./visual-store.mjs";
 
@@ -991,11 +992,25 @@ async function generateOnePanel({
   fetchImpl,
   logger,
   request,
+  authoritiesPrechecked = false,
 }) {
   const performanceImage = body?.performanceImageDataUrl
     ? parseImageDataUrl(body.performanceImageDataUrl)
     : null;
   if (body?.performanceImageDataUrl && !performanceImage) return failedVisual("invalid-image", 400);
+  if (!authoritiesPrechecked) {
+    const visual = await runtime.visualStore.load();
+    const frame = visual?.frames?.find((entry) => entry.id === frameId);
+    const preflight = frame
+      ? validatePanelReadyAuthorities({
+        frame,
+        characters: visual.characters,
+        styleSeedAssetId: visual.styleSeedAssetId,
+        panelIndex,
+      })
+      : null;
+    if (preflight && !preflight.ok) return preflight;
+  }
   logVisual(logger, request, "visual-panel-start", {
     operation: "panel-generate",
     frameId,
@@ -1167,6 +1182,21 @@ async function handleVisualGeneration(req, res, {
     sendJson(res, 404, { status: "failed", kind: "not-found" });
     return;
   }
+  const framePreflight = validatePanelReadyAuthorities({
+    frame,
+    characters: visual.characters,
+    styleSeedAssetId: visual.styleSeedAssetId,
+  });
+  if (framePreflight && !framePreflight.ok) {
+    logVisual(logger, request, "visual-frame-outcome", {
+      status: "failed",
+      kind: safeKind(framePreflight.kind),
+      http: framePreflight.httpStatus,
+      frameId: target.frameId,
+    });
+    sendVisualFailure(res, framePreflight);
+    return;
+  }
   const started = Date.now();
   logVisual(logger, request, "visual-frame-start", {
     operation: "frame-generate",
@@ -1187,6 +1217,7 @@ async function handleVisualGeneration(req, res, {
       fetchImpl,
       logger,
       request,
+      authoritiesPrechecked: true,
     });
     if (!result.ok) failures.push({ panelIndex, kind: safeKind(result.kind) || "provider" });
   }

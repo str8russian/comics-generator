@@ -341,6 +341,7 @@ test("eligible split2 frame generate uses panel-ready compiler for both panels s
   const store = {
     load: async () => ({
       ...visualState(),
+      styleSeedAssetId: "style-1",
       characters: [
         { name: "Путин", approvedAnchorId: "a0" },
         { name: "Дуров", approvedAnchorId: "a1" },
@@ -530,6 +531,407 @@ test("out-of-scope single frame keeps historical reference image order and promp
   }
 });
 
+function eligibleSplitState(overrides = {}) {
+  const leftAssetId = Object.prototype.hasOwnProperty.call(overrides, "leftAssetId") ? overrides.leftAssetId : null;
+  const rightAssetId = Object.prototype.hasOwnProperty.call(overrides, "rightAssetId") ? overrides.rightAssetId : null;
+  return {
+    ...visualState(),
+    storyboardResultId: "result-1",
+    storyboardVersionId: "version-1",
+    styleSeedAssetId: Object.prototype.hasOwnProperty.call(overrides, "styleSeedAssetId")
+      ? overrides.styleSeedAssetId
+      : "style-1",
+    characters: overrides.characters || [
+      { name: "Путин", approvedAnchorId: "a0" },
+      { name: "Дуров", approvedAnchorId: "a1" },
+    ],
+    frames: [{
+      id: "f1",
+      layout: "split2",
+      dialogue: "Привет.",
+      speakerPanel: 0,
+      sourceRole: "utterance",
+      visualReady: Boolean(leftAssetId && rightAssetId),
+      panels: [
+        {
+          description: "Путин спокойно слушает",
+          subject: Object.prototype.hasOwnProperty.call(overrides, "leftSubject") ? overrides.leftSubject : "Путин",
+          assetId: leftAssetId,
+          asset: leftAssetId ? `/api/visual/assets/${leftAssetId}` : null,
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+          generationStatus: leftAssetId ? "ready" : null,
+        },
+        {
+          description: "Дуров отвечает",
+          subject: Object.prototype.hasOwnProperty.call(overrides, "rightSubject") ? overrides.rightSubject : "Дуров",
+          assetId: rightAssetId,
+          asset: rightAssetId ? `/api/visual/assets/${rightAssetId}` : null,
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+          generationStatus: rightAssetId ? "ready" : null,
+        },
+      ],
+    }],
+  };
+}
+
+test("eligible frame preflight blocks missing style with zero provider calls", async () => {
+  const calls = [];
+  let beginCalls = 0;
+  const state = eligibleSplitState({ styleSeedAssetId: null });
+  const store = {
+    load: async () => state,
+    beginPanelGeneration: async () => {
+      beginCalls += 1;
+      return { ok: false, status: "failed", kind: "provider", httpStatus: 502 };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 409);
+    assert.deepEqual(generated.body, { status: "failed", kind: "style-required" });
+    assert.equal(calls.length, 0);
+    assert.equal(beginCalls, 0);
+  } finally {
+    await close(server);
+  }
+});
+
+test("eligible frame preflight blocks missing subject and missing anchor with zero provider calls", async () => {
+  for (const [label, state, kind] of [
+    ["subject", eligibleSplitState({ leftSubject: null }), "subject-required"],
+    ["anchor", eligibleSplitState({
+      characters: [
+        { name: "Путин", approvedAnchorId: null },
+        { name: "Дуров", approvedAnchorId: "a1" },
+      ],
+    }), "anchor-required"],
+  ]) {
+    const calls = [];
+    let beginCalls = 0;
+    const store = {
+      load: async () => state,
+      beginPanelGeneration: async () => {
+        beginCalls += 1;
+        return { ok: false, status: "failed", kind: "provider", httpStatus: 502 };
+      },
+    };
+    const server = createServer({
+      migrate: false,
+      projectStore: {},
+      visualStore: store,
+      imageGenerator: async (input) => {
+        calls.push(input);
+        return { ok: true, image: { bytes: png }, metadata: {} };
+      },
+    });
+    const port = await listen(server);
+    try {
+      const generated = await request(port, {
+        method: "POST",
+        path: "/api/visual/frames/f1/generate",
+        body: {},
+      });
+      assert.equal(generated.status, 409, label);
+      assert.deepEqual(generated.body, { status: "failed", kind }, label);
+      assert.equal(calls.length, 0, label);
+      assert.equal(beginCalls, 0, label);
+    } finally {
+      await close(server);
+    }
+  }
+});
+
+test("invalid performance image rejects before provider and keeps previous ready pointer", async () => {
+  const calls = [];
+  let beginCalls = 0;
+  let finishCalls = 0;
+  const state = {
+    ...visualState(),
+    frames: [{
+      id: "f1",
+      layout: "single",
+      dialogue: "Нет.",
+      speakerPanel: 0,
+      visualReady: true,
+      panels: [{
+        description: "Путин спокойно отвечает",
+        subject: "Путин",
+        assetId: "kept-ready",
+        asset: "/api/visual/assets/kept-ready",
+        zoom: 1,
+        position: "50% 30%",
+        align: "50% 30%",
+        generationStatus: "ready",
+      }],
+    }],
+  };
+  const store = {
+    load: async () => state,
+    beginPanelGeneration: async () => {
+      beginCalls += 1;
+      return { ok: true, id: "should-not-run" };
+    },
+    finishPanelGeneration: async () => {
+      finishCalls += 1;
+      return { ok: true };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/panels/0/generate",
+      body: { performanceImageDataUrl: "data:image/png;base64,not-an-image" },
+    });
+    assert.equal(generated.status, 400);
+    assert.deepEqual(generated.body, { status: "failed", kind: "invalid-image" });
+    assert.equal(calls.length, 0);
+    assert.equal(beginCalls, 0);
+    assert.equal(finishCalls, 0);
+    assert.equal((await store.load()).frames[0].panels[0].assetId, "kept-ready");
+  } finally {
+    await close(server);
+  }
+});
+
+test("panel provider timeout invalid-output and provider failures preserve or withhold readiness honestly", async () => {
+  for (const kind of ["timeout", "invalid-output", "provider"]) {
+    const httpStatus = kind === "timeout" ? 504 : 502;
+    const calls = [];
+    const withPrevious = {
+      ...visualState(),
+      frames: [{
+        id: "f1",
+        layout: "single",
+        dialogue: "Нет.",
+        speakerPanel: 0,
+        visualReady: true,
+        panels: [{
+          description: "Путин спокойно отвечает",
+          subject: "Путин",
+          assetId: "kept-ready",
+          asset: "/api/visual/assets/kept-ready",
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+          generationStatus: "ready",
+        }],
+      }],
+    };
+    const store = {
+      load: async () => withPrevious,
+      beginPanelGeneration: async () => ({
+        ok: true,
+        id: "gen-1",
+        frame: withPrevious.frames[0],
+        panel: withPrevious.frames[0].panels[0],
+        panelIndex: 0,
+        subject: "Путин",
+        instruction: "",
+        refs: {
+          anchor: { id: "anchor", mime: "image/png", bytes: png },
+          previous: { id: "kept-ready", mime: "image/png", bytes: png },
+          performance: null,
+          style: null,
+        },
+      }),
+      finishPanelGeneration: async ({ result }) => {
+        assert.equal(result.ok, false);
+        assert.equal(result.kind, kind);
+        withPrevious.frames[0].panels[0].generationStatus = "failed";
+        withPrevious.frames[0].panels[0].generationError = kind;
+        return { ok: false, status: "failed", kind, httpStatus };
+      },
+    };
+    const server = createServer({
+      migrate: false,
+      projectStore: {},
+      visualStore: store,
+      imageGenerator: async (input) => {
+        calls.push(input);
+        return { ok: false, kind, httpStatus };
+      },
+    });
+    const port = await listen(server);
+    try {
+      const generated = await request(port, {
+        method: "POST",
+        path: "/api/visual/frames/f1/panels/0/generate",
+        body: {},
+      });
+      assert.equal(generated.status, httpStatus, kind);
+      assert.equal(generated.body.kind, kind);
+      assert.equal(calls.length, 1, kind);
+      assert.equal((await store.load()).frames[0].panels[0].assetId, "kept-ready", kind);
+      assert.equal((await store.load()).frames[0].panels[0].generationStatus, "failed", kind);
+    } finally {
+      await close(server);
+    }
+  }
+
+  const calls = [];
+  const fresh = {
+    ...visualState(),
+    frames: [{
+      id: "f1",
+      layout: "single",
+      dialogue: "Нет.",
+      speakerPanel: 0,
+      visualReady: false,
+      panels: [{
+        description: "Путин спокойно отвечает",
+        subject: "Путин",
+        assetId: null,
+        zoom: 1,
+        position: "50% 30%",
+        align: "50% 30%",
+        generationStatus: null,
+      }],
+    }],
+  };
+  const store = {
+    load: async () => fresh,
+    beginPanelGeneration: async () => ({
+      ok: true,
+      id: "gen-fresh",
+      frame: fresh.frames[0],
+      panel: fresh.frames[0].panels[0],
+      panelIndex: 0,
+      subject: "Путин",
+      instruction: "",
+      refs: {
+        anchor: { id: "anchor", mime: "image/png", bytes: png },
+        previous: null,
+        performance: null,
+        style: null,
+      },
+    }),
+    finishPanelGeneration: async ({ result }) => {
+      assert.equal(result.ok, false);
+      fresh.frames[0].panels[0].generationStatus = "failed";
+      fresh.frames[0].panels[0].generationError = "provider";
+      return { ok: false, status: "failed", kind: "provider", httpStatus: 502 };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: false, kind: "provider", httpStatus: 502 };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/panels/0/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 502);
+    assert.equal(generated.body.kind, "provider");
+    assert.equal(calls.length, 1);
+    assert.equal((await store.load()).frames[0].panels[0].assetId, null);
+    assert.equal((await store.load()).frames[0].visualReady, false);
+  } finally {
+    await close(server);
+  }
+});
+
+test("partial eligible frame attempt keeps visualReady with retained previous and generationFailures", async () => {
+  const calls = [];
+  const state = eligibleSplitState({
+    leftAssetId: "p0",
+    rightAssetId: "p1-prev",
+  });
+  state.frames[0].panels[1].generationStatus = "ready";
+  const store = {
+    load: async () => state,
+    beginPanelGeneration: async ({ panelIndex }) => ({
+      ok: true,
+      id: `gen-${panelIndex}`,
+      storyboardVersionId: "version-1",
+      frame: state.frames[0],
+      panel: state.frames[0].panels[panelIndex],
+      panelIndex,
+      subject: state.frames[0].panels[panelIndex].subject,
+      instruction: "",
+      refs: {
+        anchor: { id: `anchor-${panelIndex}`, mime: "image/png", bytes: png },
+        previous: { id: state.frames[0].panels[panelIndex].assetId, mime: "image/png", bytes: png },
+        performance: null,
+        style: { id: "style", mime: "image/png", bytes: png },
+      },
+    }),
+    finishPanelGeneration: async ({ id, result }) => {
+      const panelIndex = id === "gen-0" ? 0 : 1;
+      if (!result?.ok) {
+        state.frames[0].panels[panelIndex].generationStatus = "failed";
+        state.frames[0].panels[panelIndex].generationError = result.kind;
+        return { ok: false, status: "failed", kind: result.kind, httpStatus: result.httpStatus || 502 };
+      }
+      state.frames[0].panels[panelIndex].generationStatus = "ready";
+      state.frames[0].panels[panelIndex].assetId = `ready-${panelIndex}`;
+      return { ok: true, generationId: id, assetId: `ready-${panelIndex}` };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      if (calls.length === 2) return { ok: false, kind: "provider", httpStatus: 502 };
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 200);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(generated.body.generationFailures, [{ panelIndex: 1, kind: "provider" }]);
+    assert.equal(generated.body.frames[0].visualReady, true);
+    assert.equal(generated.body.frames[0].panels[0].assetId, "ready-0");
+    assert.equal(generated.body.frames[0].panels[1].assetId, "p1-prev");
+    assert.equal(generated.body.frames[0].panels[1].generationStatus, "failed");
+  } finally {
+    await close(server);
+  }
+});
+
 test("successful panel assets survive loadVisual fitting and partial frame failures stay visible", async () => {
   const logs = [];
   let panelCalls = 0;
@@ -537,11 +939,17 @@ test("successful panel assets survive loadVisual fitting and partial frame failu
     ...visualState(),
     storyboardResultId: "result-1",
     storyboardVersionId: "version-1",
+    styleSeedAssetId: "style-1",
+    characters: [
+      { name: "Путин", approvedAnchorId: "a0" },
+      { name: "Дуров", approvedAnchorId: "a1" },
+    ],
     frames: [{
       id: "f1",
       layout: "split2",
       dialogue: "Короткий текст.",
       speakerPanel: 0,
+      sourceRole: "utterance",
       visualReady: true,
       panels: [
         {

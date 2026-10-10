@@ -29,6 +29,34 @@ export function isEligiblePanelReadyDialogueFrame(frame) {
   return true;
 }
 
+/** Frame- or panel-scoped authority preflight for eligible panel-ready dialogue only. */
+export function validatePanelReadyAuthorities({
+  frame,
+  characters = [],
+  styleSeedAssetId = null,
+  panelIndex = null,
+}) {
+  if (!isEligiblePanelReadyDialogueFrame(frame)) return null;
+  const indexes = Number.isInteger(panelIndex)
+    ? [panelIndex]
+    : frame.panels.map((_, index) => index);
+  const byName = new Map((characters || []).map((character) => [character.name, character]));
+  for (const index of indexes) {
+    const panel = frame.panels[index];
+    if (!panel || !String(panel.subject ?? "").trim()) {
+      return { ok: false, status: "failed", kind: "subject-required", httpStatus: 409 };
+    }
+    const character = byName.get(panel.subject);
+    if (!character?.approvedAnchorId) {
+      return { ok: false, status: "failed", kind: "anchor-required", httpStatus: 409 };
+    }
+  }
+  if (!styleSeedAssetId) {
+    return { ok: false, status: "failed", kind: "style-required", httpStatus: 409 };
+  }
+  return { ok: true };
+}
+
 export function compilePanelReadyIntent({
   frame,
   panelIndex,

@@ -259,10 +259,12 @@ async function fetchJson(path, options = {}) {
   return payload;
 }
 
-function actionMessage(kind) {
+export function actionMessage(kind) {
   const messages = {
     "identity-required": "Сначала выберите реальную фотографию персонажа.",
     "anchor-required": "Сначала утвердите базовый образ этого персонажа.",
+    "style-required": "Сначала утвердите стиль проекта — без него нельзя создать панели этого кадра.",
+    "subject-required": "Сначала укажите персонажа для каждой панели этого кадра.",
     "invalid-image": "Не удалось прочитать изображение. Выберите JPEG, PNG или WebP.",
     "unsupported-image-format": "Этот формат пока не поддерживается. Выберите JPEG, PNG или WebP.",
     "image-too-large": "Файл слишком большой. Выберите фото меньшего размера.",
@@ -287,6 +289,37 @@ function failureNotice(failures) {
     return `Не удалось создать панель ${entry.panelIndex + 1}. ${actionMessage(entry.kind)}`;
   }
   return `Кадр создан частично. Не удалось создать панели: ${failures.map((entry) => entry.panelIndex + 1).join(", ")}.`;
+}
+
+export function frameAttemptNotice({ generationFailures = [], visualReady = false } = {}) {
+  const notice = failureNotice(generationFailures);
+  if (notice) return { text: notice, kind: "error" };
+  return {
+    text: visualReady
+      ? "Кадр готов. Проверьте изображения."
+      : "Генерация завершилась, но кадр ещё не полностью готов.",
+    kind: "info",
+  };
+}
+
+export function describePanelAttempt(panel = {}) {
+  const retainedAssetId = panel.assetId || null;
+  if (panel.generationStatus !== "failed") {
+    return {
+      failureText: null,
+      retained: Boolean(retainedAssetId),
+      retainedAssetId,
+    };
+  }
+  const base = actionMessage(panel.generationError || "provider");
+  const failureText = retainedAssetId
+    ? `${base} Показан предыдущий готовый вариант.`
+    : base;
+  return {
+    failureText,
+    retained: Boolean(retainedAssetId),
+    retainedAssetId,
+  };
 }
 
 async function runBusy(message, operation) {
@@ -531,14 +564,11 @@ async function generateFrame(frameId, button, index) {
       if (Number.isInteger(openIndex) && readyFrames[openIndex]) {
         openDetail(openIndex);
       }
-      const failures = next.generationFailures || [];
-      const notice = failureNotice(failures);
-      showActionNotice(
-        notice || (next.frames?.find((frame) => frame.id === frameId)?.visualReady
-          ? "Кадр готов. Проверьте изображения."
-          : "Генерация завершилась, но кадр ещё не полностью готов."),
-        notice ? "error" : "info",
-      );
+      const attempt = frameAttemptNotice({
+        generationFailures: next.generationFailures || [],
+        visualReady: Boolean(next.frames?.find((frame) => frame.id === frameId)?.visualReady),
+      });
+      showActionNotice(attempt.text, attempt.kind);
     } catch (error) {
       console.error("[visual] frame generation failed", { kind: error?.kind || "request-failed", frameId });
       throw error;
@@ -560,12 +590,14 @@ function renderPanelControls(frame) {
     const description = document.createElement("p");
     description.className = "panel-description-copy";
     description.textContent = panel.description;
-    const failure = panel.generationStatus === "failed"
-      ? Object.assign(document.createElement("p"), {
-        className: "panel-failure",
-        textContent: actionMessage(panel.generationError || "provider"),
-      })
-      : null;
+    const attempt = describePanelAttempt(panel);
+    let failure = null;
+    if (attempt.failureText) {
+      failure = document.createElement("p");
+      failure.className = "panel-failure";
+      failure.textContent = attempt.failureText;
+      if (attempt.retainedAssetId) failure.dataset.assetId = attempt.retainedAssetId;
+    }
     const instruction = document.createElement("textarea");
     instruction.placeholder = "Опишите, что изменить в этой панели";
     const performanceLabel = document.createElement("label");
