@@ -290,7 +290,33 @@ export function assembleAnchorReferences({ identity, previous = null, style = nu
   };
 }
 
-export function assemblePanelReferences({
+function assembleHistoricalPanelReferences({
+  anchor = null,
+  previous = null,
+  performance = null,
+  style = null,
+}) {
+  const slots = [];
+  if (anchor) slots.push({ role: "anchor", asset: anchor });
+  if (previous) slots.push({ role: "previous", asset: previous });
+  if (performance && slots.length < 3) slots.push({ role: "performance", asset: performance });
+  const styleId = style?.id ?? null;
+  const usedIds = new Set(slots.map((slot) => slot.asset?.id).filter(Boolean));
+  const styleDistinct = Boolean(styleId) && !usedIds.has(styleId);
+  if (styleDistinct && slots.length < 3) slots.push({ role: "style", asset: style });
+  const roles = new Set(slots.map((slot) => slot.role));
+  return {
+    images: slots.map((slot) => slot.asset),
+    roles,
+    hasPrevious: roles.has("previous"),
+    hasPerformance: roles.has("performance"),
+    hasStyle: roles.has("style") || (previous?.id != null && previous.id === styleId),
+    previousDropped: false,
+    identityAlsoStyle: Boolean(styleId) && styleId === (anchor?.id ?? null) && !roles.has("style"),
+  };
+}
+
+function assemblePanelReadyReferences({
   anchor = null,
   previous = null,
   performance = null,
@@ -316,4 +342,18 @@ export function assemblePanelReferences({
     previousDropped,
     identityAlsoStyle: Boolean(styleId) && styleId === anchorId,
   };
+}
+
+/** Assemble up to three panel reference images. Historical by default; panel-ready when requested. */
+export function assemblePanelReferences({
+  anchor = null,
+  previous = null,
+  performance = null,
+  style = null,
+  panelReady = false,
+} = {}) {
+  const refs = { anchor, previous, performance, style };
+  return panelReady
+    ? assemblePanelReadyReferences(refs)
+    : assembleHistoricalPanelReferences(refs);
 }

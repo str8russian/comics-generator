@@ -1018,9 +1018,10 @@ async function generateOnePanel({
     });
     return pending;
   }
-  const assembled = assemblePanelReferences(pending.refs);
+  const panelReady = isEligiblePanelReadyDialogueFrame(pending.frame);
+  const assembled = assemblePanelReferences({ ...pending.refs, panelReady });
   const providerStarted = Date.now();
-  const prompt = isEligiblePanelReadyDialogueFrame(pending.frame)
+  const prompt = panelReady
     ? compilePanelReadyPrompt(
       compilePanelReadyIntent({
         frame: pending.frame,

@@ -108,6 +108,7 @@ test("panel reference assembly never drops identity for style under the three-im
     previous: { id: "prev" },
     performance: { id: "perf" },
     style: { id: "style" },
+    panelReady: true,
   });
   assert.ok(assembled.roles.has("anchor"));
   assert.ok(assembled.roles.has("style"));
@@ -117,6 +118,21 @@ test("panel reference assembly never drops identity for style under the three-im
   assert.deepEqual(assembled.images.map((image) => image.id), ["anchor", "style", "perf"]);
   assert.equal(assembled.hasStyle, true);
   assert.equal(assembled.hasPrevious, false);
+});
+
+test("historical panel reference assembly keeps previous before performance and style", () => {
+  const assembled = assemblePanelReferences({
+    anchor: { id: "anchor" },
+    previous: { id: "prev" },
+    performance: { id: "perf" },
+    style: { id: "style" },
+  });
+  assert.deepEqual(assembled.images.map((image) => image.id), ["anchor", "prev", "perf"]);
+  assert.deepEqual([...assembled.roles], ["anchor", "previous", "performance"]);
+  assert.equal(assembled.hasPrevious, true);
+  assert.equal(assembled.hasPerformance, true);
+  assert.equal(assembled.hasStyle, false);
+  assert.equal(assembled.previousDropped, false);
 });
 
 test("isEligiblePanelReadyDialogueFrame accepts ordinary dialogue split2 only", () => {
@@ -208,6 +224,7 @@ test("panel reference assembly prefers identity style performance and drops prev
     previous: { id: "prev" },
     performance: { id: "perf" },
     style: { id: "style" },
+    panelReady: true,
   });
   assert.deepEqual([...full.roles], ["anchor", "style", "performance"]);
   assert.equal(full.previousDropped, true);
@@ -218,6 +235,7 @@ test("panel reference assembly prefers identity style performance and drops prev
     previous: { id: "prev" },
     performance: null,
     style: { id: "style" },
+    panelReady: true,
   });
   assert.deepEqual([...withPreviousSlot.roles], ["anchor", "style", "previous"]);
   assert.equal(withPreviousSlot.previousDropped, false);
@@ -228,6 +246,7 @@ test("panel reference assembly prefers identity style performance and drops prev
     previous: { id: "prev" },
     performance: { id: "perf" },
     style: { id: "shared" },
+    panelReady: true,
   });
   assert.deepEqual(sameIdentityStyle.images.map((image) => image.id), ["shared", "perf", "prev"]);
   assert.equal(sameIdentityStyle.hasStyle, true);
@@ -239,6 +258,9 @@ test("panel reference assembly prefers identity style performance and drops prev
     hasStyle: true,
     hasPerformance: true,
   });
+  assert.match(promptWithoutPrevious, /Image 1 is the approved identity anchor/);
+  assert.match(promptWithoutPrevious, /Image 2 is the project style anchor/);
+  assert.match(promptWithoutPrevious, /Image 3 is the performance reference/);
   assert.equal(/previous (result|candidate|reference)/i.test(promptWithoutPrevious), false);
   assert.equal(/preserve .*previous|continuity from .*previous/i.test(promptWithoutPrevious), false);
 });

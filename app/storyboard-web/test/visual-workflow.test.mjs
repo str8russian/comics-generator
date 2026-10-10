@@ -368,10 +368,10 @@ test("eligible split2 frame generate uses panel-ready compiler for both panels s
         subject: frame.panels[panelIndex].subject,
         instruction: "",
         refs: {
-          anchor: { id: `anchor-${panelIndex}`, mime: "image/png", bytes: png },
-          previous: null,
-          performance: null,
-          style: { id: "style", mime: "image/png", bytes: png },
+          anchor: { id: `anchor-${panelIndex}`, mime: "image/png", bytes: Buffer.from(`anchor-${panelIndex}`) },
+          previous: { id: `prev-${panelIndex}`, mime: "image/png", bytes: Buffer.from(`prev-${panelIndex}`) },
+          performance: { id: `perf-${panelIndex}`, mime: "image/png", bytes: Buffer.from(`perf-${panelIndex}`) },
+          style: { id: "style", mime: "image/png", bytes: Buffer.from("style-bytes") },
         },
       };
     },
@@ -403,12 +403,19 @@ test("eligible split2 frame generate uses panel-ready compiler for both panels s
     assert.equal(panelCalls, 2);
     assert.equal(calls.length, 2);
     assert.ok(elapsed < 2000, "frame generate remains a synchronous request");
-    for (const call of calls) {
+    for (const [index, call] of calls.entries()) {
       assert.equal(call.aspectRatio, "5:4");
       assert.match(call.prompt, /panel-ready|uniform/i);
       assert.match(call.prompt, /chest-up/i);
       assert.equal(/one side of a two-panel split screen/i.test(call.prompt), false);
-      assert.ok(call.images.length >= 2);
+      assert.deepEqual(
+        call.images.map((image) => image.bytes.toString("utf8")),
+        [`anchor-${index}`, "style-bytes", `perf-${index}`],
+      );
+      assert.match(call.prompt, /Image 1 is the approved identity anchor/);
+      assert.match(call.prompt, /Image 2 is the project style anchor/);
+      assert.match(call.prompt, /Image 3 is the performance reference/);
+      assert.equal(/previous (result|candidate|reference)/i.test(call.prompt), false);
     }
     assert.match(calls[0].prompt, /left/i);
     assert.match(calls[1].prompt, /right/i);
@@ -458,6 +465,65 @@ test("out-of-scope single frame generate keeps the historical panel prompt path"
     assert.equal(generated.status, 200);
     assert.equal(calls.length, 1);
     assert.match(calls[0].prompt, /single wide frame|scene-specific storyboard panel/i);
+    assert.equal(/simple uniform non-scenic background/i.test(calls[0].prompt), false);
+  } finally {
+    await close(server);
+  }
+});
+
+test("out-of-scope single frame keeps historical reference image order and prompt labels", async () => {
+  const calls = [];
+  const anchorBytes = Buffer.from("anchor-bytes");
+  const previousBytes = Buffer.from("previous-bytes");
+  const performanceBytes = Buffer.from("performance-bytes");
+  const styleBytes = Buffer.from("style-bytes");
+  const store = {
+    load: async () => visualState(),
+    beginPanelGeneration: async () => ({
+      ok: true,
+      id: "panel-run",
+      frame: { id: "f1", layout: "single", speakerPanel: 0, sourceRole: "utterance" },
+      panel: { description: "Путин спокойно отвечает" },
+      panelIndex: 0,
+      subject: "Путин",
+      instruction: "closer",
+      refs: {
+        anchor: { id: "anchor", mime: "image/png", bytes: anchorBytes },
+        previous: { id: "prev", mime: "image/png", bytes: previousBytes },
+        performance: { id: "perf", mime: "image/png", bytes: performanceBytes },
+        style: { id: "style", mime: "image/png", bytes: styleBytes },
+      },
+    }),
+    finishPanelGeneration: async () => ({ ok: true }),
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/panels/0/generate",
+      body: { instruction: "closer" },
+    });
+    assert.equal(generated.status, 200);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(
+      calls[0].images.map((image) => image.bytes.toString("utf8")),
+      ["anchor-bytes", "previous-bytes", "performance-bytes"],
+    );
+    assert.match(calls[0].prompt, /Image 1 is the approved identity anchor/);
+    assert.match(calls[0].prompt, /Image 2 is the previous result for this panel/);
+    assert.match(calls[0].prompt, /Image 3 is the performance reference/);
+    assert.equal(/Image 3 is the project style anchor/.test(calls[0].prompt), false);
+    assert.equal(/Image 2 is the performance reference/.test(calls[0].prompt), false);
+    assert.equal(/Image 2 is the project style anchor/.test(calls[0].prompt), false);
     assert.equal(/simple uniform non-scenic background/i.test(calls[0].prompt), false);
   } finally {
     await close(server);
