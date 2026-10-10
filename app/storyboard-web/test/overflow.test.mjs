@@ -152,6 +152,58 @@ test("preserves panel visual metadata when dialogue already fits", () => {
   assert.equal(result.frames[0].visualReady, true);
 });
 
+test("eligible split2 ready panels keep FrameRenderer dialogue geometry across overflow pieces", () => {
+  const dialogue = "аб вг";
+  const panels = [
+    {
+      description: "Путин спокойно слушает",
+      assetId: "left-ready",
+      asset: "/api/visual/assets/left-ready",
+      zoom: 1.15,
+      position: "48% 32%",
+      align: "48% 32%",
+      subject: "Путин",
+      generationStatus: "ready",
+    },
+    {
+      description: "Дуров отвечает",
+      assetId: "right-ready",
+      asset: "/api/visual/assets/right-ready",
+      zoom: 1,
+      position: "52% 30%",
+      align: "52% 30%",
+      subject: "Дуров",
+      generationStatus: "ready",
+    },
+  ];
+  const frame = utterance({
+    dialogue,
+    layout: "split2",
+    speakerPanel: 0,
+    sourceRole: "utterance",
+    panels,
+    displayBlock: { sourceItemId: "u1", start: 0, end: dialogue.length },
+    visualReady: true,
+  });
+  const minimum = FONT_LADDER.split2.at(-1);
+  const result = compileOverflow([frame], (text, options) => {
+    if (text.length <= 2) return true;
+    return options.fontSize === minimum && text.length <= 4;
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.frames.length, 2);
+  for (const piece of result.frames) {
+    assert.equal(piece.layout, "split2");
+    assert.equal(piece.speakerPanel, 0);
+    assert.equal(piece.visualReady, true);
+    assert.ok(FONT_LADDER.split2.includes(piece.fontSize));
+    assert.equal(piece.panels[0].assetId, "left-ready");
+    assert.equal(piece.panels[1].assetId, "right-ready");
+    assert.equal(piece.panels[0].zoom, 1.15);
+    assert.equal(piece.panels[1].position, "52% 30%");
+  }
+});
+
 test("keeps the same panel assets on every dialogue overflow piece", () => {
   const dialogue = "аб вг";
   const panels = [

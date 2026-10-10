@@ -17,6 +17,9 @@ import {
   aspectRatioForFrame,
   assembleAnchorReferences,
   assemblePanelReferences,
+  compilePanelReadyIntent,
+  compilePanelReadyPrompt,
+  isEligiblePanelReadyDialogueFrame,
   panelPrompt,
 } from "./visual-model.mjs";
 import { createVisualStore } from "./visual-store.mjs";
@@ -1017,8 +1020,25 @@ async function generateOnePanel({
   }
   const assembled = assemblePanelReferences(pending.refs);
   const providerStarted = Date.now();
-  const result = await imageGenerator({
-    prompt: panelPrompt({
+  const prompt = isEligiblePanelReadyDialogueFrame(pending.frame)
+    ? compilePanelReadyPrompt(
+      compilePanelReadyIntent({
+        frame: pending.frame,
+        panelIndex,
+        characterName: pending.subject,
+        description: pending.panel.description,
+        instruction: pending.instruction,
+        hasPerformance: assembled.hasPerformance,
+      }),
+      {
+        hasPrevious: assembled.hasPrevious,
+        hasPerformance: assembled.hasPerformance,
+        hasStyle: assembled.hasStyle,
+        identityAlsoStyle: assembled.identityAlsoStyle === true,
+        previousDropped: assembled.previousDropped === true,
+      },
+    )
+    : panelPrompt({
       characterName: pending.subject,
       description: pending.panel.description,
       instruction: pending.instruction,
@@ -1028,7 +1048,9 @@ async function generateOnePanel({
       hasPrevious: assembled.hasPrevious,
       hasPerformance: assembled.hasPerformance,
       hasStyle: assembled.hasStyle,
-    }),
+    });
+  const result = await imageGenerator({
+    prompt,
     images: assembled.images.map(imageInput),
     aspectRatio: aspectRatioForFrame(pending.frame),
     env,

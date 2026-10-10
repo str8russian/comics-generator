@@ -324,6 +324,146 @@ test("stable style seed is reused for later anchors and survives approval of oth
   }
 });
 
+test("eligible split2 frame generate uses panel-ready compiler for both panels synchronously", async () => {
+  const calls = [];
+  let panelCalls = 0;
+  const frame = {
+    id: "f1",
+    layout: "split2",
+    dialogue: "Привет.",
+    speakerPanel: 0,
+    sourceRole: "utterance",
+    panels: [
+      { description: "Путин спокойно слушает", subject: "Путин" },
+      { description: "Дуров отвечает", subject: "Дуров" },
+    ],
+  };
+  const store = {
+    load: async () => ({
+      ...visualState(),
+      characters: [
+        { name: "Путин", approvedAnchorId: "a0" },
+        { name: "Дуров", approvedAnchorId: "a1" },
+      ],
+      frames: [{
+        ...frame,
+        visualReady: false,
+        panels: frame.panels.map((panel) => ({
+          ...panel,
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+        })),
+      }],
+    }),
+    beginPanelGeneration: async ({ panelIndex }) => {
+      panelCalls += 1;
+      return {
+        ok: true,
+        id: `gen-${panelIndex}`,
+        storyboardVersionId: "version-1",
+        frame,
+        panel: frame.panels[panelIndex],
+        panelIndex,
+        subject: frame.panels[panelIndex].subject,
+        instruction: "",
+        refs: {
+          anchor: { id: `anchor-${panelIndex}`, mime: "image/png", bytes: png },
+          previous: null,
+          performance: null,
+          style: { id: "style", mime: "image/png", bytes: png },
+        },
+      };
+    },
+    finishPanelGeneration: async ({ id }) => ({
+      ok: true,
+      generationId: id,
+      assetId: id === "gen-0" ? "ready-0" : "ready-1",
+    }),
+  };
+  const started = Date.now();
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/generate",
+      body: {},
+    });
+    const elapsed = Date.now() - started;
+    assert.equal(generated.status, 200);
+    assert.equal(panelCalls, 2);
+    assert.equal(calls.length, 2);
+    assert.ok(elapsed < 2000, "frame generate remains a synchronous request");
+    for (const call of calls) {
+      assert.equal(call.aspectRatio, "5:4");
+      assert.match(call.prompt, /panel-ready|uniform/i);
+      assert.match(call.prompt, /chest-up/i);
+      assert.equal(/one side of a two-panel split screen/i.test(call.prompt), false);
+      assert.ok(call.images.length >= 2);
+    }
+    assert.match(calls[0].prompt, /left/i);
+    assert.match(calls[1].prompt, /right/i);
+    assert.deepEqual(generated.body.generationFailures, []);
+  } finally {
+    await close(server);
+  }
+});
+
+test("out-of-scope single frame generate keeps the historical panel prompt path", async () => {
+  const calls = [];
+  const store = {
+    load: async () => visualState(),
+    beginPanelGeneration: async () => ({
+      ok: true,
+      id: "panel-run",
+      frame: { id: "f1", layout: "single", speakerPanel: 0, sourceRole: "utterance" },
+      panel: { description: "Путин спокойно отвечает" },
+      panelIndex: 0,
+      subject: "Путин",
+      instruction: "",
+      refs: {
+        anchor: { id: "anchor", mime: "image/png", bytes: png },
+        previous: null,
+        performance: null,
+        style: null,
+      },
+    }),
+    finishPanelGeneration: async () => ({ ok: true }),
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 200);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].prompt, /single wide frame|scene-specific storyboard panel/i);
+    assert.equal(/simple uniform non-scenic background/i.test(calls[0].prompt), false);
+  } finally {
+    await close(server);
+  }
+});
+
 test("successful panel assets survive loadVisual fitting and partial frame failures stay visible", async () => {
   const logs = [];
   let panelCalls = 0;

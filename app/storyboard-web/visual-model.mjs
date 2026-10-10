@@ -12,6 +12,115 @@ function clean(value, max = 4000) {
   return String(value ?? "").trim().slice(0, max);
 }
 
+const EXPLICIT_DIRECTION_RE = /screen[- ]?(left|right)|look(?:s|ing)?\s+(?:to\s+the\s+)?(left|right)|gazes?\s+(?:to\s+the\s+)?(left|right)|to[- ]camera|at[- ]camera|toward(?:s)?\s+camera|facing\s+camera|смотрит\s+влево|смотрит\s+вправо|взгляд\s+влево|взгляд\s+вправо|на\s+камеру|в\s+камеру|повернут[ао]?\s+влево|повернут[ао]?\s+вправо/i;
+
+function hasExplicitDirection(...texts) {
+  return texts.some((text) => EXPLICIT_DIRECTION_RE.test(String(text ?? "")));
+}
+
+export function isEligiblePanelReadyDialogueFrame(frame) {
+  if (!frame || frame.layout !== "split2") return false;
+  if (!Array.isArray(frame.panels) || frame.panels.length !== 2) return false;
+  if (!String(frame.dialogue ?? "").trim()) return false;
+  if (!Number.isInteger(frame.speakerPanel) || (frame.speakerPanel !== 0 && frame.speakerPanel !== 1)) {
+    return false;
+  }
+  if (frame.sourceRole === "action") return false;
+  return true;
+}
+
+export function compilePanelReadyIntent({
+  frame,
+  panelIndex,
+  characterName,
+  description,
+  instruction,
+  hasPerformance = false,
+}) {
+  const side = panelIndex === 0 ? "left" : "right";
+  const speaking = Number.isInteger(frame?.speakerPanel) && panelIndex === frame.speakerPanel;
+  const role = speaking ? "speaking" : "listening";
+  const explicitDirection = hasExplicitDirection(description, instruction);
+  const suppressGazeFallback = explicitDirection || hasPerformance === true;
+  const gazeFallback = suppressGazeFallback
+    ? null
+    : (panelIndex === 0 ? "screen-right" : "screen-left");
+  return {
+    characterName: clean(characterName, 160),
+    description: clean(description),
+    instruction: clean(instruction),
+    panelIndex,
+    panelSide: side,
+    speakingRole: role,
+    gazeFallback,
+    hasPerformance: hasPerformance === true,
+  };
+}
+
+export function compilePanelReadyPrompt(intent, {
+  hasPrevious = false,
+  hasPerformance = false,
+  hasStyle = false,
+  identityAlsoStyle = false,
+  previousDropped = false,
+} = {}) {
+  const roles = [];
+  let next = 1;
+  if (intent.characterName) {
+    roles.push(
+      identityAlsoStyle
+        ? `Image ${next} is both the approved identity anchor for ${intent.characterName} and the project style anchor. It controls identity and rendering language only.`
+        : `Image ${next} is the approved identity anchor for ${intent.characterName}. It controls identity.`,
+    );
+    next += 1;
+  }
+  if (hasStyle && !identityAlsoStyle) {
+    roles.push(`Image ${next} is the project style anchor. It controls rendering language only, never identity or staging.`);
+    next += 1;
+  }
+  if (hasPerformance) {
+    roles.push(`Image ${next} is the performance reference. It controls pose, expression, gaze, head angle, composition, and crop, but never identity.`);
+    next += 1;
+  }
+  if (hasPrevious && !previousDropped) {
+    roles.push(`Image ${next} is the previous result for this panel. Use it as the staging draft and apply the requested revision.`);
+  }
+
+  const gazeLine = intent.gazeFallback
+    ? `Gaze fallback for this ordinary conversational panel: subtle ${intent.gazeFallback}. Do not add any other gaze direction.`
+    : hasPerformance
+      ? "Do not add any independent gaze or head-direction instruction; the performance reference owns gaze and head angle."
+      : "Follow any explicit gaze or head direction from the panel description or revision request. Do not add a conflicting inward gaze fallback.";
+
+  const roleLine = intent.speakingRole === "speaking"
+    ? "This is the speaking panel."
+    : "This is a listening or reaction panel.";
+
+  return `Create one independent panel-ready character image${intent.characterName ? ` featuring ${intent.characterName}` : ""}.
+
+Panel side: ${intent.panelSide} panel of a two-character dialogue pair. ${roleLine}
+Panel description: ${intent.description || "No additional description."}
+User revision request: ${intent.instruction || "No additional revision."}
+${gazeLine}
+
+Role of the reference images:
+${roles.length ? roles.join("\n") : "No reference image is supplied. Follow the panel description and rendering language."}
+
+Produce a crop-safe chest-up framing with the face, mouth, expression, gesture, and essential upper body safely inside the image so later placement zoom does not crop them out.
+Use a simple uniform non-scenic background. Do not invent a location, room, landscape, or scenic environment.
+
+Hard prohibitions:
+- exactly one person; no additional people
+- no nested panels and no split layout inside the generated image
+- no borders, captions, speech bubbles, dialogue bubbles, logos, watermarks, or generated text
+- no unwanted contradictory scene objects
+
+Generate only this single character image for later external assembly. Do not draw the partner, gutters, or a complete multi-panel page.
+${STYLE_LANGUAGE}
+
+Target aspect ratio: 5:4.`;
+}
+
 export function resolvePanelSubject(description, characters, aliases = []) {
   const text = String(description ?? "").toLocaleLowerCase("ru");
   const candidates = [];
@@ -189,18 +298,22 @@ export function assemblePanelReferences({
 }) {
   const slots = [];
   if (anchor) slots.push({ role: "anchor", asset: anchor });
-  if (previous) slots.push({ role: "previous", asset: previous });
-  if (performance && slots.length < 3) slots.push({ role: "performance", asset: performance });
   const styleId = style?.id ?? null;
-  const usedIds = new Set(slots.map((slot) => slot.asset?.id).filter(Boolean));
-  const styleDistinct = Boolean(styleId) && !usedIds.has(styleId);
-  if (styleDistinct && slots.length < 3) slots.push({ role: "style", asset: style });
+  const anchorId = anchor?.id ?? null;
+  const styleDistinct = Boolean(styleId) && styleId !== anchorId;
+  if (styleDistinct) slots.push({ role: "style", asset: style });
+  if (performance && slots.length < 3) slots.push({ role: "performance", asset: performance });
+  const previousIncluded = Boolean(previous) && slots.length < 3;
+  if (previousIncluded) slots.push({ role: "previous", asset: previous });
   const roles = new Set(slots.map((slot) => slot.role));
+  const previousDropped = Boolean(previous) && !previousIncluded;
   return {
     images: slots.map((slot) => slot.asset),
     roles,
     hasPrevious: roles.has("previous"),
     hasPerformance: roles.has("performance"),
-    hasStyle: roles.has("style") || (previous?.id != null && previous.id === styleId),
+    hasStyle: roles.has("style") || (Boolean(styleId) && styleId === anchorId),
+    previousDropped,
+    identityAlsoStyle: Boolean(styleId) && styleId === anchorId,
   };
 }
