@@ -31,11 +31,11 @@ An author working in the existing Visual workflow selects one ordinary two-chara
 
 ### User Story 2 - Honest failure and partial-success states during generation (Priority: P1)
 
-When required authority is missing, an input is invalid, a provider attempt fails, an output is technically invalid, or only one panel succeeds, the author sees an honest actionable state. Successful work already on the page remains available; the frame is not presented as fully successful when it is not.
+When required authority is missing, an input is invalid, a provider attempt fails, an output is technically invalid, or only one panel succeeds, the author sees an honest actionable state for that latest generation attempt. Successful work already on the page remains available. The readiness of the currently displayed assembled frame (whether both panel slots still have ready images for review) is distinct from whether the latest generation attempt fully succeeded.
 
-**Why this priority**: Silent success, silent failure, or overstated readiness would make the Happy Path untrustworthy and block Visual review.
+**Why this priority**: Silent success, silent failure, or overstated attempt success would make the Happy Path untrustworthy and block Visual review.
 
-**Independent Test**: Exercise each handled failure once in the browser against the selected frame path and confirm the visible state, preserved ready results, and that no provider work occurs when required authority is missing.
+**Independent Test**: Exercise each handled failure once in the browser against the selected frame path and confirm the visible attempt outcome, preserved ready results, whether the assembled frame remains reviewable, and that no provider work occurs when required authority is missing.
 
 **Acceptance Scenarios**:
 
@@ -43,9 +43,9 @@ When required authority is missing, an input is invalid, a provider attempt fail
 2. **Given** a project without an approved style anchor, **When** the user starts generation for the selected frame, **Then** the system does not perform provider work for that attempt and shows an honest actionable message explaining that an approved project style is required.
 3. **Given** an invalid performance-reference input for a panel, **When** the user attempts panel generation or regeneration that depends on that input, **Then** the system rejects the invalid input with an actionable message and does not replace a previous ready panel image with a failed attempt.
 4. **Given** a provider failure or provider timeout while generating a panel, **When** the attempt ends, **Then** the user sees an honest failure state for the affected panel or frame attempt and any previously ready panel image remains available.
-5. **Given** a technically invalid image output for a panel, **When** the attempt ends, **Then** the panel is not treated as ready, the user sees an actionable failure state, and any previous ready image for that panel remains available.
-6. **Given** one panel succeeds and the other fails in the same frame attempt, **When** the attempt ends, **Then** the successful panel remains visible for review, the failed panel shows an actionable failure state, and the frame is clearly indicated as only partially successful rather than fully ready.
-7. **Given** a panel already has a ready image, **When** a replacement attempt fails, **Then** the previous ready image remains available and the failure is shown honestly.
+5. **Given** a technically invalid image output for a panel, **When** the attempt ends, **Then** that attempt is not accepted as a successful replacement, the user sees an actionable failure state, any previous ready image for that panel remains available and distinguishable from a successful replacement, and if no previous ready image exists the panel slot is not ready.
+6. **Given** one panel succeeds and the other fails in the same two-panel frame attempt, **When** the attempt ends, **Then** the latest attempt is reported honestly as partially successful, the newly successful panel remains available, the failed panel retains its previous ready image when one exists, the user can distinguish that retained previous image from a newly successful replacement and can see the failure, the system does not claim that the latest attempt fully succeeded, and the system does not demote, hide, or invalidate an otherwise ready assembled frame merely because the replacement attempt partially failed; if no previous ready image exists for the failed panel, the assembled frame is not fully ready.
+7. **Given** a panel already has a ready image, **When** a replacement attempt fails, **Then** the previous ready image remains available, the failure is shown honestly, and the retained previous image remains distinguishable from a successful replacement.
 
 ---
 
@@ -71,9 +71,9 @@ The author continues to use the existing uninterrupted frame and panel generatio
 - Invalid performance-reference input: rejected with an actionable message; previous ready panel preserved.
 - Provider failure: honest failure state; previous ready panel preserved when present.
 - Provider timeout: honest failure state; previous ready panel preserved when present.
-- Technically invalid image output: panel not ready; actionable failure; previous ready panel preserved when present.
-- Partial frame generation (one panel succeeds, one fails): successful panel kept; frame marked only partially successful.
-- Failure while replacing an already-ready panel image: previous ready image remains available.
+- Technically invalid image output: attempt not accepted as a successful replacement; actionable failure; previous ready panel preserved and distinguishable when present; if none exists, that panel slot is not ready.
+- Partial frame generation (one panel succeeds, one fails): latest attempt reported as partially successful; newly successful panel kept; failed panel retains previous ready image when one exists; retained previous image distinguishable from a newly successful replacement; failure visible; assembled frame may remain ready for review when both panel slots still contain ready images; attempt must not be claimed fully successful; assembled frame must not be demoted merely because the replacement attempt partially failed; if the failed panel has no previous ready image, the frame is not fully ready.
+- Failure while replacing an already-ready panel image: previous ready image remains available and distinguishable; failure remains visible.
 - Generated panel must not introduce additional people, nested comic panels, split-screen composition inside the panel image, borders, captions, speech bubbles, logos, watermarks, generated text, or unwanted objects that contradict panel intent.
 - Human visual review remains required; the system must not auto-approve artistic quality.
 
@@ -108,7 +108,7 @@ The author continues to use the existing uninterrupted frame and panel generatio
 #### Existing behavior to preserve
 
 - **FR-019**: The current uninterrupted frame and panel generation flow MUST remain available for the selected-frame Happy Path without requiring reload, cancellation, or overlapping starts.
-- **FR-020**: Existing panel-generation history and status visibility MUST remain available so the user can understand prior attempts for a panel.
+- **FR-020**: Existing recorded panel-generation attempts MUST NOT be deleted or corrupted, and the currently exposed latest/current panel status MUST remain available. This slice MUST NOT require a new user-facing attempt-history browser, candidate gallery, provenance UI, or diagnostic export of prior attempts.
 - **FR-021**: Existing panel-scoped regeneration MUST remain available when one panel needs revision.
 - **FR-022**: Optional panel-scoped performance input MUST remain available and scoped to the panel being generated or regenerated.
 - **FR-023**: Existing placement and zoom controls MUST remain available after a panel is ready.
@@ -125,9 +125,9 @@ The author continues to use the existing uninterrupted frame and panel generatio
 - **FR-031**: If a performance-reference input is invalid, the system MUST reject it with an honest actionable user state and MUST NOT replace a previous ready panel image.
 - **FR-032**: If the provider fails, the system MUST show an honest actionable failure state for the affected attempt and MUST preserve any previous ready panel image.
 - **FR-033**: If the provider times out, the system MUST show an honest actionable failure state for the affected attempt and MUST preserve any previous ready panel image.
-- **FR-034**: If image output is technically invalid, the system MUST NOT mark that panel ready, MUST show an honest actionable failure state, and MUST preserve any previous ready panel image.
-- **FR-035**: If one panel succeeds and the other fails in the same frame attempt, the system MUST preserve the successful panel, clearly indicate that the frame attempt was only partially successful, and provide an actionable failure state for the failed panel.
-- **FR-036**: Every handled failure in this slice MUST result in an honest, actionable user state rather than a silent or overstated success.
+- **FR-034**: If image output is technically invalid, the system MUST NOT accept that attempt as a successful replacement, MUST show an honest actionable failure state, MUST preserve any previous ready panel image and keep it distinguishable from a successful replacement, and MUST leave the panel slot not ready when no previous ready image exists.
+- **FR-035**: If one panel succeeds and the other fails in the same two-panel frame attempt, the system MUST report the latest attempt honestly as partially successful, MUST keep the newly successful panel available, MUST retain the failed panel's previous ready image when one exists, MUST let the user distinguish that retained previous image from a newly successful replacement while seeing the failure, MUST NOT claim that the latest attempt fully succeeded, and MUST NOT demote, hide, or invalidate an otherwise ready assembled frame merely because the replacement attempt partially failed. If the failed panel has no previous ready image, the assembled frame MUST NOT be fully ready.
+- **FR-036**: Every handled failure in this slice MUST result in an honest, actionable user state rather than a silent or overstated attempt success.
 
 #### Explicitly out of scope
 
@@ -141,8 +141,8 @@ The author continues to use the existing uninterrupted frame and panel generatio
 - **Approved project style anchor**: The human-approved project rendering-style authority shared by character images in the project.
 - **Panel-ready character image**: One generated image for one panel containing only the assigned character on a simple uniform background, suitable for direct assembly by the existing FrameRenderer.
 - **Panel-scoped performance reference**: An optional user-supplied reference that guides performance for one linked panel only and does not replace identity or project style authority.
-- **Assembled reviewable split frame**: The FrameRenderer presentation of both panel images plus existing dialogue geometry for human visual review.
-- **Generation attempt outcome**: The user-visible result of a frame or panel attempt: busy, fully successful, partially successful, blocked before provider work, or failed, including preservation of any previous ready panel image.
+- **Assembled reviewable split frame**: The FrameRenderer presentation of the current ready panel images plus existing dialogue geometry for human visual review. The frame is ready for review when both panel slots contain ready images; that current artifact readiness is distinct from whether the latest generation attempt fully succeeded.
+- **Generation attempt outcome**: The user-visible result of the latest frame or panel generation attempt: busy, fully successful, partially successful, blocked before provider work, or failed. A partial or failed attempt outcome must remain honest even when previous ready panel images keep the assembled frame reviewable; preserved previous ready images must remain distinguishable from newly successful replacements.
 
 ## Success Criteria *(mandatory)*
 
@@ -155,17 +155,18 @@ The author continues to use the existing uninterrupted frame and panel generatio
 - **SC-005**: Existing panel-scoped regeneration remains available for one panel while the other ready panel stays visible.
 - **SC-006**: Missing approved identity or missing approved project style blocks provider work and shows an actionable state in 100% of exercised blocked attempts.
 - **SC-007**: Provider failure, provider timeout, technically invalid output, invalid performance-reference input, partial frame success, and failed replacement of a ready panel each produce an honest actionable user state, and any previous ready panel image remains available in 100% of exercised cases.
-- **SC-008**: A partially successful frame attempt is never presented as a fully ready assembled frame.
+- **SC-008**: A partially successful generation attempt is never reported as fully successful. If previous ready images keep the assembled frame reviewable, the frame may remain ready, but the interface distinguishes the retained previous result from the failed replacement attempt.
 - **SC-009**: Artistic acceptance remains an explicit human Visual review step; no automatic artistic approval occurs for the generated pair.
 - **SC-010**: Source wording and speaker ownership remain intact through the Happy Path and local placement changes.
 
 ## Assumptions
 
-- The starting implementation baseline already provides the Visual workflow entry points for frame generation, panel-scoped regeneration, optional performance input, zoom/placement, `panel_generation` history/status, sanitized lifecycle logging, and FrameRenderer assembly; this feature improves panel-ready image quality and reliability inside that existing path rather than inventing a parallel workflow.
+- The starting implementation baseline already provides the Visual workflow entry points for frame generation, panel-scoped regeneration, optional performance input, zoom/placement, recorded panel-generation attempts with currently exposed latest/current panel status, sanitized lifecycle logging, and FrameRenderer assembly; this feature improves panel-ready image quality and reliability inside that existing path rather than inventing a parallel workflow or a user-facing attempt-history browser.
 - "Ordinary two-character split-dialogue frame" means a `split2` dialogue frame with exactly two character panels and no unusual layout type.
 - "Simple uniform background" means a plain non-scenic fill suitable for panel assembly, not a shared room, location plate, or layered scene.
 - "Technically invalid image output" means the result cannot be accepted as a displayable panel image for assembly, independent of artistic judgement.
-- Truthful busy, success, partial-success, and failure states may reuse or refine existing Visual workflow messaging patterns as long as the states remain honest and actionable.
+- Current assembled-frame readiness means both panel slots presently contain ready images for review. Latest generation-attempt outcome means whether that attempt fully succeeded, partially succeeded, failed, or was blocked. A retained previous ready image may keep a frame reviewable after a partial or failed replacement attempt without making that attempt fully successful.
+- Truthful busy, success, partial-success, and failure states may reuse or refine existing Visual workflow messaging patterns as long as the states remain honest and actionable and distinguish attempt outcome from current assembled-frame readiness.
 - Human visual review uses the assembled frame geometry; portrait-only inspection outside the frame is insufficient for acceptance of gaze, pair composition, and crop safety.
 - Feature 006 remains historical evidence and a possible future code donor only; none of its hybrid composition, recovery, polling, diagnostic, or new persistence requirements are accepted here.
 - Open implementation alternatives for prompting, request packaging, and internal reuse of existing Visual machinery remain open for Plan; this specification defines observable product behavior only.

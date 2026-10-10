@@ -42,7 +42,8 @@
 
 ## Notes
 
-- Validation performed during `/speckit.specify` on 2026-10-10.
-- Spec describes observable Visual-workflow behavior and preserves existing FrameRenderer, panel regeneration, placement/zoom, and panel-generation history as protected current behavior without prescribing tables, endpoints, workers, prompts, or reference-array packaging.
+- Validation performed during `/speckit.specify` on 2026-10-10; revalidated after the 2026-10-10 corrective pass on partial-attempt versus assembled-frame readiness and recorded-attempt preservation.
+- Spec describes observable Visual-workflow behavior and preserves existing FrameRenderer, panel regeneration, placement/zoom, recorded panel-generation attempts, and currently exposed latest/current panel status as protected current behavior without prescribing tables, endpoints, workers, prompts, reference-array packaging, or a new user-facing attempt-history browser.
+- Latest generation-attempt outcome and current assembled-frame readiness are specified as distinct concepts; a retained previous ready image may keep a frame reviewable after a partial replacement failure without reporting that attempt as fully successful.
 - No `[NEEDS CLARIFICATION]` markers were required; remaining Plan-time choices are recorded as open implementation alternatives in Assumptions.
 - Checklist items are marked complete for requirements quality only; they do not indicate implementation completion.
