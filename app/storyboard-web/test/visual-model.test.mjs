@@ -218,6 +218,49 @@ test("panel-ready gaze fallback applies only when no explicit direction or perfo
   assert.match(withPerformance, /pose|expression|gaze|head/i);
 });
 
+test("optional performance stays panel-scoped and does not displace identity or style", () => {
+  const left = assemblePanelReferences({
+    anchor: { id: "left-anchor" },
+    previous: { id: "left-prev" },
+    performance: { id: "left-perf" },
+    style: { id: "style" },
+    panelReady: true,
+  });
+  const right = assemblePanelReferences({
+    anchor: { id: "right-anchor" },
+    previous: { id: "right-prev" },
+    performance: null,
+    style: { id: "style" },
+    panelReady: true,
+  });
+
+  assert.deepEqual(left.images.map((image) => image.id), ["left-anchor", "style", "left-perf"]);
+  assert.equal(left.previousDropped, true);
+  assert.ok(left.roles.has("anchor"));
+  assert.ok(left.roles.has("style"));
+  assert.ok(left.roles.has("performance"));
+  assert.equal(left.roles.has("previous"), false);
+
+  assert.deepEqual(right.images.map((image) => image.id), ["right-anchor", "style", "right-prev"]);
+  assert.equal(right.hasPerformance, false);
+  assert.equal(right.roles.has("performance"), false);
+  assert.equal(right.images.some((image) => image.id === "left-perf"), false);
+
+  const leftPrompt = panelReadyPrompt({
+    panelIndex: 0,
+    characterName: "Путин",
+    hasPerformance: true,
+    hasStyle: true,
+    hasPrevious: false,
+    previousDropped: true,
+  });
+  assert.match(leftPrompt, /Image 1 is the approved identity anchor/);
+  assert.match(leftPrompt, /Image 2 is the project style anchor/);
+  assert.match(leftPrompt, /Image 3 is the performance reference/);
+  assert.equal(/Image 1 is the performance reference/.test(leftPrompt), false);
+  assert.equal(/Image 2 is the performance reference/.test(leftPrompt), false);
+});
+
 test("panel reference assembly prefers identity style performance and drops previous first", () => {
   const full = assemblePanelReferences({
     anchor: { id: "anchor" },

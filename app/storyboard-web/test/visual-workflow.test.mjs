@@ -66,7 +66,7 @@ function visualState() {
 
 test("visual endpoints use the image provider for anchors and panels but never for zoom", async () => {
   const calls = [];
-  const counters = { identity: 0, placement: 0, finishAnchor: 0, finishPanel: 0 };
+  const counters = { identity: 0, placement: 0, finishAnchor: 0, finishPanel: 0, beginPanel: 0 };
   const store = {
     load: async () => visualState(),
     saveIdentity: async (input) => {
@@ -92,21 +92,24 @@ test("visual endpoints use the image provider for anchors and panels but never f
       return { ok: true };
     },
     approveAnchor: async () => ({ ok: true }),
-    beginPanelGeneration: async ({ performanceImage }) => ({
-      ok: true,
-      id: "panel-run",
-      frame: { id: "f1", layout: "single", speakerPanel: 0 },
-      panel: { description: "Путин спокойно отвечает" },
-      panelIndex: 0,
-      subject: "Путин",
-      instruction: "closer",
-      refs: {
-        anchor: { mime: "image/png", bytes: png },
-        previous: null,
-        performance: performanceImage ? { mime: "image/png", bytes: png } : null,
-        style: null,
-      },
-    }),
+    beginPanelGeneration: async ({ performanceImage }) => {
+      counters.beginPanel += 1;
+      return {
+        ok: true,
+        id: "panel-run",
+        frame: { id: "f1", layout: "single", speakerPanel: 0 },
+        panel: { description: "Путин спокойно отвечает" },
+        panelIndex: 0,
+        subject: "Путин",
+        instruction: "closer",
+        refs: {
+          anchor: { mime: "image/png", bytes: png },
+          previous: null,
+          performance: performanceImage ? { mime: "image/png", bytes: png } : null,
+          style: null,
+        },
+      };
+    },
     finishPanelGeneration: async ({ result }) => {
       counters.finishPanel += 1;
       assert.equal(result.ok, true);
@@ -158,6 +161,7 @@ test("visual endpoints use the image provider for anchors and panels but never f
     assert.equal(calls[1].aspectRatio, "21:9");
     assert.equal(calls[1].images.length, 2);
     assert.equal(counters.finishPanel, 1);
+    assert.equal(counters.beginPanel, 1);
 
     const zoom = await request(port, {
       method: "PATCH",
@@ -167,6 +171,8 @@ test("visual endpoints use the image provider for anchors and panels but never f
     assert.equal(zoom.status, 200);
     assert.equal(counters.placement, 1);
     assert.equal(calls.length, 2, "zoom must not call the image provider");
+    assert.equal(counters.beginPanel, 1, "placement must not begin a generation attempt");
+    assert.equal(counters.finishPanel, 1, "placement must not finish a generation attempt");
 
     const asset = await request(port, { path: "/api/visual/assets/00000000-0000-4000-8000-000000000111" });
     assert.equal(asset.status, 200);
@@ -577,6 +583,181 @@ function eligibleSplitState(overrides = {}) {
     }],
   };
 }
+
+test("panel-scoped regeneration requests only the targeted panel and keeps the other ready", async () => {
+  const calls = [];
+  const begun = [];
+  const state = eligibleSplitState({
+    leftAssetId: "left-ready",
+    rightAssetId: "right-ready",
+  });
+  const store = {
+    load: async () => state,
+    beginPanelGeneration: async ({ panelIndex, instruction }) => {
+      begun.push({ panelIndex, instruction });
+      return {
+        ok: true,
+        id: `gen-${panelIndex}`,
+        storyboardVersionId: "version-1",
+        frame: state.frames[0],
+        panel: state.frames[0].panels[panelIndex],
+        panelIndex,
+        subject: state.frames[0].panels[panelIndex].subject,
+        instruction: instruction || "",
+        refs: {
+          anchor: { id: `anchor-${panelIndex}`, mime: "image/png", bytes: png },
+          previous: { id: state.frames[0].panels[panelIndex].assetId, mime: "image/png", bytes: png },
+          performance: null,
+          style: { id: "style", mime: "image/png", bytes: png },
+        },
+      };
+    },
+    finishPanelGeneration: async ({ id, result }) => {
+      assert.equal(result.ok, true);
+      assert.equal(id, "gen-1");
+      state.frames[0].panels[1].assetId = "right-new";
+      state.frames[0].panels[1].generationStatus = "ready";
+      return { ok: true, generationId: id, assetId: "right-new" };
+    },
+  };
+  const started = Date.now();
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/panels/1/generate",
+      body: { instruction: "only right panel" },
+    });
+    assert.equal(generated.status, 200);
+    assert.ok(Date.now() - started < 2000, "panel regenerate remains synchronous");
+    assert.deepEqual(begun, [{ panelIndex: 1, instruction: "only right panel" }]);
+    assert.equal(calls.length, 1);
+    assert.equal(generated.body.frames[0].panels[0].assetId, "left-ready");
+    assert.equal(generated.body.frames[0].panels[1].assetId, "right-new");
+  } finally {
+    await close(server);
+  }
+});
+
+test("api visual exposes latest failed status while retaining the current ready asset", async () => {
+  const state = eligibleSplitState({
+    leftAssetId: "left-ready",
+    rightAssetId: "right-prev",
+  });
+  state.frames[0].panels[1].generationStatus = "failed";
+  state.frames[0].panels[1].generationError = "timeout";
+  const store = {
+    load: async () => state,
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async () => {
+      throw new Error("provider must not run for status load");
+    },
+  });
+  const port = await listen(server);
+  try {
+    const loaded = await request(port, { path: "/api/visual" });
+    assert.equal(loaded.status, 200);
+    assert.equal(loaded.body.frames[0].visualReady, true);
+    assert.equal(loaded.body.frames[0].panels[1].assetId, "right-prev");
+    assert.equal(loaded.body.frames[0].panels[1].generationStatus, "failed");
+    assert.equal(loaded.body.frames[0].panels[1].generationError, "timeout");
+    assert.equal(loaded.body.frames[0].panels[0].assetId, "left-ready");
+    assert.equal(loaded.body.frames[0].panels[0].generationStatus, "ready");
+  } finally {
+    await close(server);
+  }
+});
+
+test("visual panel generation logs stay free of secrets prompts and image bytes", async () => {
+  const logs = [];
+  const state = {
+    ...visualState(),
+    frames: [{
+      id: "f1",
+      layout: "single",
+      dialogue: "Секретная реплика.",
+      speakerPanel: 0,
+      panels: [{
+        description: "Путин спокойно отвечает",
+        subject: "Путин",
+        zoom: 1,
+        position: "50% 30%",
+        align: "50% 30%",
+      }],
+    }],
+  };
+  const store = {
+    load: async () => state,
+    beginPanelGeneration: async () => ({
+      ok: true,
+      id: "panel-run",
+      storyboardVersionId: "version-1",
+      frame: state.frames[0],
+      panel: state.frames[0].panels[0],
+      panelIndex: 0,
+      subject: "Путин",
+      instruction: "secret-revision-instruction",
+      refs: {
+        anchor: { id: "anchor", mime: "image/png", bytes: png },
+        previous: null,
+        performance: null,
+        style: null,
+      },
+    }),
+    finishPanelGeneration: async () => ({ ok: true, generationId: "panel-run", assetId: "ready" }),
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    logger: { log: (line) => logs.push(line) },
+    env: {
+      BASE_URL: "https://provider.example.test",
+      CONTEST_API_TOKEN: "test-token",
+      CONTEST_MODEL: "test-model",
+    },
+    imageGenerator: async () => ({ ok: true, image: { bytes: png }, metadata: {} }),
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/panels/0/generate",
+      body: { instruction: "secret-revision-instruction", performanceImageDataUrl: dataUrl },
+    });
+    assert.equal(generated.status, 200);
+    const joined = logs.join("\n");
+    assert.match(joined, /visual-panel-start/);
+    assert.match(joined, /visual-panel-provider/);
+    assert.match(joined, /visual-panel-storage/);
+    for (const secret of [
+      "test-token",
+      "provider.example.test",
+      "secret-revision-instruction",
+      "Секретная реплика",
+      dataUrl,
+      "BASE_URL",
+      "Bearer",
+    ]) {
+      assert.equal(joined.includes(secret), false, secret);
+    }
+  } finally {
+    await close(server);
+  }
+});
 
 test("eligible frame preflight blocks missing style with zero provider calls", async () => {
   const calls = [];
