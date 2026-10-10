@@ -341,7 +341,9 @@ test("places the base-anchor note next to the storyboard", () => {
   assert.equal(html.indexOf('id="anchor-note"') < html.indexOf('id="storyboard"'), true);
   assert.match(appJs, /from "\/visual-anchors\.mjs"/);
   assert.match(appJs, /presentVisualFrame\(frame\)/);
-  assert.match(appJs, /mode: pictured \? "visual" : "structure"/);
+  assert.match(appJs, /presentFrameForMount/);
+  assert.match(appJs, /hasGeneratedVisualState/);
+  assert.match(appJs, /source: "demo-anchor"/);
 });
 
 test("the last stored frame still opens, with structure fallback for an unknown panel", async () => {
@@ -440,8 +442,9 @@ test("the last stored frame still opens, with structure fallback for an unknown 
     ]);
     assert.equal(byClass(cards[0], "dialogue-text")[0].textContent, putinLine);
     assert.equal(cards[0].dataset.mode ?? byClass(cards[0], "frame-canvas")[0].dataset.mode, "structure");
+    assert.equal(cards[0].dataset.ready, "false");
     assert.equal(byClass(cards[1], "panel-asset")[0].src, ANCHOR_ASSETS.peskov);
-    assert.equal(cards[1].children.some((node) => node.textContent === actionLine), true);
+    assert.equal(byClass(cards[1], "outside-frame")[0].textContent, actionLine);
     assert.equal(byClass(cards[1], "dialogue-bar").length, 0);
     const lastImages = byClass(cards[2], "panel-asset");
     assert.deepEqual(lastImages.map((image) => image.src), [ANCHOR_ASSETS.durov, ANCHOR_ASSETS.peskov]);
@@ -457,7 +460,9 @@ test("the last stored frame still opens, with structure fallback for an unknown 
     const detailCells = byClass(document.querySelector("#detail-frame"), "dialogue-cell");
     assert.equal(byClass(detailCells[1], "dialogue-text")[0].textContent, durovLine);
     assert.equal(byClass(document.querySelector("#detail-frame"), "frame-canvas")[0].style.width, "1920px");
-    assert.deepEqual(requests, ["/api/project", "/api/project"]);
+    assert.equal(requests.every((path) => path === "/api/project" || path === "/api/visual"), true);
+    assert.equal(requests.some((path) => path.includes("/generate")), false);
+    assert.equal(requests.filter((path) => path === "/api/project").length >= 1, true);
   } finally {
     globalThis.fetch = previousFetch;
     await close(server);

@@ -36,16 +36,61 @@
     <p id="notice" class="notice" hidden></p>
     <ul id="failure-codes" hidden></ul>
     <p id="failure-kind" hidden></p>
+    <section id="structure-tools" class="workspace-panel" hidden aria-labelledby="structure-tools-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Текстовая раскадровка</p>
+          <h2 id="structure-tools-title">Что изменить в кадрах?</h2>
+        </div>
+        <button id="undo-structure" type="button" class="secondary" hidden>Вернуть обратно</button>
+      </div>
+      <p class="helper">Укажите номера кадров обычным текстом. Реплики и описания изображений пока остаются без прямого редактирования.</p>
+      <form id="structure-edit-form" class="instruction-form">
+        <textarea id="structure-instruction" placeholder="Например: сделай кадры 8 и 9 split screen, сохрани реплики и добавь слушающего персонажа"></textarea>
+        <button type="submit">Применить к раскадровке</button>
+      </form>
+      <p id="structure-result" class="result-line" hidden></p>
+    </section>
+    <section id="characters-workspace" class="workspace-panel" hidden aria-labelledby="characters-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Персонажи</p>
+          <h2 id="characters-title">Создайте базовые образы</h2>
+        </div>
+      </div>
+      <p class="helper">Для каждого персонажа выберите реальную фотографию в формате JPEG, PNG или WebP. HEIC пока не поддерживается. Комментарий и последующие правки можно писать своими словами.</p>
+      <div id="character-cards" class="character-cards"></div>
+    </section>
+    <section id="visual-heading" class="visual-heading" hidden>
+      <div>
+        <p class="eyebrow">Визуальная раскадровка</p>
+        <h2>Создавайте кадры по одному</h2>
+      </div>
+      <p id="visual-progress" class="progress-copy"></p>
+    </section>
     <button id="open-last" type="button" hidden>Открыть последний кадр</button>
     <p id="anchor-note" class="anchor-note">Демонстрация с базовыми образами персонажей; эмоции и позы пока не меняются между кадрами.</p>
     <section id="storyboard" class="grid" aria-label="Кадры раскадровки"></section>
+    <section id="visual-approval" class="workspace-panel approval-panel" hidden>
+      <div>
+        <p class="eyebrow">Финальная проверка</p>
+        <h2>Визуальная раскадровка готова</h2>
+        <p id="approval-copy" class="helper">Просмотрите все кадры и утвердите текущую версию.</p>
+      </div>
+      <button id="approve-visual" type="button">Утвердить визуальную раскадровку</button>
+    </section>
+    <p id="ready-for-video" class="ready-for-video" hidden>Визуальная раскадровка утверждена и готова к созданию видео.</p>
   </main>
   <dialog id="detail">
     <div class="detail-layout">
       <div id="detail-frame" class="frame-host"></div>
       <p id="detail-outside" class="outside-frame"></p>
+      <div id="detail-panel-controls" class="panel-controls"></div>
     </div>
-    <button id="close-detail" type="button">Закрыть</button>
+    <div class="dialog-actions">
+      <button id="next-frame" type="button" hidden>Продолжить к следующему кадру</button>
+      <button id="close-detail" type="button" class="secondary">Закрыть</button>
+    </div>
   </dialog>
   <script type="module" src="/app.js"></script>
 </body>
