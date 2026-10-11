@@ -54,6 +54,9 @@ const UNSUPPORTED_STEMS = [
   "в стиле", "фотореализм",
   // invisible narrative / temporal
   "потому что", "вспомина",
+  // observed temporal action/change (not bounded visible geometry)
+  "резко наклоняется",
+  "внезапно оживляется",
   // support-dependent / scenario staging
   "сидит", "сидя",
   "стоит", "стоя",

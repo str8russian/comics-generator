@@ -223,6 +223,32 @@ test("supported description using only allowed visible geometry/expression passe
   assert.equal(result.ok, true, JSON.stringify(result));
 });
 
+const observedTemporalAction = [
+  ["резко наклоняется", "Аня, поясной план, резко наклоняется, прямая осанка торса, рука в кадре, голова прямо, взгляд вперёд, спокойное лицо, сплошной матовый фон."],
+  ["резко наклоняется вперёд", "Аня, поясной план, резко наклоняется вперёд, прямая осанка торса, рука в кадре, голова прямо, взгляд вперёд, спокойное лицо, сплошной матовый фон."],
+  ["внезапно оживляется", "Аня, поясной план, внезапно оживляется, прямая осанка торса, рука в кадре, голова прямо, взгляд вперёд, спокойное лицо, сплошной матовый фон."],
+];
+
+for (const [label, description] of observedTemporalAction) {
+  test(`observed temporal action prose rejected: ${label}`, () => {
+    const result = assessPanelIntent([singleFrame(description)], cast);
+    assert.equal(result.ok, false, label);
+    assert.equal(codes(result).includes("unsupported-panel-intent"), true, label);
+  });
+}
+
+test("visible forward lean replacement remains accepted", () => {
+  const description = "Аня, поясной план, корпус наклонён вперёд, рука в кадре, голова прямо, взгляд вперёд, спокойное лицо, сплошной матовый фон.";
+  const result = assessPanelIntent([singleFrame(description)], cast);
+  assert.equal(result.ok, true, JSON.stringify(result));
+});
+
+test("visible expression without внезапно оживляется remains accepted", () => {
+  const description = "Аня, поясной план, прямая осанка торса, рука в кадре, голова прямо, взгляд вперёд, самоуверенное выражение лица, сплошной матовый фон.";
+  const result = assessPanelIntent([singleFrame(description)], cast);
+  assert.equal(result.ok, true, JSON.stringify(result));
+});
+
 test("buildChecked blocks unsupported Stage candidates via shared panel-intent gate", () => {
   const result = buildChecked(
     "Аня: Привет.",

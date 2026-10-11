@@ -987,6 +987,357 @@ test("visual panel generation logs stay free of secrets prompts and image bytes"
   }
 });
 
+function logHas(joined, key, value) {
+  return joined.includes(`${key}=${value}`);
+}
+
+function assertNoProtectedDiagnosticMaterial(joined, extras = []) {
+  for (const secret of [
+    "test-token",
+    "provider.example.test",
+    "BASE_URL",
+    "Bearer",
+    dataUrl,
+    "Panel description:",
+    "User revision request:",
+    ...extras,
+  ]) {
+    assert.equal(joined.includes(secret), false, secret);
+  }
+}
+
+test("eligible panel diagnostics recover canonical intent authority ids and terminal status", async () => {
+  const logs = [];
+  const calls = [];
+  const description = [
+    "Аня; поясной план; выпрямленный корпус; правая рука поднята в кадре;",
+    "голова прямо; широко раскрытые глаза; поднятые брови; напряжённые плечи;",
+    "растерянное выражение лица; взгляд прямо; однотонный матовый фон.",
+  ].join(" ");
+  const instruction = "secret-revision-instruction-diag";
+  const frame = {
+    id: "f1",
+    layout: "split2",
+    dialogue: "Секретная реплика для диагностики.",
+    speakerPanel: 0,
+    sourceRole: "utterance",
+    panels: [
+      { description, subject: "Аня" },
+      { description: "Борис; по грудь; выпрямленный корпус; руки в кадре; голова прямо; взгляд прямо; спокойное выражение лица; сплошной матовый фон.", subject: "Борис" },
+    ],
+  };
+  const store = {
+    load: async () => ({
+      ...visualState(),
+      styleSeedAssetId: "style-auth-1",
+      characters: [
+        { name: "Аня", approvedAnchorId: "identity-auth-anya" },
+        { name: "Борис", approvedAnchorId: "identity-auth-boris" },
+      ],
+      frames: [{
+        ...frame,
+        visualReady: false,
+        panels: frame.panels.map((panel) => ({
+          ...panel,
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+        })),
+      }],
+    }),
+    beginPanelGeneration: async ({ panelIndex }) => ({
+      ok: true,
+      id: "gen-diag-ok",
+      storyboardVersionId: "version-1",
+      frame,
+      panel: frame.panels[panelIndex],
+      panelIndex,
+      subject: frame.panels[panelIndex].subject,
+      instruction: "",
+      refs: {
+        anchor: { id: "identity-auth-anya", mime: "image/png", bytes: Buffer.from("anchor-anya") },
+        previous: null,
+        performance: null,
+        style: { id: "style-auth-1", mime: "image/png", bytes: Buffer.from("style-bytes") },
+      },
+    }),
+    finishPanelGeneration: async () => ({ ok: true, generationId: "gen-diag-ok", assetId: "ready-diag" }),
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    logger: { log: (line) => logs.push(line) },
+    env: {
+      BASE_URL: "https://provider.example.test",
+      CONTEST_API_TOKEN: "test-token",
+      CONTEST_MODEL: "test-model",
+    },
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/panels/0/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 200);
+    assert.equal(calls.length, 1);
+    const joined = logs.join("\n");
+    assert.match(joined, /request=\d+/);
+    assert.equal(logHas(joined, "frameId", "f1"), true);
+    assert.equal(logHas(joined, "panelIndex", "0"), true);
+    assert.equal(logHas(joined, "compilerVersion", "constrained-panel-intent/v1"), true);
+    assert.equal(logHas(joined, "intentFraming", "waist-up"), true);
+    assert.equal(joined.includes("intentUpperBody=upright torso with tense shoulders"), true);
+    assert.equal(joined.includes("intentGesture=right hand raised in crop"), true);
+    assert.equal(joined.includes("intentHeadPose=near-frontal head"), true);
+    assert.equal(logHas(joined, "intentGaze", "to-camera"), true);
+    assert.equal(logHas(joined, "intentExpression", "confused"), true);
+    assert.equal(logHas(joined, "intentEyes", "wide-open"), true);
+    assert.equal(logHas(joined, "intentEyebrows", "raised"), true);
+    assert.equal(logHas(joined, "intentBackground", "solid-matte"), true);
+    assert.equal(logHas(joined, "identityAuthorityId", "identity-auth-anya"), true);
+    assert.equal(logHas(joined, "styleAuthorityId", "style-auth-1"), true);
+    assert.match(joined, /event=visual-panel-storage[^\n]*status=ok|event=visual-panel-provider[^\n]*status=ok/);
+    assert.equal(joined.includes("characterName="), false);
+    assert.equal(joined.includes(description), false);
+    assert.equal(joined.includes(instruction), false);
+    assertNoProtectedDiagnosticMaterial(joined, [
+      description,
+      "Секретная реплика для диагностики",
+      instruction,
+      "растерянное выражение",
+      "выпрямленный корпус",
+    ]);
+  } finally {
+    await close(server);
+  }
+});
+
+test("eligible panel diagnostics represent closed-eye gaze as none", async () => {
+  const logs = [];
+  const description = "Аня; крупный план; выпрямленный корпус; руки в кадре; голова склонена; глаза закрыты; расслабленное выражение лица; однотонный матовый фон.";
+  const frame = {
+    id: "f1",
+    layout: "split2",
+    dialogue: "Привет.",
+    speakerPanel: 0,
+    sourceRole: "utterance",
+    panels: [
+      { description, subject: "Аня" },
+      { description: "Борис; по грудь; выпрямленный корпус; руки в кадре; голова прямо; взгляд прямо; спокойное выражение лица; сплошной матовый фон.", subject: "Борис" },
+    ],
+  };
+  const store = {
+    load: async () => ({
+      ...visualState(),
+      styleSeedAssetId: "style-1",
+      characters: [
+        { name: "Аня", approvedAnchorId: "a0" },
+        { name: "Борис", approvedAnchorId: "a1" },
+      ],
+      frames: [{
+        ...frame,
+        panels: frame.panels.map((panel) => ({
+          ...panel,
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+        })),
+      }],
+    }),
+    beginPanelGeneration: async ({ panelIndex }) => ({
+      ok: true,
+      id: "gen-closed",
+      storyboardVersionId: "version-1",
+      frame,
+      panel: frame.panels[panelIndex],
+      panelIndex,
+      subject: frame.panels[panelIndex].subject,
+      instruction: "",
+      refs: {
+        anchor: { id: "a0", mime: "image/png", bytes: Buffer.from("a0") },
+        previous: null,
+        performance: null,
+        style: { id: "style-1", mime: "image/png", bytes: Buffer.from("style") },
+      },
+    }),
+    finishPanelGeneration: async () => ({ ok: true, generationId: "gen-closed", assetId: "ready" }),
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    logger: { log: (line) => logs.push(line) },
+    imageGenerator: async () => ({ ok: true, image: { bytes: png }, metadata: {} }),
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/panels/0/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 200);
+    const joined = logs.join("\n");
+    assert.equal(logHas(joined, "intentGaze", "none"), true);
+    assert.equal(logHas(joined, "intentEyes", "closed"), true);
+    assert.equal(logHas(joined, "intentExpression", "relaxed"), true);
+    assert.equal(joined.includes(description), false);
+    assert.equal(joined.includes("глаза закрыты"), false);
+  } finally {
+    await close(server);
+  }
+});
+
+test("eligible panel provider failure diagnostics retain intent authority ids and failed status", async () => {
+  const logs = [];
+  const calls = [];
+  const description = [
+    "Аня; поясной план; выпрямленный корпус; правая рука поднята в кадре;",
+    "голова прямо; широко раскрытые глаза; поднятые брови; напряжённые плечи;",
+    "растерянное выражение лица; взгляд прямо; однотонный матовый фон.",
+  ].join(" ");
+  const frame = {
+    id: "f1",
+    layout: "split2",
+    dialogue: "Привет.",
+    speakerPanel: 0,
+    sourceRole: "utterance",
+    panels: [
+      { description, subject: "Аня" },
+      { description: "Борис; по грудь; выпрямленный корпус; руки в кадре; голова прямо; взгляд прямо; спокойное выражение лица; сплошной матовый фон.", subject: "Борис" },
+    ],
+  };
+  const store = {
+    load: async () => ({
+      ...visualState(),
+      styleSeedAssetId: "style-auth-1",
+      characters: [
+        { name: "Аня", approvedAnchorId: "identity-auth-anya" },
+        { name: "Борис", approvedAnchorId: "identity-auth-boris" },
+      ],
+      frames: [{
+        ...frame,
+        panels: frame.panels.map((panel) => ({
+          ...panel,
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+        })),
+      }],
+    }),
+    beginPanelGeneration: async ({ panelIndex }) => ({
+      ok: true,
+      id: "gen-diag-fail",
+      storyboardVersionId: "version-1",
+      frame,
+      panel: frame.panels[panelIndex],
+      panelIndex,
+      subject: frame.panels[panelIndex].subject,
+      instruction: "",
+      refs: {
+        anchor: { id: "identity-auth-anya", mime: "image/png", bytes: Buffer.from("anchor-anya") },
+        previous: null,
+        performance: null,
+        style: { id: "style-auth-1", mime: "image/png", bytes: Buffer.from("style-bytes") },
+      },
+    }),
+    finishPanelGeneration: async ({ result }) => ({
+      ok: false,
+      status: "failed",
+      kind: result?.kind || "provider",
+      httpStatus: 502,
+    }),
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    logger: { log: (line) => logs.push(line) },
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: false, status: "failed", kind: "timeout", httpStatus: 504, diagnostics: { providerStatus: 504 } };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/panels/0/generate",
+      body: {},
+    });
+    assert.equal(generated.status >= 400, true);
+    assert.equal(calls.length, 1);
+    const joined = logs.join("\n");
+    assert.equal(logHas(joined, "frameId", "f1"), true);
+    assert.equal(logHas(joined, "panelIndex", "0"), true);
+    assert.equal(logHas(joined, "compilerVersion", "constrained-panel-intent/v1"), true);
+    assert.equal(logHas(joined, "intentFraming", "waist-up"), true);
+    assert.equal(logHas(joined, "intentGaze", "to-camera"), true);
+    assert.equal(logHas(joined, "identityAuthorityId", "identity-auth-anya"), true);
+    assert.equal(logHas(joined, "styleAuthorityId", "style-auth-1"), true);
+    assert.match(joined, /status=failed/);
+    assert.match(joined, /kind=timeout/);
+    assert.equal(joined.includes(description), false);
+    assert.equal(joined.includes("characterName="), false);
+  } finally {
+    await close(server);
+  }
+});
+
+test("panel-scoped preflight failure logs address and reason with zero provider calls", async () => {
+  const logs = [];
+  const calls = [];
+  let beginCalls = 0;
+  const state = eligibleSplitState({ leftSubject: null });
+  const store = {
+    load: async () => state,
+    beginPanelGeneration: async () => {
+      beginCalls += 1;
+      return { ok: false, status: "failed", kind: "provider", httpStatus: 502 };
+    },
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    logger: { log: (line) => logs.push(line) },
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/panels/0/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 409);
+    assert.deepEqual(generated.body, { status: "failed", kind: "subject-required" });
+    assert.equal(calls.length, 0);
+    assert.equal(beginCalls, 0);
+    const joined = logs.join("\n");
+    assert.equal(logHas(joined, "frameId", "f1"), true);
+    assert.equal(logHas(joined, "panelIndex", "0"), true);
+    assert.match(joined, /status=failed/);
+    assert.match(joined, /kind=subject-required/);
+    assert.equal(joined.includes("compilerVersion="), false);
+    assert.equal(joined.includes("intentFraming="), false);
+    assert.equal(joined.includes("identityAuthorityId="), false);
+    assert.equal(joined.includes("styleAuthorityId="), false);
+  } finally {
+    await close(server);
+  }
+});
+
 test("eligible frame preflight blocks missing style with zero provider calls", async () => {
   const calls = [];
   let beginCalls = 0;

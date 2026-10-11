@@ -790,6 +790,30 @@ function logVisual(logger, request, event, fields = {}) {
   logLine(logger, { request, event, ...safe });
 }
 
+/** Compact allowlisted canonical-intent evidence for eligible panel logs. No raw prose. */
+function panelReadyDiagnosticFields(intent, refs = {}, assembled = {}) {
+  if (!intent?.compilerVersion) return {};
+  const identityAuthorityId = refs?.anchor?.id || undefined;
+  const styleAuthorityId = assembled?.identityAlsoStyle === true
+    ? identityAuthorityId
+    : (refs?.style?.id || undefined);
+  const fields = {
+    compilerVersion: intent.compilerVersion,
+    intentFraming: intent.framing,
+    intentUpperBody: intent.upperBody,
+    intentGesture: intent.gesture,
+    intentHeadPose: intent.headPose,
+    intentGaze: intent.gaze == null ? "none" : intent.gaze,
+    intentExpression: intent.expression,
+    intentBackground: intent.background,
+    identityAuthorityId,
+    styleAuthorityId,
+  };
+  if (intent.eyes) fields.intentEyes = intent.eyes;
+  if (intent.eyebrows) fields.intentEyebrows = intent.eyebrows;
+  return fields;
+}
+
 function imageMeta(image) {
   if (!image?.ok && !image?.mime && !image?.bytes) return {};
   return {
@@ -1014,7 +1038,16 @@ async function generateOnePanel({
         panelIndex,
       })
       : null;
-    if (preflight && !preflight.ok) return preflight;
+    if (preflight && !preflight.ok) {
+      logVisual(logger, request, "visual-panel-provider", {
+        status: "failed",
+        kind: safeKind(preflight.kind),
+        http: preflight.httpStatus,
+        frameId,
+        panelIndex,
+      });
+      return preflight;
+    }
   }
   logVisual(logger, request, "visual-panel-start", {
     operation: "panel-generate",
@@ -1041,26 +1074,28 @@ async function generateOnePanel({
   const panelReady = isEligiblePanelReadyDialogueFrame(pending.frame);
   const assembled = assemblePanelReferences({ ...pending.refs, panelReady });
   const providerStarted = Date.now();
-  const prompt = panelReady
-    ? compilePanelReadyPrompt(
-      compilePanelReadyIntent({
-        frame: pending.frame,
-        panelIndex,
-        characterName: pending.subject,
-        description: pending.panel.description,
-        instruction: pending.instruction,
-        hasPerformance: assembled.hasPerformance,
-        partnerName: pending.frame?.panels?.[panelIndex === 0 ? 1 : 0]?.subject ?? null,
-      }),
-      {
-        hasPrevious: assembled.hasPrevious,
-        hasPerformance: assembled.hasPerformance,
-        hasStyle: assembled.hasStyle,
-        identityAlsoStyle: assembled.identityAlsoStyle === true,
-        previousDropped: assembled.previousDropped === true,
-      },
-    )
-    : panelPrompt({
+  let prompt;
+  let diagnosticFields = {};
+  if (panelReady) {
+    const intent = compilePanelReadyIntent({
+      frame: pending.frame,
+      panelIndex,
+      characterName: pending.subject,
+      description: pending.panel.description,
+      instruction: pending.instruction,
+      hasPerformance: assembled.hasPerformance,
+      partnerName: pending.frame?.panels?.[panelIndex === 0 ? 1 : 0]?.subject ?? null,
+    });
+    prompt = compilePanelReadyPrompt(intent, {
+      hasPrevious: assembled.hasPrevious,
+      hasPerformance: assembled.hasPerformance,
+      hasStyle: assembled.hasStyle,
+      identityAlsoStyle: assembled.identityAlsoStyle === true,
+      previousDropped: assembled.previousDropped === true,
+    });
+    diagnosticFields = panelReadyDiagnosticFields(intent, pending.refs, assembled);
+  } else {
+    prompt = panelPrompt({
       characterName: pending.subject,
       description: pending.panel.description,
       instruction: pending.instruction,
@@ -1071,6 +1106,7 @@ async function generateOnePanel({
       hasPerformance: assembled.hasPerformance,
       hasStyle: assembled.hasStyle,
     });
+  }
   const result = await imageGenerator({
     prompt,
     images: assembled.images.map(imageInput),
@@ -1089,6 +1125,7 @@ async function generateOnePanel({
     panelIndex,
     generationId: pending.id,
     storyboardVersionId: pending.storyboardVersionId,
+    ...diagnosticFields,
   });
   const finished = await runtime.visualStore.finishPanelGeneration({ id: pending.id, result });
   logVisual(logger, request, "visual-panel-storage", {
@@ -1099,6 +1136,7 @@ async function generateOnePanel({
     panelIndex,
     generationId: pending.id,
     ...imageMeta(result?.image),
+    ...diagnosticFields,
   });
   return finished;
 }
