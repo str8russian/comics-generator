@@ -73,6 +73,20 @@ test("a blocked response has failures, omits frames, and is not ready", () => {
   assert.deepEqual(view.codes, ["invalid-anchor"]);
 });
 
+test("panel-intent blocked codes remain honestly non-ready through existing pageState", () => {
+  for (const code of [
+    "unsupported-panel-intent",
+    "panel-subject-required",
+    "panel-subject-ambiguous",
+    "panel-framing-unsupported",
+  ]) {
+    const view = pageState({ http: { status: "blocked", failures: [{ code, frameId: "f1", panelIndex: 0 }] } });
+    assert.equal(view.state, "blocked");
+    assert.equal(view.ready, false);
+    assert.deepEqual(view.codes, [code]);
+  }
+});
+
 test("provider, timeout, and invalid-output are failed rather than blocked", async () => {
   const thrown = await withServer(async () => {
     throw new Error("socket closed");

@@ -1,5 +1,17 @@
 import { expandStoryboardFrames } from "../visual-model.mjs";
 
+export function supportedPanelDescription(name, framing = "поясной план") {
+  return [
+    `${name}, ${framing},`,
+    "прямая осанка торса и расправленные плечи,",
+    "правая рука слегка поднята в кадре,",
+    "голова слегка повёрнута вправо,",
+    "взгляд вправо,",
+    "спокойное выражение лица,",
+    "сплошной матовый фон.",
+  ].join(" ");
+}
+
 export const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=", "base64");
 
 export function tinyJpeg() {
@@ -51,7 +63,10 @@ export function putinBoard() {
     id: "frame-1",
     layout: "split2",
     origin: "source",
-    panels: [{ description: "Путин говорит первую фразу" }, { description: "Дуров слушает" }],
+    panels: [
+      { description: supportedPanelDescription("Путин") },
+      { description: supportedPanelDescription("Дуров", "chest-up") },
+    ],
     sourceItemId: "item-2",
     sourceRole: "utterance",
     speakerPanel: 0,
@@ -61,19 +76,28 @@ export function putinBoard() {
         quote: "Первая. ",
         layout: "split2",
         speakerPanel: 0,
-        panels: [{ description: "Путин говорит первую фразу" }, { description: "Дуров слушает" }],
+        panels: [
+          { description: supportedPanelDescription("Путин") },
+          { description: supportedPanelDescription("Дуров", "chest-up") },
+        ],
       },
       {
         quote: "Вторая. ",
         layout: "split2",
         speakerPanel: 0,
-        panels: [{ description: "Путин продолжает" }, { description: "Дуров слушает" }],
+        panels: [
+          { description: supportedPanelDescription("Путин", "крупный план") },
+          { description: supportedPanelDescription("Дуров", "head-and-shoulders") },
+        ],
       },
       {
         quote: "Третья.",
         layout: "split2",
         speakerPanel: 0,
-        panels: [{ description: "Путин заканчивает" }, { description: "Дуров слушает" }],
+        panels: [
+          { description: supportedPanelDescription("Путин", "waist-up") },
+          { description: supportedPanelDescription("Дуров", "medium close-up") },
+        ],
       },
     ],
   }];
@@ -111,7 +135,7 @@ export function putinBoard() {
         id: frameId,
         layout: "single",
         origin: "source",
-        panels: [{ description: "Песков в кадре" }],
+        panels: [{ description: supportedPanelDescription("Песков", "крупный план") }],
         sourceItemId: itemId,
         sourceRole: "action",
       });
@@ -121,7 +145,10 @@ export function putinBoard() {
       id: frameId,
       layout: "split2",
       origin: "source",
-      panels: [{ description: "Путин говорит" }, { description: "Дуров слушает" }],
+      panels: [
+        { description: supportedPanelDescription("Путин") },
+        { description: supportedPanelDescription("Дуров", "chest-up") },
+      ],
       sourceItemId: itemId,
       sourceRole: "utterance",
       speakerPanel: 0,

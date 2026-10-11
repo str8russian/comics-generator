@@ -21,6 +21,18 @@ Every frame has `id`, `layout`, `origin`, and `panels`.
 - `layout` is `single` or `split2`.
 - `single` has one panel. `split2` has two panels.
 - A panel has only `description`, a non-empty visual description.
+- Every future generated-image panel description MUST assign exactly one cast character (by confirmed name or alias) and describe only supported visible one-character performance:
+  - framing from close-up through waist-up only (close-up, head-and-shoulders, chest-up, medium close-up, or waist-up / крупный план / по грудь / поясной план);
+  - shot scale and crop;
+  - visible upper-body geometry of torso, shoulders, head, arms, and hands;
+  - an in-crop gesture;
+  - head turn and tilt;
+  - gaze direction;
+  - facial expression;
+  - and the system-defined solid matte background (always state "solid matte background" or "сплошной матовый фон").
+- Convert sitting, standing, lying, sleeping, waking, continuing-to-speak, and meeting language into allowed visible upper-body geometry/expression, or omit them. Do not keep literal support-dependent wording that invites a chair, bed, room, table, floor, or other scene content.
+- Omit locations, contextual scenery, interiors, furniture, props/objects, additional people, physical interaction, visible text, rendering-style instructions, and invisible narrative/temporal prose.
+- Never describe more body coverage than waist-up. Never ask for full-body, full-length, or below-the-waist framing.
 - `origin` is `source` for an utterance or action, and `derived` for a beat you add.
 
 A source frame also has `sourceItemId` and `sourceRole` (`utterance` or `action`). Do not put `placement` on a source frame.

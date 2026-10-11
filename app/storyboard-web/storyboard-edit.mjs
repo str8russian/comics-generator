@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { completeStage } from "./provider.mjs";
 import { buildChecked } from "./stage.mjs";
-import { expandStoryboardFrames, resolvePanelSubject } from "./visual-model.mjs";
+import { expandStoryboardFrames } from "./visual-model.mjs";
 
 const schema = JSON.parse(readFileSync(
   new URL("../../specs/001-structure-storyboard-tracer/contracts/stage-response.schema.json", import.meta.url),
@@ -76,13 +76,21 @@ export function parseFullFrameOnlyCommand(instruction, characters = []) {
   return { frameNumber: Number(numberMatch[1]), characterName };
 }
 
-function panelForCharacter(panels, characterName, characters) {
-  const existing = (panels || []).find((panel) => {
-    const subject = resolvePanelSubject(panel.description, characters, []);
-    if (subject === characterName) return true;
-    return String(panel.description || "").toLocaleLowerCase("ru").includes(characterName.toLocaleLowerCase("ru"));
-  });
-  return { description: existing?.description || `${characterName} на весь кадр.` };
+function supportedFullFrameDescription(characterName) {
+  return [
+    `${characterName}, поясной план,`,
+    "прямая осанка торса и расправленные плечи,",
+    "руки в кадре,",
+    "голова прямо,",
+    "взгляд вперёд,",
+    "нейтральное выражение лица,",
+    "сплошной матовый фон.",
+  ].join(" ");
+}
+
+function panelForCharacter(_panels, characterName, _characters) {
+  // Deterministic full-frame command means one-character supported framing, not full-body.
+  return { description: supportedFullFrameDescription(characterName) };
 }
 
 function cloneStructure(frames) {
@@ -147,7 +155,7 @@ export async function editStoryboard({ draft, sourceItems, cast, frames, display
       characters,
     });
     if (!applied.ok) return applied;
-    return structureRejected(buildChecked(draft, sourceItems, { frames: applied.frames, review }));
+    return structureRejected(buildChecked(draft, sourceItems, { frames: applied.frames, review }, cast));
   }
   const result = await completeStage({
     messages: [
@@ -181,5 +189,5 @@ export async function editStoryboard({ draft, sourceItems, cast, frames, display
   return structureRejected(buildChecked(draft, sourceItems, {
     ...result.value,
     review,
-  }));
+  }, cast));
 }

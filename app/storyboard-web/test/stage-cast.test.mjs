@@ -5,7 +5,7 @@ import test from "node:test";
 import { requestStageCandidate } from "../stage.mjs";
 
 const stagePrompt = readFileSync(new URL("../prompts/stage.md", import.meta.url));
-const STAGE_PROMPT_SHA256 = "ec9d6f64c844905940d0b6e54247b35888b1fde5056f800ba617c795dbf9b8df";
+const STAGE_PROMPT_SHA256 = "e00db38527d85bf44180fb012d10890f37a841936ea05e75fa4a4a73bdd983e2";
 
 const env = {
   BASE_URL: "https://provider.example.test",
@@ -91,4 +91,24 @@ test("a Stage call without cast keeps the legacy user message", async () => {
     }],
   });
   assert.equal(Object.hasOwn(captured.user, "cast"), false);
+});
+
+function assertConstrainedPanelPromptContract(systemPrompt) {
+  const text = String(systemPrompt);
+  assert.match(text, /exactly one|ровно один|one assigned|одного назначенного/i);
+  assert.match(text, /close-up|крупн|waist-up|поясн|chest-up|head-and-shoulders|по грудь/i);
+  assert.match(text, /upper[-\s]?body|верхн|торс|shoulders|плеч|gesture|жест/i);
+  assert.match(text, /head turn|наклон|поворот.*голов|gaze|взгляд|facial expression|выражение/i);
+  assert.match(text, /solid matte|сплошн.*матов|матов.*фон/i);
+  assert.match(text, /sitting|сидя|standing|стоя|lying|леж|sleeping|сп|waking|просыпа|continuing to speak|продолжа|meeting|встреч/i);
+  assert.match(text, /omit|omission|не включа|без локац|locations|интерьер|furniture|мебел|props|предмет|additional people|взаимодейств|visible text|надпис|rendering-style|стиль отрисов|narrative|причин/i);
+}
+
+test("Stage system prompt requires constrained one-character panel grammar", async () => {
+  const captured = await captureUser({
+    characters: [{ id: peskovId, name: "Песков" }],
+    aliases: [{ surface: "Дмитрий Сергеевич", characterId: peskovId }],
+    speakers: [{ sourceItemId: "u1", characterId: peskovId }],
+  });
+  assertConstrainedPanelPromptContract(captured.system);
 });

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { assessStage } from "./fidelity.mjs";
 import { assessDialogue } from "./overflow.mjs";
+import { assessPanelIntent } from "./panel-intent.mjs";
 import { completeStage } from "./provider.mjs";
 
 const stageSchema = JSON.parse(readFileSync(new URL("../../specs/001-structure-storyboard-tracer/contracts/stage-response.schema.json", import.meta.url), "utf8"));
@@ -60,7 +61,7 @@ function partition(dialogue, segments) {
   return ranges;
 }
 
-export function buildChecked(draft, sourceItems, stage) {
+export function buildChecked(draft, sourceItems, stage, cast) {
   const assessment = assessStage(sourceItems, stage);
   if (!assessment.ok) {
     return { ok: false, httpStatus: 200, status: "blocked", failures: assessment.failures };
@@ -132,6 +133,12 @@ export function buildChecked(draft, sourceItems, stage) {
   if (!dialogue.ok) {
     return { ok: false, httpStatus: 200, status: "blocked", failures: dialogue.failures };
   }
+  if (cast != null) {
+    const intent = assessPanelIntent(frames, cast);
+    if (!intent.ok) {
+      return { ok: false, httpStatus: 200, status: "blocked", failures: intent.failures };
+    }
+  }
 
   return {
     ok: true,
@@ -163,5 +170,5 @@ export function requestStageCandidate({ sourceItems, cast, env, fetchImpl }) {
 export async function stageStoryboard({ draft, sourceItems, cast, env, fetchImpl }) {
   const result = await requestStageCandidate({ sourceItems, cast, env, fetchImpl });
   if (!result.ok) return { ...failure(result.httpStatus, result.kind), diagnostics: result.diagnostics };
-  return { ...buildChecked(draft, sourceItems, result.value), diagnostics: result.diagnostics };
+  return { ...buildChecked(draft, sourceItems, result.value, cast), diagnostics: result.diagnostics };
 }
