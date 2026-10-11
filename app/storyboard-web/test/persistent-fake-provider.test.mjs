@@ -95,7 +95,7 @@ test("persistent fake provider source does not read an env file, credentials, or
   assert.match(source, /127\.0\.0\.1/);
 });
 
-test("loopback fake counts one Interpret and one Stage, then rejects anything else", async () => {
+test("loopback fake counts one Interpret and one Stage, then rejects extra chat", async () => {
   assert.equal(PERSISTENT_DRAFT.includes("Дмитрий Сергеевич"), true);
   assert.equal(PERSISTENT_DRAFT.includes("Песков"), true);
   const provider = await startPersistentFakeProvider();
@@ -146,13 +146,20 @@ test("loopback fake counts one Interpret and one Stage, then rejects anything el
     assert.equal(interpretBody.surfaceForms.some((form) => form.quote === "Дмитрий Сергеевич"), true);
     assert.equal(interpretBody.sourceItems.some((item) => item.speakerStatus === "unresolved"), true);
 
+    const cast = {
+      characters: interpretBody.characters,
+      aliases: [
+        { surface: "Дмитрий Сергеевич", characterId: "peskov", characterName: "Песков" },
+      ],
+    };
     const staged = await stageStoryboard({
       draft: PERSISTENT_DRAFT,
       sourceItems: interpreted.sourceItems,
+      cast,
       env,
       fetchImpl: recordingFetch,
     });
-    assert.equal(staged.ok, true);
+    assert.equal(staged.ok, true, JSON.stringify(staged));
     assert.equal(staged.body.status, "checked");
     assert.equal(provider.interpretCount, 1);
     assert.equal(provider.stageCount, 1);
@@ -160,6 +167,13 @@ test("loopback fake counts one Interpret and one Stage, then rejects anything el
     assert.equal(validateStage(stageBody), true, JSON.stringify(validateStage.errors));
     const spoken = staged.body.frames.find((frame) => frame.sourceItemId === "u1");
     assert.equal(spoken.dialogue.includes("Дмитрий Сергеевич"), true);
+    assert.equal(spoken.layout, "split2");
+    assert.equal(spoken.panels.length, 2);
+    for (const panel of spoken.panels) {
+      assert.match(panel.description, /поясной план|по грудь|крупный план|chest-up|waist-up/i);
+      assert.match(panel.description, /сплошной матовый фон|однотонный матовый фон|solid matte/i);
+      assert.equal(/кабинет|стол|телефон|встреча|обращается к/i.test(panel.description), false);
+    }
 
     const third = await request(provider.url, {
       body: { messages: [{ role: "user", content: "{\"sourceItems\":[]}" }] },
@@ -167,6 +181,65 @@ test("loopback fake counts one Interpret and one Stage, then rejects anything el
     assert.equal(third.status, 409);
     assert.equal(provider.interpretCount, 1);
     assert.equal(provider.stageCount, 1);
+    assert.equal(provider.imageCount, 0);
+  } finally {
+    await new Promise((resolve, reject) => {
+      provider.server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+});
+
+test("loopback fake returns synthetic image completions after Stage only", async () => {
+  const provider = await startPersistentFakeProvider();
+  const env = {
+    BASE_URL: provider.url,
+    CONTEST_API_TOKEN: "placeholder-token",
+    CONTEST_MODEL: "placeholder-model",
+  };
+  try {
+    const interpreted = await interpretDraft({
+      draft: PERSISTENT_DRAFT,
+      env,
+      fetchImpl,
+      acceptUnresolved: true,
+    });
+    assert.equal(interpreted.ok, true);
+    const staged = await stageStoryboard({
+      draft: PERSISTENT_DRAFT,
+      sourceItems: interpreted.sourceItems,
+      cast: {
+        characters: [
+          { id: "putin", name: "Путин" },
+          { id: "peskov", name: "Песков" },
+        ],
+      },
+      env,
+      fetchImpl,
+    });
+    assert.equal(staged.ok, true, JSON.stringify(staged));
+
+    const beforeImage = await request(provider.url, {
+      body: {
+        model: "placeholder-image",
+        modalities: ["image", "text"],
+        messages: [{ role: "user", content: [{ type: "text", text: "synthetic" }] }],
+        image_config: { aspect_ratio: "5:4" },
+      },
+    });
+    assert.equal(beforeImage.status, 200);
+    assert.equal(provider.imageCount, 1);
+    const payload = JSON.parse(beforeImage.body);
+    const content = payload.choices[0].message.content;
+    const text = typeof content === "string" ? content : JSON.stringify(content);
+    assert.match(text, /data:image\/png;base64,/);
+
+    const extraChat = await request(provider.url, {
+      body: { messages: [{ role: "user", content: "{\"sourceItems\":[]}" }] },
+    });
+    assert.equal(extraChat.status, 409);
+    assert.equal(provider.interpretCount, 1);
+    assert.equal(provider.stageCount, 1);
+    assert.equal(provider.imageCount, 1);
   } finally {
     await new Promise((resolve, reject) => {
       provider.server.close((error) => (error ? reject(error) : resolve()));

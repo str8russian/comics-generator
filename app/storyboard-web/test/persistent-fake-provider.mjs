@@ -7,6 +7,9 @@ const line1 = "Путин: Дмитрий Сергеевич, это Песко�
 const line2 = "Кто это сказал?";
 export const PERSISTENT_DRAFT = `${line1}\n${line2}`;
 
+const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=";
+const TINY_PNG_DATA_URL = `data:image/png;base64,${TINY_PNG_BASE64}`;
+
 const interpretResponse = {
   sourceItems: [
     {
@@ -36,13 +39,20 @@ const interpretResponse = {
   ],
 };
 
+const constrainedPanel = (name, gaze) => (
+  `${name}, поясной план, прямая осанка торса, рука в кадре, голова прямо, ${gaze}, спокойное выражение лица, сплошной матовый фон.`
+);
+
 const stageResponse = {
   frames: [
     {
       id: "f1",
-      layout: "single",
+      layout: "split2",
       origin: "source",
-      panels: [{ description: "Путин обращается к собеседнику" }],
+      panels: [
+        { description: constrainedPanel("Путин", "взгляд вправо") },
+        { description: constrainedPanel("Песков", "взгляд влево") },
+      ],
       sourceItemId: "u1",
       sourceRole: "utterance",
       speakerPanel: 0,
@@ -51,7 +61,7 @@ const stageResponse = {
       id: "f2",
       layout: "single",
       origin: "source",
-      panels: [{ description: "Собеседник слышит вопрос" }],
+      panels: [{ description: constrainedPanel("Песков", "взгляд вперёд") }],
       sourceItemId: "u2",
       sourceRole: "utterance",
       speakerPanel: 0,
@@ -85,6 +95,22 @@ function completion(content) {
   };
 }
 
+function imageCompletion() {
+  return {
+    choices: [{
+      index: 0,
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "ok" },
+          { type: "image_url", image_url: { url: TINY_PNG_DATA_URL } },
+        ],
+      },
+      finish_reason: "stop",
+    }],
+  };
+}
+
 function sendJson(res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -98,6 +124,10 @@ function userContent(body) {
   const messages = Array.isArray(body?.messages) ? body.messages : [];
   const user = messages.find((message) => message?.role === "user");
   return typeof user?.content === "string" ? user.content : "";
+}
+
+function isImageRequest(body) {
+  return Array.isArray(body?.modalities) && body.modalities.includes("image");
 }
 
 function requestKind(content) {
@@ -114,7 +144,7 @@ function requestKind(content) {
 }
 
 export function createPersistentFakeProvider() {
-  const state = { requests: 0, interpret: 0, stage: 0 };
+  const state = { requests: 0, interpret: 0, stage: 0, image: 0 };
   const server = createServer((req, res) => {
     const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
     if (req.method !== "POST" || requestUrl.pathname !== "/v1/chat/completions") {
@@ -133,13 +163,23 @@ export function createPersistentFakeProvider() {
         sendJson(res, 400, { error: "malformed-json" });
         return;
       }
+      if (isImageRequest(body)) {
+        if (state.interpret < 1 || state.stage < 1) {
+          sendJson(res, 409, { error: "image-before-stage" });
+          return;
+        }
+        state.requests += 1;
+        state.image += 1;
+        sendJson(res, 200, imageCompletion());
+        return;
+      }
       state.requests += 1;
-      if (state.requests > 2) {
+      if (state.interpret >= 1 && state.stage >= 1) {
         sendJson(res, 409, { error: "extra-completion" });
         return;
       }
       const kind = requestKind(userContent(body));
-      if (state.requests === 1) {
+      if (state.interpret === 0) {
         if (kind !== "interpret") {
           sendJson(res, 400, { error: "unexpected-interpret" });
           return;
@@ -164,6 +204,9 @@ export function createPersistentFakeProvider() {
     },
     get stageCount() {
       return state.stage;
+    },
+    get imageCount() {
+      return state.image;
     },
   };
 }
