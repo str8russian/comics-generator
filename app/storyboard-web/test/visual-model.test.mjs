@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { assessPanelIntent } from "../panel-intent.mjs";
 import {
   anchorPrompt,
   aspectRatioForFrame,
@@ -432,6 +433,153 @@ test("eligible provider grammar forbids relational scenario prose and hard-coded
   assert.equal(/heavy near-black contour/i.test(prompt), false);
   assert.match(prompt, /approved identity anchor|project style anchor/i);
   assert.match(prompt, /exactly one|no additional people/i);
+});
+
+const RU_CANARY = "RU_CANARY_UNSUPPORTED_m4w1";
+const RU_SUPPORTED_CONFUSED = [
+  "Аня; поясной план; выпрямленный корпус; правая рука поднята в кадре;",
+  "голова прямо; широко раскрытые глаза; поднятые брови; напряжённые плечи;",
+  "растерянное выражение лица; взгляд прямо; однотонный матовый фон.",
+].join(" ");
+
+test("eligible compiler preserves supported Russian visual intent as canonical values", () => {
+  const description = `${RU_SUPPORTED_CONFUSED} ${RU_CANARY} лишний кабинетный шум`;
+  const { intent, prompt } = panelReadyCompile({
+    panelIndex: 0,
+    characterName: "Аня",
+    description,
+  });
+
+  assert.equal(intent.compilerVersion, "constrained-panel-intent/v1");
+  assert.equal(intent.characterName, "Аня");
+  assert.equal(intent.framing, "waist-up");
+  assert.match(intent.upperBody, /upright torso/i);
+  assert.match(intent.upperBody, /tense shoulders/i);
+  assert.equal(intent.gesture, "right hand raised in crop");
+  assert.equal(intent.headPose, "near-frontal head");
+  assert.equal(intent.gaze, "to-camera");
+  assert.match(intent.expression, /confused|startled/i);
+  assert.equal(intent.eyes, "wide-open");
+  assert.equal(intent.eyebrows, "raised");
+  assert.equal(intent.background, "solid-matte");
+
+  assert.equal(prompt.includes(description), false);
+  assert.equal(prompt.includes(RU_SUPPORTED_CONFUSED), false);
+  assert.equal(prompt.includes(RU_CANARY), false);
+  assert.equal(/лишний кабинетный шум/i.test(prompt), false);
+  assert.equal(/выпрямленный корпус|растерянное выражение|взгляд прямо/i.test(prompt), false);
+  assert.match(prompt, /Аня/);
+  assert.match(prompt, /waist-up/i);
+  assert.match(prompt, /upright torso/i);
+  assert.match(prompt, /tense shoulders/i);
+  assert.match(prompt, /right hand raised in crop/i);
+  assert.match(prompt, /near-frontal head/i);
+  assert.match(prompt, /toward the camera|to-camera|straight ahead/i);
+  assert.match(prompt, /confused|startled/i);
+  assert.match(prompt, /wide[-\s]?open eyes/i);
+  assert.match(prompt, /raised eyebrows/i);
+  assert.match(prompt, /solid\s+matte/i);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(prompt), false);
+});
+
+test("eligible compiler keeps Russian head pose and gaze independent", () => {
+  const rightHead = panelReadyCompile({
+    panelIndex: 0,
+    characterName: "Аня",
+    description: "Аня; по грудь; голова слегка повёрнута вправо; взгляд прямо; спокойное выражение лица; сплошной матовый фон.",
+  });
+  assert.equal(rightHead.intent.headPose, "head turned slightly screen-right");
+  assert.equal(rightHead.intent.gaze, "to-camera");
+  assert.equal(rightHead.intent.expression, "calm");
+  assert.match(rightHead.prompt, /head turned slightly screen-right/i);
+  assert.match(rightHead.prompt, /toward the camera|to-camera|straight ahead/i);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(rightHead.prompt), false);
+  assert.equal(/голова слегка повёрнута|взгляд прямо/i.test(rightHead.prompt), false);
+
+  const leftHead = panelReadyCompile({
+    panelIndex: 1,
+    characterName: "Аня",
+    description: "Аня; по грудь; голова слегка повёрнута влево; взгляд прямо; спокойное выражение лица; сплошной матовый фон.",
+  });
+  assert.equal(leftHead.intent.headPose, "head turned slightly screen-left");
+  assert.equal(leftHead.intent.gaze, "to-camera");
+  assert.match(leftHead.prompt, /head turned slightly screen-left/i);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+left/i.test(leftHead.prompt), false);
+});
+
+test("eligible compiler closed eyes suppress contradictory gaze instructions", () => {
+  const { intent, prompt } = panelReadyCompile({
+    panelIndex: 0,
+    characterName: "Аня",
+    description: "Аня; крупный план; голова склонена; глаза закрыты; расслабленное выражение лица; однотонный матовый фон.",
+  });
+
+  assert.equal(intent.framing, "close-up");
+  assert.match(intent.headPose, /lowered|tilted/i);
+  assert.equal(intent.eyes, "closed");
+  assert.equal(intent.expression, "relaxed");
+  assert.equal(intent.gaze, null);
+  assert.match(prompt, /closed eyes|eyes closed/i);
+  assert.match(prompt, /relaxed/i);
+  assert.match(prompt, /lowered|tilted/i);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+(left|right)/i.test(prompt), false);
+  assert.equal(/toward the camera/i.test(prompt), false);
+  assert.equal(/глаза закрыты|голова склонена/i.test(prompt), false);
+});
+
+test("eligible compiler preserves Russian irritated forward lean intent", () => {
+  const { intent, prompt } = panelReadyCompile({
+    panelIndex: 0,
+    characterName: "Аня",
+    description: "Аня; по грудь; корпус наклонён вперёд; левая рука поднята в кадре; голова слегка повёрнута влево; взгляд влево; раздражённое выражение лица; сплошной матовый фон.",
+  });
+
+  assert.equal(intent.framing, "chest-up");
+  assert.match(intent.upperBody, /forward[-\s]?lean/i);
+  assert.equal(intent.gesture, "left hand raised in crop");
+  assert.equal(intent.headPose, "head turned slightly screen-left");
+  assert.equal(intent.gaze, "screen-left");
+  assert.equal(intent.expression, "irritated");
+  assert.match(prompt, /forward[-\s]?lean/i);
+  assert.match(prompt, /left hand raised in crop/i);
+  assert.match(prompt, /head turned slightly screen-left/i);
+  assert.match(prompt, /screen-left|viewer'?s?\s+left/i);
+  assert.match(prompt, /irritated/i);
+  assert.equal(/корпус наклонён|раздражённое выражение|взгляд влево/i.test(prompt), false);
+});
+
+test("ready-gate accepted Russian description still compiles to expected canonical intent", () => {
+  const description = RU_SUPPORTED_CONFUSED;
+  const gate = assessPanelIntent(
+    [{
+      id: "f1",
+      layout: "split2",
+      panels: [
+        { description },
+        { description: "Борис; поясной план; выпрямленный корпус; руки в кадре; голова прямо; взгляд прямо; спокойное выражение лица; однотонный матовый фон." },
+      ],
+    }],
+    {
+      characters: [
+        { id: "c-anya", name: "Аня" },
+        { id: "c-boris", name: "Борис" },
+      ],
+      aliases: [],
+    },
+  );
+  assert.equal(gate.ok, true, JSON.stringify(gate.failures || []));
+
+  const { intent, prompt } = panelReadyCompile({
+    panelIndex: 0,
+    characterName: "Аня",
+    description,
+  });
+  assert.equal(intent.framing, "waist-up");
+  assert.equal(intent.gaze, "to-camera");
+  assert.equal(intent.gesture, "right hand raised in crop");
+  assert.match(intent.expression, /confused|startled/i);
+  assert.equal(intent.eyes, "wide-open");
+  assert.equal(prompt.includes(description), false);
 });
 
 test("optional performance stays panel-scoped and does not displace identity or style", () => {

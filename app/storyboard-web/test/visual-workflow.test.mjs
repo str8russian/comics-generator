@@ -548,6 +548,118 @@ test("eligible frame generate with empty body uses constrained canonical compile
   }
 });
 
+test("eligible frame generate preserves Russian supported intent without raw description", async () => {
+  const calls = [];
+  const canary = "RU_WORKFLOW_CANARY_z7q1";
+  const leftDescription = [
+    "Аня; поясной план; выпрямленный корпус; правая рука поднята в кадре;",
+    "голова прямо; широко раскрытые глаза; поднятые брови; напряжённые плечи;",
+    `растерянное выражение лица; взгляд прямо; однотонный матовый фон. ${canary}`,
+  ].join(" ");
+  const rightDescription = "Борис; по грудь; выпрямленный корпус; руки в кадре; голова прямо; взгляд прямо; спокойное выражение лица; сплошной матовый фон.";
+  const frame = {
+    id: "f1",
+    layout: "split2",
+    dialogue: "Привет.",
+    speakerPanel: 0,
+    sourceRole: "utterance",
+    panels: [
+      { description: leftDescription, subject: "Аня" },
+      { description: rightDescription, subject: "Борис" },
+    ],
+  };
+  const store = {
+    load: async () => ({
+      ...visualState(),
+      styleSeedAssetId: "style-1",
+      characters: [
+        { name: "Аня", approvedAnchorId: "a0" },
+        { name: "Борис", approvedAnchorId: "a1" },
+      ],
+      frames: [{
+        ...frame,
+        visualReady: false,
+        panels: frame.panels.map((panel) => ({
+          ...panel,
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+        })),
+      }],
+    }),
+    beginPanelGeneration: async ({ panelIndex, instruction }) => {
+      assert.equal(instruction, "");
+      return {
+        ok: true,
+        id: `gen-${panelIndex}`,
+        storyboardVersionId: "version-1",
+        frame,
+        panel: frame.panels[panelIndex],
+        panelIndex,
+        subject: frame.panels[panelIndex].subject,
+        instruction: "",
+        refs: {
+          anchor: { id: `anchor-${panelIndex}`, mime: "image/png", bytes: Buffer.from(`anchor-${panelIndex}`) },
+          previous: null,
+          performance: null,
+          style: { id: "style", mime: "image/png", bytes: Buffer.from("style-bytes") },
+        },
+      };
+    },
+    finishPanelGeneration: async ({ id }) => ({
+      ok: true,
+      generationId: id,
+      assetId: id === "gen-0" ? "ready-0" : "ready-1",
+    }),
+  };
+  const started = Date.now();
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 200);
+    assert.equal(calls.length, 2);
+    assert.ok(Date.now() - started < 2000, "frame generate remains a synchronous request");
+    assert.deepEqual(
+      calls[0].images.map((image) => image.bytes.toString("utf8")),
+      ["anchor-0", "style-bytes"],
+    );
+    assert.match(calls[0].prompt, /Image 1 is the approved identity anchor/);
+    assert.match(calls[0].prompt, /Image 2 is the project style anchor/);
+    assert.equal(/performance reference/i.test(calls[0].prompt), false);
+    assert.equal(calls[0].prompt.includes(leftDescription), false);
+    assert.equal(calls[0].prompt.includes(canary), false);
+    assert.equal(/выпрямленный корпус|растерянное выражение|взгляд прямо/i.test(calls[0].prompt), false);
+    assert.match(calls[0].prompt, /Аня/);
+    assert.match(calls[0].prompt, /waist-up/i);
+    assert.match(calls[0].prompt, /upright torso/i);
+    assert.match(calls[0].prompt, /tense shoulders/i);
+    assert.match(calls[0].prompt, /right hand raised in crop/i);
+    assert.match(calls[0].prompt, /toward the camera|to-camera|straight ahead/i);
+    assert.match(calls[0].prompt, /confused|startled/i);
+    assert.match(calls[0].prompt, /wide[-\s]?open eyes/i);
+    assert.match(calls[0].prompt, /solid\s+matte/i);
+    assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(calls[0].prompt), false);
+    assert.match(calls[1].prompt, /Борис/);
+    assert.match(calls[1].prompt, /toward the camera|to-camera|straight ahead/i);
+    assert.deepEqual(generated.body.generationFailures, []);
+  } finally {
+    await close(server);
+  }
+});
+
 test("out-of-scope single frame generate keeps the historical panel prompt path", async () => {
   const calls = [];
   const store = {
