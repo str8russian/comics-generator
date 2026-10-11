@@ -441,3 +441,103 @@ test("Structure checkpoint: supported complete board is ready; mutations are blo
   assert.equal(scenery.ok, false);
   assert.equal(codes(scenery).includes("unsupported-panel-intent"), true);
 });
+
+function withUnsupportedFragment(name, fragment) {
+  return supportedDescription(name).replace(
+    "прямая осанка торса и расправленные плечи,",
+    `${fragment}, прямая осанка торса и расправленные плечи,`,
+  );
+}
+
+const observedUnsupported = [
+  ["проснувшийся", "проснувшийся"],
+  ["продолжает говорить", "продолжает говорить"],
+  ["передаёт слово", "передаёт слово"],
+  ["окликает его", "окликает его"],
+  ["обращается к присутствующим", "обращается к присутствующим"],
+];
+
+for (const [label, fragment] of observedUnsupported) {
+  test(`observed unsupported scenario wording rejected: ${label}`, () => {
+    const result = assessPanelIntent(
+      [singleFrame(withUnsupportedFragment("Аня", fragment))],
+      cast,
+    );
+    assert.equal(result.ok, false, label);
+    assert.equal(codes(result).includes("unsupported-panel-intent"), true, label);
+  });
+}
+
+test("approved однотонный матовый фон wording is accepted", () => {
+  const description = supportedDescription("Аня").replace(
+    "сплошной матовый фон.",
+    "однотонный матовый фон.",
+  );
+  const result = assessPanelIntent([singleFrame(description)], cast);
+  assert.equal(result.ok, true, JSON.stringify(result));
+});
+
+test("approved матовый однотонный фон wording is accepted", () => {
+  const description = supportedDescription("Аня").replace(
+    "сплошной матовый фон.",
+    "матовый однотонный фон.",
+  );
+  const result = assessPanelIntent([singleFrame(description)], cast);
+  assert.equal(result.ok, true, JSON.stringify(result));
+});
+
+test("stable gaze and understanding expression are not rejected by table/standing substrings", () => {
+  const description = [
+    "Anya, waist-up,",
+    "upright torso and open shoulders,",
+    "right hand raised in crop,",
+    "head turned slightly right,",
+    "stable gaze to the right,",
+    "understanding expression,",
+    "solid matte background.",
+  ].join(" ");
+  const result = assessPanelIntent([singleFrame(description)], cast);
+  assert.equal(result.ok, true, JSON.stringify(result));
+});
+
+test("standalone table and standing remain unsupported", () => {
+  const table = [
+    "Anya, waist-up,",
+    "upright torso near a table,",
+    "right hand raised in crop,",
+    "head turned slightly right,",
+    "gaze to the right,",
+    "calm expression,",
+    "solid matte background.",
+  ].join(" ");
+  const standing = [
+    "Anya, waist-up,",
+    "standing with upright torso,",
+    "right hand raised in crop,",
+    "head turned slightly right,",
+    "gaze to the right,",
+    "calm expression,",
+    "solid matte background.",
+  ].join(" ");
+  assert.equal(assessPanelIntent([singleFrame(table)], cast).ok, false);
+  assert.equal(codes(assessPanelIntent([singleFrame(table)], cast)).includes("unsupported-panel-intent"), true);
+  assert.equal(assessPanelIntent([singleFrame(standing)], cast).ok, false);
+  assert.equal(codes(assessPanelIntent([singleFrame(standing)], cast)).includes("unsupported-panel-intent"), true);
+});
+
+test("Распутин does not resolve as bounded cast surface Путин", () => {
+  const putinCast = {
+    characters: [{ id: "c-putin", name: "Путин" }],
+    aliases: [],
+  };
+  const description = supportedDescription("Распутин");
+  const result = assessPanelIntent([singleFrame(description)], putinCast);
+  assert.equal(result.ok, false);
+  assert.equal(codes(result).includes("panel-subject-required"), true);
+});
+
+test("punctuation-adjacent cast name still resolves", () => {
+  const description = supportedDescription("Аня").replace("Аня,", "Аня:");
+  const result = assessPanelIntent([singleFrame(description)], cast);
+  assert.equal(result.ok, true, JSON.stringify(result));
+});

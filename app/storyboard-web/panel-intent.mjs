@@ -30,37 +30,71 @@ const MATTE_BACKGROUND = [
   /solid\s+matte(?:\s+background)?/iu,
   /сплошн(?:ой|ого|ом)?\s+матов(?:ый|ого|ом)?\s+фон/iu,
   /матов(?:ый|ого|ом)?\s+сплошн(?:ой|ого|ом)?\s+фон/iu,
+  /однотонн(?:ый|ого|ом)?\s+матов(?:ый|ого|ом)?\s+фон/iu,
+  /матов(?:ый|ого|ом)?\s+однотонн(?:ый|ого|ом)?\s+фон/iu,
 ];
 
-/** Phrase/token detectors; avoid JS \\b, which does not treat Cyrillic as word chars. */
-const UNSUPPORTED_PHRASES = [
+/** Cyrillic stems/phrases: intentional inflectional / multiword includes. */
+const UNSUPPORTED_STEMS = [
   // locations / scenery
-  "кабинет", "комнат", "улиц", "офис", "bedroom", "landscape", "scenery", "пейзаж", "локаци",
-  "площад", "парк", "в офисе", "у окна", "at the office", "at the window", "at the street",
+  "кабинет", "комнат", "улиц", "офис", "пейзаж", "локаци", "площад", "парк", "в офисе", "у окна",
   // interiors
-  "интерьер", "interior", "hallway", "коридор",
+  "интерьер", "коридор",
   // furniture
-  "стул", "кресл", "стол", "кровать", "диван", "chair", "bed", "table", "sofa", "furniture",
+  "стул", "кресл", "стол", "кровать", "диван",
   // props / objects
-  "телефон", "phone", "книг", "book", "чашк", "предмет", "проп", "prop", "object", "держит",
+  "телефон", "книг", "чашк", "предмет", "проп", "держит",
   // additional people
-  "толп", "crowd", "люди", "людей", "people", "групп", "партнёр", "партнер", "partner",
-  // physical interaction
-  "обнима", "касает", "касают", "handshake", "hug", "holds hands", "hold hands",
+  "толп", "люди", "людей", "групп", "партнёр", "партнер",
+  // physical / relational interaction
+  "обнима", "касает", "касают", "окликает", "обращается к", "передаёт слово", "передает слово", "присутствующ",
   // visible text
-  "надпись", "вывеска", "lettering", "caption", "текст на",
+  "надпись", "вывеска", "текст на",
   // rendering-style
-  "в стиле", "style of", "cartoon style", "фотореализм", "rendering",
+  "в стиле", "фотореализм",
   // invisible narrative / temporal
-  "потому что", "вспомина", "meanwhile", "after that", "thinking about",
-  // support-dependent staging
-  "сидит", "сидя", "sit", "sitting",
-  "стоит", "стоя", "stand", "standing",
-  "лежит", "лёжа", "лежа", "lying",
-  "спит", "sleeping", "asleep",
-  "просыпа", "waking", "wakes",
-  "продолжая говорить", "continuing to speak",
-  "на встрече", "в совещании", "meeting context", "meeting", "совещани",
+  "потому что", "вспомина",
+  // support-dependent / scenario staging
+  "сидит", "сидя",
+  "стоит", "стоя",
+  "лежит", "лёжа", "лежа",
+  "спит",
+  "просыпа", "проснув",
+  "продолжая говорить", "продолжает говорить",
+  "на встрече", "в совещании", "совещани",
+];
+
+/** Bounded whole-token detectors (Unicode-aware). Avoid matching inside unrelated words. */
+const UNSUPPORTED_BOUNDED = [
+  "bedroom", "landscape", "scenery",
+  "interior", "hallway",
+  "chair", "bed", "table", "sofa", "furniture",
+  "phone", "book", "prop", "object",
+  "crowd", "people", "partner",
+  "handshake", "hug",
+  "lettering", "caption",
+  "rendering",
+  "meanwhile",
+  "sit", "sits", "sitting",
+  "stand", "stands", "standing",
+  "lie", "lies", "lying",
+  "sleep", "sleeps", "sleeping", "asleep",
+  "wake", "wakes", "waking",
+  "meeting",
+];
+
+const UNSUPPORTED_BOUNDED_PHRASES = [
+  "at the office",
+  "at the window",
+  "at the street",
+  "holds hands",
+  "hold hands",
+  "style of",
+  "cartoon style",
+  "after that",
+  "thinking about",
+  "continuing to speak",
+  "meeting context",
 ];
 
 function failure(code, frameId, panelIndex) {
@@ -68,6 +102,28 @@ function failure(code, frameId, panelIndex) {
   if (frameId != null) entry.frameId = frameId;
   if (panelIndex != null) entry.panelIndex = panelIndex;
   return entry;
+}
+
+function isLetterOrNumber(ch) {
+  return ch != null && /\p{L}|\p{N}/u.test(ch);
+}
+
+/** True when `needle` occurs in `haystack` with non-letter/number boundaries on both sides. */
+function hasBoundedOccurrence(haystack, needle) {
+  if (!needle) return false;
+  const text = String(haystack);
+  const target = String(needle);
+  let from = 0;
+  while (from <= text.length) {
+    const index = text.indexOf(target, from);
+    if (index < 0) return false;
+    const before = index === 0 ? null : text[index - 1];
+    const afterIndex = index + target.length;
+    const after = afterIndex >= text.length ? null : text[afterIndex];
+    if (!isLetterOrNumber(before) && !isLetterOrNumber(after)) return true;
+    from = index + 1;
+  }
+  return false;
 }
 
 function characterSurfaces(cast) {
@@ -99,7 +155,7 @@ export function distinctPanelSubjects(description, cast) {
   for (const candidate of characterSurfaces(cast)) {
     const surface = candidate.surface.toLocaleLowerCase("ru");
     if (!surface) continue;
-    if (text.includes(surface)) matched.add(candidate.characterName);
+    if (hasBoundedOccurrence(text, surface)) matched.add(candidate.characterName);
   }
   return [...matched];
 }
@@ -136,7 +192,13 @@ function hasAny(patterns, text) {
 
 function hasUnsupportedPhrase(text) {
   const lower = String(text).toLocaleLowerCase("ru");
-  return UNSUPPORTED_PHRASES.some((phrase) => lower.includes(phrase.toLocaleLowerCase("ru")));
+  if (UNSUPPORTED_STEMS.some((stem) => lower.includes(stem.toLocaleLowerCase("ru")))) {
+    return true;
+  }
+  if (UNSUPPORTED_BOUNDED_PHRASES.some((phrase) => lower.includes(phrase.toLocaleLowerCase("ru")))) {
+    return true;
+  }
+  return UNSUPPORTED_BOUNDED.some((token) => hasBoundedOccurrence(lower, token.toLocaleLowerCase("ru")));
 }
 
 function assessDescription(description, cast, frameId, panelIndex) {
