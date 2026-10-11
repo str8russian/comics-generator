@@ -31,7 +31,7 @@ function eligibleDialogueFrame(overrides = {}) {
   };
 }
 
-function panelReadyPrompt(overrides = {}) {
+function panelReadyCompile(overrides = {}) {
   const frame = overrides.frame || eligibleDialogueFrame({
     panels: [
       { description: "Путин спокойно слушает", subject: "Путин" },
@@ -48,14 +48,29 @@ function panelReadyPrompt(overrides = {}) {
     hasPerformance: overrides.hasPerformance ?? false,
     partnerName: overrides.partnerName ?? frame.panels[panelIndex === 0 ? 1 : 0]?.subject ?? null,
   });
-  return compilePanelReadyPrompt(intent, {
+  const prompt = compilePanelReadyPrompt(intent, {
     hasPrevious: overrides.hasPrevious ?? false,
     hasPerformance: overrides.hasPerformance ?? false,
     hasStyle: overrides.hasStyle ?? true,
     identityAlsoStyle: overrides.identityAlsoStyle ?? false,
     previousDropped: overrides.previousDropped ?? false,
   });
+  return { intent, prompt };
 }
+
+function panelReadyPrompt(overrides = {}) {
+  return panelReadyCompile(overrides).prompt;
+}
+
+const COMPOSITE_CANARY = "CANARY_UNSUPPORTED_XYZ_7f3a";
+const COMPOSITE_DESCRIPTION = [
+  "Путин in a chest-up framing with upright torso and visible shoulders,",
+  "right hand raised in an open-palm gesture in crop,",
+  "head turned slightly toward screen-right,",
+  "gaze toward screen-right,",
+  "calm facial expression.",
+  `Unrecognized scenery prose ${COMPOSITE_CANARY} at a meeting with a partner.`,
+].join(" ");
 
 test("panel subject follows the earliest character surface and understands an alias", () => {
   assert.equal(resolvePanelSubject("Путин смотрит на Дурова", characters, aliases), "Путин");
@@ -157,34 +172,36 @@ test("isEligiblePanelReadyDialogueFrame accepts ordinary dialogue split2 only", 
   })), false);
 });
 
-test("panel-ready compiler states side, speaking role, uniform background, crop, and prohibitions", () => {
+test("panel-ready compiler emits solid matte, crop-safe framing, and prohibitions without relational scene labels", () => {
   const leftSpeaking = panelReadyPrompt({ panelIndex: 0, characterName: "Путин" });
-  assert.match(leftSpeaking, /left/i);
-  assert.match(leftSpeaking, /speaking/i);
-  assert.match(leftSpeaking, /uniform/i);
-  assert.match(leftSpeaking, /non-scenic|plain/i);
-  assert.match(leftSpeaking, /chest-up/i);
+  assert.match(leftSpeaking, /solid\s+matte/i);
+  assert.match(leftSpeaking, /chest-up|waist-up|close-up|head-and-shoulders|medium close-up/i);
   assert.match(leftSpeaking, /crop/i);
   assert.match(leftSpeaking, /no additional people|no other people|exactly one/i);
   assert.match(leftSpeaking, /nested panel/i);
-  assert.match(leftSpeaking, /split/i);
   assert.match(leftSpeaking, /border/i);
   assert.match(leftSpeaking, /caption/i);
   assert.match(leftSpeaking, /speech bubble|dialogue bubble/i);
   assert.match(leftSpeaking, /logo/i);
   assert.match(leftSpeaking, /watermark/i);
-  assert.match(leftSpeaking, /text/i);
-  assert.match(leftSpeaking, /unwanted|no .*object/i);
+  assert.equal(/Panel description:/i.test(leftSpeaking), false);
+  assert.equal(/two-character dialogue pair/i.test(leftSpeaking), false);
+  assert.equal(/speaking panel/i.test(leftSpeaking), false);
+  assert.equal(/listening or reaction panel/i.test(leftSpeaking), false);
+  assert.equal(/\bpartner\b/i.test(leftSpeaking), false);
+  assert.equal(/simple uniform non-scenic background/i.test(leftSpeaking), false);
   assert.equal(/one side of a two-panel split screen/i.test(leftSpeaking), false);
   assert.equal(/finished comic|comic page|assembled frame|split-screen comic/i.test(leftSpeaking), false);
+  assert.equal(/clearly illustrated rather than photorealistic/i.test(leftSpeaking), false);
 
   const rightListening = panelReadyPrompt({
     panelIndex: 1,
     characterName: "Дуров",
     description: "Дуров слушает",
   });
-  assert.match(rightListening, /right/i);
-  assert.match(rightListening, /listening|reaction/i);
+  assert.match(rightListening, /solid\s+matte/i);
+  assert.equal(/listening or reaction panel/i.test(rightListening), false);
+  assert.equal(/two-character dialogue pair/i.test(rightListening), false);
 });
 
 test("panel-ready gaze fallback applies only when no explicit direction or performance staging", () => {
@@ -204,9 +221,10 @@ test("panel-ready gaze fallback applies only when no explicit direction or perfo
 
   const descriptionDirection = panelReadyPrompt({
     panelIndex: 0,
-    description: "Путин смотрит screen-left на дверь",
+    description: "Путин смотрит screen-left",
   });
-  assert.equal(/inward conversational staging|subtle screen-right|viewer'?s?\s+right \(screen-right/i.test(descriptionDirection), false);
+  assert.match(descriptionDirection, /screen-left|viewer'?s?\s+left/i);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(descriptionDirection), false);
 
   const revisionDirection = panelReadyPrompt({
     panelIndex: 1,
@@ -214,7 +232,7 @@ test("panel-ready gaze fallback applies only when no explicit direction or perfo
     description: "Дуров отвечает",
     instruction: "look screen-right instead",
   });
-  assert.equal(/inward conversational staging|subtle screen-left|viewer'?s?\s+left \(screen-left/i.test(revisionDirection), false);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+left/i.test(revisionDirection), false);
 
   const withPerformance = panelReadyPrompt({
     panelIndex: 0,
@@ -222,7 +240,7 @@ test("panel-ready gaze fallback applies only when no explicit direction or perfo
     hasPerformance: true,
   });
   assert.match(withPerformance, /performance reference/i);
-  assert.equal(/inward conversational staging|subtle screen-right|viewer'?s?\s+right \(screen-right/i.test(withPerformance), false);
+  assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(withPerformance), false);
   assert.match(withPerformance, /pose|expression|gaze|head/i);
 });
 
@@ -231,67 +249,65 @@ test("panel-ready inward gaze names viewer-relative head and eye directions and 
     frame: eligibleDialogueFrame(),
     panelIndex: 0,
     characterName: "Путин",
-    description: "Путин спокойно говорит слева",
+    description: "Путин спокойно говорит",
     instruction: "",
     hasPerformance: false,
   });
-  assert.equal(leftIntent.gazeFallback, "screen-right");
+  assert.equal(leftIntent.gaze, "screen-right");
   const left = compilePanelReadyPrompt(leftIntent, { hasStyle: true });
   assert.match(left, /viewer'?s?\s+perspective|from the viewer/i);
   assert.match(left, /head|face/i);
   assert.match(left, /eyes?/i);
   assert.match(left, /viewer'?s?\s+right|screen-right/i);
-  assert.match(left, /inner edge/i);
-  assert.match(left, /outer edge/i);
   assert.match(left, /do not point|must not point|not .*toward the viewer'?s?\s+left|not .*outer/i);
-  assert.equal(/Gaze fallback for this ordinary conversational panel: subtle screen-right\. Do not add any other gaze direction\./.test(left), false);
+  assert.equal(/two-character dialogue pair|\bpartner\b|speaking panel/i.test(left), false);
 
   const rightIntent = compilePanelReadyIntent({
     frame: eligibleDialogueFrame(),
     panelIndex: 1,
     characterName: "Дуров",
-    description: "Дуров слушает справа",
+    description: "Дуров слушает",
     instruction: "",
     hasPerformance: false,
   });
-  assert.equal(rightIntent.gazeFallback, "screen-left");
+  assert.equal(rightIntent.gaze, "screen-left");
   const right = compilePanelReadyPrompt(rightIntent, { hasStyle: true });
   assert.match(right, /viewer'?s?\s+perspective|from the viewer/i);
   assert.match(right, /head|face/i);
   assert.match(right, /eyes?/i);
   assert.match(right, /viewer'?s?\s+left|screen-left/i);
-  assert.match(right, /inner edge/i);
-  assert.match(right, /outer edge/i);
   assert.match(right, /do not point|must not point|not .*toward the viewer'?s?\s+right|not .*outer/i);
-  assert.equal(/Gaze fallback for this ordinary conversational panel: subtle screen-left\. Do not add any other gaze direction\./.test(right), false);
+  assert.equal(/two-character dialogue pair|\bpartner\b|listening or reaction panel/i.test(right), false);
 
-  // No contradictory primary inward pair: left must not also instruct eyes toward viewer's left as the goal.
   assert.equal(/direct both eyes toward the viewer'?s?\s+left/i.test(left), false);
   assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(right), false);
 });
 
-test("panel-ready relational look-at-partner resolves to inward viewer-relative direction", () => {
+test("panel-ready relational look-at-partner derives inward gaze without provider-facing relational prose", () => {
   const left = panelReadyPrompt({
     panelIndex: 0,
     characterName: "Путин",
     description: "Путин looks at the other panel character while speaking",
   });
-  assert.match(left, /resolves? to|viewer'?s?\s+right|screen-right/i);
+  assert.match(left, /viewer'?s?\s+right|screen-right/i);
   assert.match(left, /head|face/i);
   assert.match(left, /eyes?/i);
-  assert.match(left, /outer edge/i);
+  assert.equal(/looks? at the other panel character/i.test(left), false);
+  assert.equal(/resolves? to/i.test(left), false);
+  assert.equal(/\bpartner\b/i.test(left), false);
+  assert.equal(/two-character dialogue pair/i.test(left), false);
   assert.equal(/Follow any explicit gaze or head direction from the panel description/i.test(left), false);
-  assert.equal(/do not add a conflicting inward gaze fallback/i.test(left), false);
 
   const right = panelReadyPrompt({
     panelIndex: 1,
     characterName: "Дуров",
     description: "Дуров смотрит на собеседника",
   });
-  assert.match(right, /resolves? to|viewer'?s?\s+left|screen-left/i);
+  assert.match(right, /viewer'?s?\s+left|screen-left/i);
   assert.match(right, /head|face/i);
   assert.match(right, /eyes?/i);
-  assert.equal(/Follow any explicit gaze or head direction from the panel description/i.test(right), false);
+  assert.equal(/смотрит на собеседника/i.test(right), false);
+  assert.equal(/\bpartner\b|собеседник/i.test(right), false);
 
   const namedPartner = panelReadyPrompt({
     panelIndex: 0,
@@ -307,6 +323,115 @@ test("panel-ready relational look-at-partner resolves to inward viewer-relative 
   assert.match(namedPartner, /viewer'?s?\s+right|screen-right/i);
   assert.match(namedPartner, /head|face/i);
   assert.match(namedPartner, /eyes?/i);
+  assert.equal(/смотрит на Дурова/i.test(namedPartner), false);
+  assert.equal(/Дурова/i.test(namedPartner), false);
+});
+
+test("eligible compilePanelReadyIntent keeps only canonical supported values and compiler version", () => {
+  const { intent, prompt } = panelReadyCompile({
+    panelIndex: 0,
+    characterName: "Путин",
+    description: COMPOSITE_DESCRIPTION,
+  });
+
+  assert.equal(intent.compilerVersion, "constrained-panel-intent/v1");
+  assert.equal(intent.characterName, "Путин");
+  assert.equal(intent.framing, "chest-up");
+  assert.equal(intent.upperBody, "upright torso with visible shoulders");
+  assert.equal(intent.gesture, "open-palm hand raised in crop");
+  assert.equal(intent.headPose, "head turned slightly screen-right");
+  assert.equal(intent.gaze, "screen-right");
+  assert.equal(intent.expression, "calm");
+  assert.equal(intent.background, "solid-matte");
+  assert.equal(Object.prototype.hasOwnProperty.call(intent, "description"), false);
+
+  assert.equal(/Panel description:/i.test(prompt), false);
+  assert.equal(prompt.includes(COMPOSITE_DESCRIPTION), false);
+  assert.equal(prompt.includes(COMPOSITE_CANARY), false);
+  assert.equal(/Unrecognized scenery prose/i.test(prompt), false);
+  assert.equal(/at a meeting/i.test(prompt), false);
+  assert.equal(/\bpartner\b/i.test(prompt), false);
+  assert.match(prompt, /Путин/);
+  assert.match(prompt, /chest-up/i);
+  assert.match(prompt, /upright torso with visible shoulders/i);
+  assert.match(prompt, /open-palm hand raised in crop/i);
+  assert.match(prompt, /head turned slightly screen-right/i);
+  assert.match(prompt, /screen-right|viewer'?s?\s+right/i);
+  assert.match(prompt, /\bcalm\b/i);
+  assert.match(prompt, /solid\s+matte/i);
+});
+
+test("eligible compiler never copies arbitrary description substrings and never falls back to full description", () => {
+  const uniquePhrase = "UNIQUE_ARBITRARY_SUBSTRING_q9m2";
+  const { intent, prompt } = panelReadyCompile({
+    panelIndex: 0,
+    characterName: "Путин",
+    description: `Путин ${uniquePhrase} with no recognized optional attributes`,
+  });
+
+  assert.equal(intent.compilerVersion, "constrained-panel-intent/v1");
+  assert.equal(intent.framing, "chest-up");
+  assert.equal(intent.upperBody, "visible shoulders and upper torso");
+  assert.equal(intent.gesture, "hands rest in crop");
+  assert.equal(intent.headPose, "near-frontal head");
+  assert.equal(intent.expression, "neutral");
+  assert.equal(intent.background, "solid-matte");
+  assert.equal(prompt.includes(uniquePhrase), false);
+  assert.equal(prompt.includes("with no recognized optional attributes"), false);
+  assert.equal(/Panel description:/i.test(prompt), false);
+  assert.equal(/No additional description/i.test(prompt), false);
+  assert.match(prompt, /solid\s+matte/i);
+  assert.match(prompt, /chest-up/i);
+});
+
+test("eligible compiler supports close-up through waist-up framing names and rejects wider framing as provider intent", () => {
+  for (const [description, framing] of [
+    ["close-up framing, upright torso with visible shoulders, hands rest in crop, near-frontal head, gaze to-camera, neutral expression", "close-up"],
+    ["head-and-shoulders framing, upright torso with visible shoulders, hands rest in crop, near-frontal head, gaze to-camera, neutral expression", "head-and-shoulders"],
+    ["chest-up framing, upright torso with visible shoulders, hands rest in crop, near-frontal head, gaze to-camera, neutral expression", "chest-up"],
+    ["medium close-up framing, upright torso with visible shoulders, hands rest in crop, near-frontal head, gaze to-camera, neutral expression", "medium-close-up"],
+    ["waist-up framing, upright torso with visible shoulders, hands rest in crop, near-frontal head, gaze to-camera, neutral expression", "waist-up"],
+  ]) {
+    const { intent, prompt } = panelReadyCompile({ description: `Путин ${description}` });
+    assert.equal(intent.framing, framing, description);
+    assert.match(prompt, new RegExp(framing.replace(/-/g, "[- ]?"), "i"));
+    assert.equal(/full-body|full length|head to toe/i.test(prompt), false);
+  }
+
+  const wide = panelReadyCompile({
+    description: `Путин full-body from head to toe ${COMPOSITE_CANARY}`,
+  });
+  assert.equal(wide.intent.framing, "chest-up");
+  assert.equal(/full-body|full length|head to toe/i.test(wide.prompt), false);
+  assert.equal(wide.prompt.includes(COMPOSITE_CANARY), false);
+  assert.match(wide.prompt, /chest-up/i);
+});
+
+test("eligible provider grammar forbids relational scenario prose and hard-coded competing style language", () => {
+  const prompt = panelReadyPrompt({
+    panelIndex: 0,
+    characterName: "Путин",
+    description: [
+      "Путин chest-up framing upright torso with visible shoulders",
+      "hands rest in crop near-frontal head gaze screen-right calm expression",
+      "two-character dialogue pair meeting context partner speaking panel",
+      COMPOSITE_CANARY,
+    ].join(" "),
+  });
+
+  assert.equal(/Panel description:/i.test(prompt), false);
+  assert.equal(/two-character dialogue pair/i.test(prompt), false);
+  assert.equal(/speaking panel/i.test(prompt), false);
+  assert.equal(/listening or reaction panel/i.test(prompt), false);
+  assert.equal(/\bpartner\b/i.test(prompt), false);
+  assert.equal(/meeting context/i.test(prompt), false);
+  assert.equal(prompt.includes(COMPOSITE_CANARY), false);
+  assert.match(prompt, /solid\s+matte/i);
+  assert.equal(/simple uniform non-scenic background/i.test(prompt), false);
+  assert.equal(/clearly illustrated rather than photorealistic/i.test(prompt), false);
+  assert.equal(/heavy near-black contour/i.test(prompt), false);
+  assert.match(prompt, /approved identity anchor|project style anchor/i);
+  assert.match(prompt, /exactly one|no additional people/i);
 });
 
 test("optional performance stays panel-scoped and does not displace identity or style", () => {

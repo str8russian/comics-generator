@@ -412,9 +412,10 @@ test("eligible split2 frame generate uses panel-ready compiler for both panels s
     assert.ok(elapsed < 2000, "frame generate remains a synchronous request");
     for (const [index, call] of calls.entries()) {
       assert.equal(call.aspectRatio, "5:4");
-      assert.match(call.prompt, /panel-ready|uniform/i);
-      assert.match(call.prompt, /chest-up/i);
+      assert.match(call.prompt, /panel-ready|solid\s+matte/i);
+      assert.match(call.prompt, /chest-up|waist-up|close-up|head-and-shoulders|medium close-up/i);
       assert.equal(/one side of a two-panel split screen/i.test(call.prompt), false);
+      assert.equal(/Panel description:/i.test(call.prompt), false);
       assert.deepEqual(
         call.images.map((image) => image.bytes.toString("utf8")),
         [`anchor-${index}`, "style-bytes", `perf-${index}`],
@@ -424,8 +425,123 @@ test("eligible split2 frame generate uses panel-ready compiler for both panels s
       assert.match(call.prompt, /Image 3 is the performance reference/);
       assert.equal(/previous (result|candidate|reference)/i.test(call.prompt), false);
     }
-    assert.match(calls[0].prompt, /left/i);
-    assert.match(calls[1].prompt, /right/i);
+    assert.match(calls[0].prompt, /performance reference owns gaze|Do not add any independent gaze/i);
+    assert.match(calls[1].prompt, /performance reference owns gaze|Do not add any independent gaze/i);
+    assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(calls[0].prompt), false);
+    assert.equal(/direct both eyes toward the viewer'?s?\s+left/i.test(calls[1].prompt), false);
+    assert.deepEqual(generated.body.generationFailures, []);
+  } finally {
+    await close(server);
+  }
+});
+
+test("eligible frame generate with empty body uses constrained canonical compiler without performance", async () => {
+  const calls = [];
+  const canary = "WORKFLOW_CANARY_UPSTREAM_8k2p";
+  const leftDescription = [
+    "Путин chest-up framing upright torso with visible shoulders",
+    "open-palm hand raised in crop head turned slightly toward screen-right",
+    `gaze toward screen-right calm expression ${canary} meeting context partner`,
+  ].join(" ");
+  const rightDescription = `Дуров chest-up framing upright torso with visible shoulders hands rest in crop near-frontal head gaze screen-left neutral expression ${canary}`;
+  const frame = {
+    id: "f1",
+    layout: "split2",
+    dialogue: "Привет.",
+    speakerPanel: 0,
+    sourceRole: "utterance",
+    panels: [
+      { description: leftDescription, subject: "Путин" },
+      { description: rightDescription, subject: "Дуров" },
+    ],
+  };
+  const store = {
+    load: async () => ({
+      ...visualState(),
+      styleSeedAssetId: "style-1",
+      characters: [
+        { name: "Путин", approvedAnchorId: "a0" },
+        { name: "Дуров", approvedAnchorId: "a1" },
+      ],
+      frames: [{
+        ...frame,
+        visualReady: false,
+        panels: frame.panels.map((panel) => ({
+          ...panel,
+          zoom: 1,
+          position: "50% 30%",
+          align: "50% 30%",
+        })),
+      }],
+    }),
+    beginPanelGeneration: async ({ panelIndex, instruction }) => {
+      assert.equal(instruction, "");
+      return {
+        ok: true,
+        id: `gen-${panelIndex}`,
+        storyboardVersionId: "version-1",
+        frame,
+        panel: frame.panels[panelIndex],
+        panelIndex,
+        subject: frame.panels[panelIndex].subject,
+        instruction: "",
+        refs: {
+          anchor: { id: `anchor-${panelIndex}`, mime: "image/png", bytes: Buffer.from(`anchor-${panelIndex}`) },
+          previous: null,
+          performance: null,
+          style: { id: "style", mime: "image/png", bytes: Buffer.from("style-bytes") },
+        },
+      };
+    },
+    finishPanelGeneration: async ({ id }) => ({
+      ok: true,
+      generationId: id,
+      assetId: id === "gen-0" ? "ready-0" : "ready-1",
+    }),
+  };
+  const started = Date.now();
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: store,
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const generated = await request(port, {
+      method: "POST",
+      path: "/api/visual/frames/f1/generate",
+      body: {},
+    });
+    assert.equal(generated.status, 200);
+    assert.equal(calls.length, 2);
+    assert.ok(Date.now() - started < 2000, "frame generate remains a synchronous request");
+    for (const [index, call] of calls.entries()) {
+      assert.equal(call.aspectRatio, "5:4");
+      assert.deepEqual(
+        call.images.map((image) => image.bytes.toString("utf8")),
+        [`anchor-${index}`, "style-bytes"],
+      );
+      assert.match(call.prompt, /Image 1 is the approved identity anchor/);
+      assert.match(call.prompt, /Image 2 is the project style anchor/);
+      assert.equal(/performance reference/i.test(call.prompt), false);
+      assert.equal(/Panel description:/i.test(call.prompt), false);
+      assert.equal(call.prompt.includes(leftDescription), false);
+      assert.equal(call.prompt.includes(rightDescription), false);
+      assert.equal(call.prompt.includes(canary), false);
+      assert.equal(/meeting context|\bpartner\b|two-character dialogue pair/i.test(call.prompt), false);
+      assert.equal(/User revision request:/i.test(call.prompt), false);
+      assert.match(call.prompt, /solid\s+matte/i);
+      assert.match(call.prompt, /chest-up/i);
+      assert.equal(/clearly illustrated rather than photorealistic/i.test(call.prompt), false);
+    }
+    assert.match(calls[0].prompt, /Путин/);
+    assert.match(calls[1].prompt, /Дуров/);
+    assert.match(calls[0].prompt, /screen-right|viewer'?s?\s+right/i);
+    assert.match(calls[1].prompt, /screen-left|viewer'?s?\s+left/i);
     assert.deepEqual(generated.body.generationFailures, []);
   } finally {
     await close(server);

@@ -8,21 +8,74 @@ Rendering language:
 - minimal fine texture
 - strong readability at small panel size`;
 
+/** Stable compiler identity for eligible panel-ready prompts (diagnostics in a later task). */
+export const PANEL_READY_COMPILER_VERSION = "constrained-panel-intent/v1";
+
+const CANONICAL_DEFAULTS = Object.freeze({
+  framing: "chest-up",
+  upperBody: "visible shoulders and upper torso",
+  gesture: "hands rest in crop",
+  headPose: "near-frontal head",
+  expression: "neutral",
+  background: "solid-matte",
+});
+
+const FRAMING_PATTERNS = [
+  { re: /\bwaist[-\s]?up\b/iu, value: "waist-up" },
+  { re: /\bmedium\s+close[-\s]?up\b/iu, value: "medium-close-up" },
+  { re: /\bchest[-\s]?up\b/iu, value: "chest-up" },
+  { re: /\bhead[-\s]?and[-\s]?shoulders\b/iu, value: "head-and-shoulders" },
+  { re: /\bclose[-\s]?up\b/iu, value: "close-up" },
+  { re: /поясн(?:ой|ого|ом)?\s+план/iu, value: "waist-up" },
+  { re: /по\s+грудь/iu, value: "chest-up" },
+  { re: /крупн(?:ый|ого|ом)?\s+план/iu, value: "close-up" },
+];
+
+const WIDER_FRAMING_RE = /full[-\s]?body|full[-\s]?length|from\s+head\s+to\s+toe|во\s+весь\s+рост|в\s+полный\s+рост|ниже\s+пояса|below\s+the\s+waist/iu;
+
+const UPPER_BODY_PATTERNS = [
+  { re: /upright\s+torso\s+(?:with|and)\s+visible\s+shoulders/iu, value: "upright torso with visible shoulders" },
+  { re: /visible\s+shoulders\s+and\s+upper\s+torso/iu, value: "visible shoulders and upper torso" },
+];
+
+const GESTURE_PATTERNS = [
+  { re: /open[-\s]?palm/iu, value: "open-palm hand raised in crop" },
+  { re: /hands\s+rest\s+in\s+crop/iu, value: "hands rest in crop" },
+];
+
+const HEAD_POSE_PATTERNS = [
+  { re: /head\s+turned\s+slightly\s+(?:toward\s+)?screen[-\s]?right/iu, value: "head turned slightly screen-right" },
+  { re: /head\s+turned\s+slightly\s+(?:toward\s+)?screen[-\s]?left/iu, value: "head turned slightly screen-left" },
+  { re: /near[-\s]?frontal\s+head/iu, value: "near-frontal head" },
+];
+
+const EXPRESSION_PATTERNS = [
+  { re: /\bcalm\b(?:\s+facial)?(?:\s+expression)?/iu, value: "calm" },
+  { re: /\bneutral\b(?:\s+facial)?(?:\s+expression)?/iu, value: "neutral" },
+];
+
+const EXPLICIT_DIRECTION_RE = /screen[- ]?(left|right)|look(?:s|ing)?\s+(?:to\s+the\s+)?(left|right)|gazes?\s+(?:to\s+the\s+)?(left|right)|to[- ]camera|at[- ]camera|toward(?:s)?\s+camera|facing\s+camera|смотрит\s+влево|смотрит\s+вправо|взгляд\s+влево|взгляд\s+вправо|на\s+камеру|в\s+камеру|повернут[ао]?\s+влево|повернут[ао]?\s+вправо/i;
+
+/** Relational look-at-partner language that may derive inward gaze only; never provider-facing prose. */
+const RELATIONAL_PARTNER_RE = /looks?\s+at\s+the\s+other\s+panel\s+character|looking\s+at\s+the\s+other\s+panel\s+character|looks?\s+at\s+(?:the\s+)?(?:other|partner|counterpart)|looking\s+at\s+(?:the\s+)?(?:other|partner|counterpart)|toward(?:s)?\s+the\s+(?:other|partner)|at\s+(?:their\s+)?(?:interlocutor|partner)|смотрит\s+на\s+собеседник\w*|взгляд\s+на\s+собеседник\w*|смотрит\s+на\s+партн\w*/i;
+
 function clean(value, max = 4000) {
   return String(value ?? "").trim().slice(0, max);
 }
 
-const EXPLICIT_DIRECTION_RE = /screen[- ]?(left|right)|look(?:s|ing)?\s+(?:to\s+the\s+)?(left|right)|gazes?\s+(?:to\s+the\s+)?(left|right)|to[- ]camera|at[- ]camera|toward(?:s)?\s+camera|facing\s+camera|смотрит\s+влево|смотрит\s+вправо|взгляд\s+влево|взгляд\s+вправо|на\s+камеру|в\s+камеру|повернут[ао]?\s+влево|повернут[ао]?\s+вправо/i;
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-/** Relational look-at-partner language that must resolve to inward viewer-relative staging, not suppress it. */
-const RELATIONAL_PARTNER_RE = /looks?\s+at\s+the\s+other\s+panel\s+character|looking\s+at\s+the\s+other\s+panel\s+character|looks?\s+at\s+(?:the\s+)?(?:other|partner|counterpart)|looking\s+at\s+(?:the\s+)?(?:other|partner|counterpart)|toward(?:s)?\s+the\s+(?:other|partner)|at\s+(?:their\s+)?(?:interlocutor|partner)|смотрит\s+на\s+собеседник\w*|взгляд\s+на\s+собеседник\w*|смотрит\s+на\s+партн\w*/i;
+function matchFirst(text, patterns) {
+  for (const { re, value } of patterns) {
+    if (re.test(text)) return value;
+  }
+  return null;
+}
 
 function hasExplicitDirection(...texts) {
   return texts.some((text) => EXPLICIT_DIRECTION_RE.test(String(text ?? "")));
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function hasRelationalPartnerDirection(texts, partnerName) {
@@ -49,19 +102,55 @@ function partnerNameForPanel(frame, panelIndex) {
   return typeof name === "string" && name.trim() ? name.trim() : "";
 }
 
-function inwardGazeInstruction(panelSide, gazeFallback, { fromRelational = false } = {}) {
-  const inward = gazeFallback === "screen-right" ? "right" : "left";
-  const outer = gazeFallback === "screen-right" ? "left" : "right";
-  const resolvePrefix = fromRelational
-    ? "The description's request to look at the other panel character resolves to this inward viewer-relative direction. "
-    : "";
+function extractExplicitGaze(text) {
+  const value = String(text ?? "");
+  if (/to[-\s]?camera|at[-\s]?camera|toward(?:s)?\s+camera|facing\s+camera|на\s+камеру|в\s+камеру/i.test(value)) {
+    return "to-camera";
+  }
+  if (/screen[-\s]?right|look(?:s|ing)?\s+(?:to\s+the\s+)?right|gazes?\s+(?:to\s+the\s+)?right|смотрит\s+вправо|взгляд\s+вправо|повернут[ао]?\s+вправо/i.test(value)) {
+    return "screen-right";
+  }
+  if (/screen[-\s]?left|look(?:s|ing)?\s+(?:to\s+the\s+)?left|gazes?\s+(?:to\s+the\s+)?left|смотрит\s+влево|взгляд\s+влево|повернут[ао]?\s+влево/i.test(value)) {
+    return "screen-left";
+  }
+  return null;
+}
+
+function extractFraming(text) {
+  if (WIDER_FRAMING_RE.test(text)) return CANONICAL_DEFAULTS.framing;
+  return matchFirst(text, FRAMING_PATTERNS) || CANONICAL_DEFAULTS.framing;
+}
+
+function resolveCanonicalGaze({
+  description,
+  instruction,
+  panelIndex,
+  hasPerformance,
+  partnerName,
+}) {
+  if (hasPerformance === true) return null;
+  const fromDescription = extractExplicitGaze(description);
+  if (fromDescription) return fromDescription;
+  // Non-empty revision may carry explicit direction; do not invent inward gaze over it.
+  // Instruction text itself is not mapped into canonical intent in this slice.
+  if (hasExplicitDirection(instruction)) return null;
+  // Relational partner language (and ordinary dialogue defaults) derive the same inward gaze.
+  // partnerName is accepted so named look-at cues can be detected without becoming prompt text.
+  hasRelationalPartnerDirection([description, instruction], partnerName);
+  return panelIndex === 0 ? "screen-right" : "screen-left";
+}
+
+function gazeInstruction(gaze) {
+  if (gaze === "to-camera") {
+    return "Gaze: toward the camera.";
+  }
+  if (gaze !== "screen-right" && gaze !== "screen-left") return null;
+  const inward = gaze === "screen-right" ? "right" : "left";
+  const outer = gaze === "screen-right" ? "left" : "right";
   return (
-    `${resolvePrefix}`
-    + `Inward conversational staging for this ${panelSide} panel, from the viewer's perspective: `
-    + `gently turn the head and face toward the viewer's ${inward} (screen-${inward} / the inner edge of this panel), `
-    + `and direct both eyes toward the viewer's ${inward} (screen-${inward} / inner edge). `
-    + `Do not point the head, face, or either eye toward the viewer's ${outer} (screen-${outer} / the outer edge of this panel). `
-    + `Keep the gaze engaged across the gutter toward the partner, not away from the frame center.`
+    `Gaze: from the viewer's perspective, gently turn the head and face toward the viewer's ${inward} (screen-${inward}), `
+    + `and direct both eyes toward the viewer's ${inward} (screen-${inward}). `
+    + `Do not point the head, face, or either eye toward the viewer's ${outer} (screen-${outer}).`
   );
 }
 
@@ -113,28 +202,34 @@ export function compilePanelReadyIntent({
   hasPerformance = false,
   partnerName = null,
 }) {
+  const text = String(description ?? "");
   const side = panelIndex === 0 ? "left" : "right";
   const speaking = Number.isInteger(frame?.speakerPanel) && panelIndex === frame.speakerPanel;
-  const role = speaking ? "speaking" : "listening";
   const partner = clean(partnerName ?? partnerNameForPanel(frame, panelIndex), 160);
-  const explicitDirection = hasExplicitDirection(description, instruction);
-  const relationalPartner = !explicitDirection
-    && hasRelationalPartnerDirection([description, instruction], partner);
-  // Performance and genuine viewer-relative explicit directions suppress inward fallback.
-  // Relational look-at-partner language does not suppress — it resolves to the inward direction.
-  const suppressGazeFallback = explicitDirection || hasPerformance === true;
-  const gazeFallback = suppressGazeFallback
-    ? null
-    : (panelIndex === 0 ? "screen-right" : "screen-left");
+  const gaze = resolveCanonicalGaze({
+    description: text,
+    instruction,
+    panelIndex,
+    hasPerformance,
+    partnerName: partner,
+  });
+
   return {
+    compilerVersion: PANEL_READY_COMPILER_VERSION,
     characterName: clean(characterName, 160),
-    description: clean(description),
-    instruction: clean(instruction),
+    framing: extractFraming(text),
+    upperBody: matchFirst(text, UPPER_BODY_PATTERNS) || CANONICAL_DEFAULTS.upperBody,
+    gesture: matchFirst(text, GESTURE_PATTERNS) || CANONICAL_DEFAULTS.gesture,
+    headPose: matchFirst(text, HEAD_POSE_PATTERNS) || CANONICAL_DEFAULTS.headPose,
+    gaze,
+    expression: matchFirst(text, EXPRESSION_PATTERNS) || CANONICAL_DEFAULTS.expression,
+    background: CANONICAL_DEFAULTS.background,
+    // Internal derivation inputs only — not provider-facing relational prose.
     panelIndex,
     panelSide: side,
-    speakingRole: role,
-    gazeFallback,
-    gazeFromRelational: Boolean(gazeFallback && relationalPartner),
+    speakingRole: speaking ? "speaking" : "listening",
+    // Separate regen overlay channel; empty on the system-created acceptance path.
+    instruction: clean(instruction),
     hasPerformance: hasPerformance === true,
   };
 }
@@ -168,41 +263,46 @@ export function compilePanelReadyPrompt(intent, {
     roles.push(`Image ${next} is the previous result for this panel. Use it as the staging draft and apply the requested revision.`);
   }
 
-  const gazeLine = intent.gazeFallback
-    ? inwardGazeInstruction(intent.panelSide, intent.gazeFallback, {
-      fromRelational: intent.gazeFromRelational === true,
-    })
+  const framingLabel = String(intent.framing || CANONICAL_DEFAULTS.framing);
+  const gazeLine = intent.gaze
+    ? gazeInstruction(intent.gaze)
     : hasPerformance
       ? "Do not add any independent gaze or head-direction instruction; the performance reference owns gaze and head angle."
-      : "Follow any explicit gaze or head direction from the panel description or revision request. Do not add a conflicting inward gaze fallback.";
+      : null;
 
-  const roleLine = intent.speakingRole === "speaking"
-    ? "This is the speaking panel."
-    : "This is a listening or reaction panel.";
+  const lines = [
+    `Create one independent panel-ready character image${intent.characterName ? ` featuring ${intent.characterName}` : ""}.`,
+    "",
+    `Framing: crop-safe ${framingLabel} so the face, mouth, expression, gesture, and essential upper body remain inside the image.`,
+    `Visible upper-body geometry: ${intent.upperBody || CANONICAL_DEFAULTS.upperBody}.`,
+    `In-crop gesture: ${intent.gesture || CANONICAL_DEFAULTS.gesture}.`,
+    `Head: ${intent.headPose || CANONICAL_DEFAULTS.headPose}.`,
+  ];
+  if (gazeLine) lines.push(gazeLine);
+  lines.push(`Facial expression: ${intent.expression || CANONICAL_DEFAULTS.expression}.`);
+  lines.push("Background: solid matte fill. Do not invent a location, room, landscape, patterned backdrop, or scenic environment.");
+  lines.push("");
+  lines.push("Role of the reference images:");
+  lines.push(roles.length ? roles.join("\n") : "No reference image is supplied. Follow the canonical panel intent and approved authorities.");
+  lines.push("");
+  lines.push("Hard prohibitions:");
+  lines.push("- exactly one person; no additional people");
+  lines.push("- no nested panels and no split layout inside the generated image");
+  lines.push("- no borders, captions, speech bubbles, dialogue bubbles, logos, watermarks, or generated text");
+  lines.push("- no unwanted contradictory scene objects");
+  lines.push("");
+  lines.push("Generate only this single character image for later external assembly.");
+  lines.push("");
+  lines.push("Target aspect ratio: 5:4.");
 
-  return `Create one independent panel-ready character image${intent.characterName ? ` featuring ${intent.characterName}` : ""}.
+  // Regeneration overlay remains separate from canonical panel intent; not filtered in this slice.
+  const overlay = clean(intent.instruction);
+  if (overlay) {
+    lines.push("");
+    lines.push(`User revision request: ${overlay}`);
+  }
 
-Panel side: ${intent.panelSide} panel of a two-character dialogue pair. ${roleLine}
-Panel description: ${intent.description || "No additional description."}
-User revision request: ${intent.instruction || "No additional revision."}
-${gazeLine}
-
-Role of the reference images:
-${roles.length ? roles.join("\n") : "No reference image is supplied. Follow the panel description and rendering language."}
-
-Produce a crop-safe chest-up framing with the face, mouth, expression, gesture, and essential upper body safely inside the image so later placement zoom does not crop them out.
-Use a simple uniform non-scenic background. Do not invent a location, room, landscape, or scenic environment.
-
-Hard prohibitions:
-- exactly one person; no additional people
-- no nested panels and no split layout inside the generated image
-- no borders, captions, speech bubbles, dialogue bubbles, logos, watermarks, or generated text
-- no unwanted contradictory scene objects
-
-Generate only this single character image for later external assembly. Do not draw the partner, gutters, or a complete multi-panel page.
-${STYLE_LANGUAGE}
-
-Target aspect ratio: 5:4.`;
+  return lines.join("\n");
 }
 
 export function resolvePanelSubject(description, characters, aliases = []) {
