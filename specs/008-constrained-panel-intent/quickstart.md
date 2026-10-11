@@ -22,15 +22,21 @@ From `app/storyboard-web` (or project test scripts), after implementation run fo
    - support-dependent narrative wording is rejected unless already expressed as allowed visible geometry;
    - existing source-fidelity and dialogue regressions remain green.
 
-2. **Visual compiler**
-   - eligible `compilePanelReadyPrompt` output contains no concatenated full panel description and no raw source text;
-   - system solid-matte rule and waist-up ceiling are present;
-   - identity/style role labels remain;
-   - synthetic unsupported upstream description text does not appear in compiled provider input.
+2. **Visual compiler (canonical closed boundary)**
+   - eligible `compilePanelReadyPrompt` output is assembled from bounded, canonical supported-intent values only;
+   - except for the cast-resolved canonical character name, arbitrary panel-description substrings are not copied into the provider prompt;
+   - unknown, unrecognized, or unsupported wording contributes no provider-facing text;
+   - the compiler never falls back to the full description when extraction yields no supported attributes (neutral defaults or reject at an existing boundary);
+   - frame side / speaker-listener role do not appear as relational or scenario prose (no “two-character dialogue pair,” “partner,” meeting context, etc.);
+   - provider-facing output stays within assigned character, close-up→waist-up framing/crop, visible upper-body geometry and in-crop gesture, head turn/tilt, gaze, facial expression, system solid matte background, and identity/style reference-role instructions without scene content;
+   - unique canary text placed in unsupported or unrecognized upstream prose does not occur in the compiled provider prompt, while recognized intent is emitted only as canonical values;
+   - nested-panel elimination is not asserted as solved.
 
 3. **Visual workflow (provider doubles)**
    - eligible frame generate with `body: {}` uses the constrained compiler;
    - missing identity/style still blocks with zero provider calls;
+   - existing `logVisual` path records compact structured canonical intent evidence (fingerprint alone is insufficient) plus compiler version and identity/style authority ids when present, together with panel address and terminal result/failure reason;
+   - logging excludes raw panel descriptions, source/user material, complete prompts, provider payloads, credentials, secret-bearing URLs, and image bytes;
    - secret/prompt/image-byte logging regressions remain green.
 
 4. **Protected invariants**
@@ -73,9 +79,11 @@ In one open browser session, without reload, navigation away, cancellation, manu
 
 - Source wording, source order, and speaker ownership unchanged
 - Unsupported categories / bad subject cardinality cannot be ready
-- Provider-facing eligible prompt is independently compiled (no raw description/source concatenation)
+- Provider-facing eligible prompt is independently compiled from canonical supported-intent values only (no raw description/source concatenation; canary prose absent)
+- Structured canonical intent evidence is logged; fingerprint is not a substitute
 - FrameRenderer geometry unchanged
 - Existing truthful blocked/failure behavior preserved for missing authorities and provider failures
+- Nested-panel elimination remains explicitly out of scope / unsolved for this slice
 
 ## Failure checks (same session rules; no deferred recovery)
 

@@ -14,8 +14,8 @@ Technical approach (see [research.md](./research.md)):
 
 1. Constrain Storyboarder (and Structure-edit) prompts to supported character-performance vocabulary.
 2. Add deterministic `assessPanelIntent` inside `buildChecked` so unsupported or zero/multi-character panels cannot become ready (prefer rejection; no new repair subsystem).
-3. Rewrite the eligible panel-ready compiler so provider prompts are compiled only from ephemeral supported intent + identity/style authorities + system matte rule — never by concatenating raw source or full panel-description prose.
-4. Extend existing sanitized `logVisual` with the minimum missing fields (compiler version, compact intent tokens/fingerprint, authority ids).
+3. Rewrite the eligible panel-ready compiler so the provider-facing prompt is assembled only from bounded, canonical supported-intent values plus identity/style reference-role instructions and the system matte rule — never by concatenating raw source or full panel-description prose, and never by copying arbitrary description substrings (except the cast-resolved canonical character name).
+4. Extend existing sanitized `logVisual` with the minimum missing fields (compiler version, compact structured canonical intent evidence, authority ids; optional fingerprint only as supplement).
 5. Prove both boundaries with offline mutations and provider doubles; finish in a short browser Happy Path.
 6. Make no new persistence entities, operations, polling, recovery, hybrid composition, or automatic reviewer.
 
@@ -86,8 +86,8 @@ app/storyboard-web/
 └── test/
     ├── panel-intent.test.mjs        # NEW: unsupported categories, subject cardinality, framing
     ├── fidelity-*.test.mjs / storyboard-blocked.test.mjs  # ready/blocked regressions
-    ├── visual-model.test.mjs        # compiler non-concatenation + matte + waist-up ceiling
-    ├── visual-workflow.test.mjs     # eligible frame generate spy; no description prose in prompt
+    ├── visual-model.test.mjs        # canonical compiler output; canary prose absent; matte + waist-up
+    ├── visual-workflow.test.mjs     # eligible frame generate spy; logVisual canonical intent evidence
     └── stage-cast.test.mjs          # cast still passed; optional prompt-constraint smoke
 
 prototypes/storyboard-viewer/
@@ -126,13 +126,30 @@ Add a pure module (name illustrative: `panel-intent.mjs`) used by `buildChecked`
 
 Prefer rejection. No automatic rewrite/retry. Feature 004 remains user-edit machinery, not the primary correction path for first Stage output.
 
-### 3. Independent eligible Visual compilation
+### 3. Independent eligible Visual compilation (canonical closed boundary)
 
-In `visual-model.mjs` for the panel-ready eligible path:
+In `visual-model.mjs` for the panel-ready eligible path, the provider-facing prompt is assembled from **bounded, canonical supported-intent values only**, plus identity/style reference-role instructions that do not add scene content.
 
-- Build ephemeral supported intent from subject, frame geometry/role, and only allowlisted performance tokens extracted or defaulted for compilation — **do not** embed `Panel description:` or arbitrary full description prose.
-- Emit system-defined solid matte background rule; waist-up ceiling; keep one-character and existing hard prohibitions.
-- Preserve gaze/role/reference-role behavior already accepted in feature 007, without reopening performance-reference transfer design.
+Canonical closed rules:
+
+1. Except for the cast-resolved canonical character name, the compiler must **not** copy arbitrary substrings from the panel description into the provider prompt.
+2. Unknown, unrecognized, or unsupported wording contributes **no** provider-facing text.
+3. The compiler must **never** fall back to the full description when extraction yields no supported attributes. It must use supported neutral defaults or reject at the appropriate existing boundary (Structure ready-gate or Visual preflight/attempt failure).
+4. Frame side and speaker/listener role may remain **internal** inputs used only to derive concrete supported visual attributes (for example viewer-relative gaze or a visible facial state). They must **not** become relational or scenario prose in the provider prompt such as “two-character dialogue pair,” “partner,” meeting context, or other language capable of inviting additional people, scenery, or composition outside the accepted grammar.
+5. Provider-facing output remains limited to:
+   - the assigned character;
+   - close-up through waist-up framing and crop;
+   - visible upper-body geometry and in-crop gesture;
+   - head turn and tilt;
+   - gaze direction;
+   - facial expression;
+   - the system-defined solid matte background;
+   - identity/style reference-role instructions that do not add scene content.
+6. This clarification does **not** claim nested-panel elimination is solved; that remains a later slice (FR-023).
+
+Also:
+
+- Emit the system-defined solid matte background rule and waist-up ceiling; keep the one-character hard prohibition.
 - Leave user-authored regeneration-prompt filtering for a later slice; Happy Path uses frame generate with empty instruction and no performance.
 - Historical `panelPrompt` for ineligible layouts is outside this acceptance path; do not expand scope to redesign all layouts unless a tiny shared helper reuse is clearly cheaper than duplication (must not become a general sanitization framework).
 
@@ -140,11 +157,23 @@ Wire through existing `generateOnePanel` in `server.mjs`.
 
 ### 4. Minimum diagnostics
 
-Extend existing `logVisual` panel start/provider/outcome events with `compilerVersion`, compact intent tokens or fingerprint (no prose), and identity/style authority asset ids when present. Keep >120-char string dropping. No ZIP, prompt archive, or payload storage.
+Extend existing `logVisual` panel start/provider/outcome events with:
+
+- `compilerVersion`;
+- compact, safe, **structured canonical intent evidence** (the actual supported intent used for compilation — not a fingerprint substitute);
+- identity and style authority asset ids when present;
+- existing panel address plus terminal `status` / `kind`.
+
+An optional intent fingerprint may be recorded only as **supplementary** evidence; it cannot replace the structured canonical intent. Combined with panel address, compiler version, identity/style authority ids, and terminal result/failure reason, the logged evidence must be sufficient to reconstruct or understand the compiler input.
+
+Keep >120-char string dropping. Do not log raw panel descriptions, source material, user material, complete prompts, provider payloads, credentials, secret-bearing URLs, or image bytes. No ZIP, prompt archive, table, migration, or new diagnostic subsystem.
 
 ### 5. Tests before behavior (implementation discipline)
 
-For each new behavior, add failing deterministic tests first (Tasks will sequence this). Coverage targets are listed in research D5 and [quickstart.md](./quickstart.md).
+For each new behavior, add failing deterministic tests first (Tasks will sequence this). Coverage targets are listed in research D5 and [quickstart.md](./quickstart.md). Required compiler/logging proofs include:
+
+- unique canary text placed in unsupported or unrecognized upstream prose does not occur in the compiled provider prompt, while recognized intent is emitted only as canonical values;
+- the existing logging path records structured canonical intent evidence and excludes raw prose.
 
 ## Implementation groups → browser acceptance
 
@@ -152,8 +181,8 @@ For each new behavior, add failing deterministic tests first (Tasks will sequenc
 |-------|---------------------------|-------------------|-----------------------------------|
 | A. Stage/edit prompt constraints | Structure panel descriptions match supported grammar on Happy Path | Prevents Storyboarder from emitting known unsupported scenario prose | Prompt already exists but currently invites free-form scene prose |
 | B. `assessPanelIntent` in `buildChecked` | Unsupported / 0–N-character panels never shown as ready | Non-user-dependent Stage failures already observed | Fidelity checks ignore visual grammar; subject heuristic is post-hoc |
-| C. Eligible compiler rewrite | Generated panel prompt cannot carry unsupported upstream prose; matte + waist-up | Independent downstream boundary (FR-009–FR-013) | Current compiler concatenates full description |
-| D. Minimal `logVisual` fields | Agent can reproduce failed panel with safe evidence | FR-020 gaps vs existing logs | Address/result exist; intent/version/authority ids do not |
+| C. Eligible compiler rewrite | Provider prompt contains only canonical supported-intent values + matte/identity/style roles; canary prose absent | Independent downstream boundary (FR-009–FR-013) | Current compiler concatenates full description and emits relational layout prose |
+| D. Minimal `logVisual` fields | Agent can reconstruct compiler input from structured canonical intent + address/version/authorities/result | FR-020 gaps vs existing logs | Address/result exist; structured intent/version/authority ids do not |
 | E. Offline mutations + workflow doubles | Prove both boundaries without live prompts/archives | Spec SC-002–SC-008 | Existing tests do not cover constrained intent |
 | F. Browser Happy Path | Owner-visible Structure + one panel result | Spec US1–US2 / SC-001–SC-005 | Automated doubles cannot replace human visual acceptance |
 
@@ -162,10 +191,12 @@ For each new behavior, add failing deterministic tests first (Tasks will sequenc
 ### Deterministic
 
 - Panel-intent / blocked readiness tests for each unsupported category and subject cardinality.
-- Compiler unit tests: no raw description/source concatenation; matte rule present; waist-up ceiling; identity/style role labels preserved.
+- Compiler unit tests: provider output uses only canonical supported-intent values; unique canary text in unsupported/unrecognized upstream prose is absent from the compiled prompt; no full-description fallback; no relational/scenario prose; matte rule and waist-up ceiling present; identity/style role labels preserved without scene content.
+- Logging tests: existing `logVisual` path records structured canonical intent evidence (fingerprint alone insufficient) and excludes raw prose/prompts/bytes.
 - Eligible frame-generate workflow test with imageGenerator spy.
 - Existing fidelity, overflow, placement, and Visual honesty regressions stay green.
 - No edits to `prototypes/storyboard-viewer/frame-renderer.mjs`.
+- Nested-panel elimination remains explicitly unsolved and untested as solved.
 
 ### Browser (implementation / owner acceptance; not Plan)
 

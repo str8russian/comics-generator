@@ -1,8 +1,8 @@
 # Research: Constrained panel intent
 
-**Date**: 2026-10-11  
-**Branch**: `codex/008-constrained-panel-intent`  
-**Base**: `d6a93e0fd8b76ec4a7ea9a86fb1d71c4a199197a`  
+**Date**: 2026-10-11
+**Branch**: `codex/008-constrained-panel-intent`
+**Base**: `d6a93e0fd8b76ec4a7ea9a86fb1d71c4a199197a`
 **Spec**: [spec.md](./spec.md)
 
 ## Evidence summary (current code)
@@ -22,7 +22,7 @@
 - That compiler still concatenates `Panel description: ${intent.description}` and `User revision request: ${intent.instruction}` into the provider prompt, while also emitting one-character / uniform-background rules.
 - Historical `panelPrompt` remains for ineligible layouts and still forwards description prose.
 - Reference assembly for panel-ready already protects identity → style → performance → previous under the three-image limit.
-- Sanitized `logVisual` already records panel address (`frameId`, `panelIndex`), terminal `status`/`kind`, and avoids long strings/prompts/bytes. It does not record compiler version, supported-intent summary, or identity/style authority asset ids.
+- Sanitized `logVisual` already records panel address (`frameId`, `panelIndex`), terminal `status`/`kind`, and avoids long strings/prompts/bytes. It does not record compiler version, structured canonical intent evidence, or identity/style authority asset ids.
 
 ### Safe fixtures / eval
 
@@ -42,7 +42,7 @@
 
 1. Constrain Storyboarder output via `prompts/stage.md` (and keep `prompts/edit-storyboard.md` aligned so user Structure edits cannot reintroduce unsupported grammar as ready content).
 2. Add deterministic `assessPanelIntent(frames, cast)` called from `buildChecked` so unsupported candidates cannot become ready.
-3. Rewrite the eligible panel-ready compiler so the provider prompt is compiled only from supported intent fields + identity/style authorities + the system matte-background rule, without concatenating raw description or raw source prose.
+3. Rewrite the eligible panel-ready compiler so the provider-facing prompt is assembled only from bounded, canonical supported-intent values + identity/style reference-role instructions + the system matte-background rule, without concatenating raw description or raw source prose and without copying arbitrary description substrings (except the cast-resolved canonical character name).
 
 **Rationale**: Spec FR-009 requires the two boundaries to be independently testable. Observed bedroom-like failure shows Structure prose alone is insufficient if the compiler still forwards it.
 
@@ -62,8 +62,8 @@ Representation plan:
 |-------|----------------|
 | Structure review content | Existing `description` string, constrained by prompt + validator to supported categories only |
 | Character assignment | Cast-aware subject resolution over description; readiness requires exactly one distinct assigned character per future image panel |
-| Downstream compile-time intent | Ephemeral object built by the Visual compiler (character, shot scale/crop, visible geometry tokens, gesture, head pose, gaze, expression, matte background, panel side/role). Not persisted as a new entity |
-| Provider prompt | Compiled only from that ephemeral intent + reference-role labels + system matte rule |
+| Downstream compile-time intent | Ephemeral object of **canonical** supported values (character, shot scale/crop, visible geometry, gesture, head pose, gaze, expression, matte background). Frame side and speaker/listener role are internal derivation inputs only, not provider-facing relational prose. Not persisted as a new entity |
+| Provider prompt | Assembled only from those canonical values + identity/style reference-role instructions that add no scene content + system matte rule |
 
 **Rationale**: Happy Path is achievable without a material schema boundary. Spec leaves representation open and forbids new persistent entities (FR-022). Existing `description` already reaches Structure review and FrameRenderer; tightening it avoids dual sources of truth.
 
@@ -105,23 +105,30 @@ Unsupported-category detection:
 
 ### D4: Independent downstream compilation for system-created generation
 
-**Decision**: Evolve `compilePanelReadyIntent` / `compilePanelReadyPrompt` (eligible panel-ready path) so that:
+**Decision**: Evolve `compilePanelReadyIntent` / `compilePanelReadyPrompt` (eligible panel-ready path) into a **canonical closed** compiler boundary:
 
-1. Full panel `description` is **not** concatenated into the provider prompt.
-2. Raw source text is never an input.
-3. Compile-time intent is derived only into supported categories (character name/subject, shot scale within close-up→waist-up, visible geometry/gesture/head/gaze/expression tokens, panel side, speaking/listening role, system matte background).
-4. Background wording becomes a **system-defined solid matte** rule (stronger than “simple uniform non-scenic”).
-5. Shot-scale ceiling is waist-up (never more body coverage); crop-safe guidance remains.
-6. Identity and project-style authorities continue via existing `assemblePanelReadyReferences`; Happy Path acceptance uses no performance reference and empty instruction.
-7. User-authored `instruction` forwarding on panel regenerate remains untouched as a later DEC-050 slice; the Happy Path frame-generate body stays `{}`.
+1. The provider-facing prompt is assembled from **bounded, canonical supported-intent values only**.
+2. Except for the cast-resolved canonical character name, the compiler must **not** copy arbitrary substrings from the panel description into the provider prompt.
+3. Unknown, unrecognized, or unsupported wording contributes **no** provider-facing text.
+4. The compiler must **never** fall back to the full description when extraction yields no supported attributes; it must use supported neutral defaults or reject at the appropriate existing boundary.
+5. Raw source text is never an input; full panel `description` is never concatenated.
+6. Frame side and speaker/listener role may remain internal inputs for deriving concrete supported visual attributes (viewer-relative gaze, visible facial state). They must **not** become relational or scenario prose such as “two-character dialogue pair,” “partner,” meeting context, or other language that can invite additional people, scenery, or out-of-grammar composition.
+7. Provider-facing output remains limited to: the assigned character; close-up through waist-up framing and crop; visible upper-body geometry and in-crop gesture; head turn and tilt; gaze direction; facial expression; the system-defined solid matte background; and identity/style reference-role instructions that do not add scene content.
+8. Background wording becomes a **system-defined solid matte** rule (stronger than “simple uniform non-scenic”).
+9. Shot-scale ceiling is waist-up (never more body coverage); crop-safe guidance remains.
+10. Identity and project-style authorities continue via existing `assemblePanelReadyReferences`; Happy Path acceptance uses no performance reference and empty instruction.
+11. User-authored `instruction` forwarding on panel regenerate remains untouched as a later DEC-050 slice; the Happy Path frame-generate body stays `{}`.
+12. Nested-panel elimination is **not** claimed solved; that remains a later slice (FR-023).
 
 Compiler version: introduce a short constant (e.g. `constrained-panel-intent/v1`) used in logs and tests.
 
-**Rationale**: Current eligible compiler still embeds `Panel description:` and therefore fails FR-010–FR-013 even after Structure cleanup. Frame generate is already separable from regenerate.
+**Rationale**: Current eligible compiler still embeds `Panel description:` and relational layout phrasing, so it fails FR-010–FR-013 even after Structure cleanup. Frame generate is already separable from regenerate.
 
 **Alternatives rejected**:
 
 - Keep description concatenation “for human context” — contradicts FR-012 and the bedroom-like evidence path.
+- Free-text extraction that copies arbitrary recognized substrings into the prompt — still leaks unrecognized/unsupported wording and is not a closed canonical boundary.
+- Fall back to full description when extraction is empty — reopens FR-013.
 - Design user-regeneration prompt filtering now — explicitly out of scope.
 - Replace image-provider or FrameRenderer — unnecessary.
 - Apply a new general prompt-sanitization framework — over-scoped; gatekeeper rejects cross-cutting platforms.
@@ -138,9 +145,12 @@ Residual disclosure: historical `panelPrompt` for ineligible layouts may still f
 | Exactly one assigned character per future image panel | subject-cardinality tests with cast/aliases |
 | More-than-waist-up rejected | framing patterns in `assessPanelIntent` |
 | Support-dependent narrative wording converted or rejected | synthetic RU/EN mutations |
-| Downstream compiled prompt contains no raw description/source concatenation | `visual-model.test.mjs` assertions on compiler output |
+| Downstream compiled prompt contains only canonical supported-intent values; no raw description/source concatenation | `visual-model.test.mjs` assertions on compiler output |
+| Unique canary text in unsupported/unrecognized upstream prose is absent from compiled provider prompt; recognized intent emitted only as canonical values | compiler canary mutations (pure function) |
 | Each unsupported semantic category absent from compiled provider input | compiler mutations (pure function) |
+| No full-description fallback; no relational/scenario provider prose | `visual-model.test.mjs` |
 | Eligible frame generate uses constrained compiler | `visual-workflow.test.mjs` spy on `imageGenerator` prompt |
+| `logVisual` records structured canonical intent evidence and excludes raw prose | `visual-workflow.test.mjs` logging assertions |
 | Source wording/order/speaker ownership unchanged | existing fidelity/overflow regressions remain green |
 | FrameRenderer geometry unchanged | no edits to `frame-renderer.mjs`; overflow/placement regressions |
 
@@ -154,13 +164,16 @@ Reference dialogue: browser acceptance via owner paste; offline Stage intent tes
 |-------|----------|----------------|----------------------------------------|
 | `frameId` + `panelIndex` | already present | locate panel | covered |
 | `compilerVersion` | implementation agent | reproduce compiler behavior | not logged today |
-| compact supported-intent tokens or fingerprint (no prose) | implementation agent | see what was compiled | not logged today |
+| compact, safe, **structured canonical intent evidence** (actual supported intent used for compilation) | implementation agent | reconstruct/understand compiler input | not logged today |
+| optional intent fingerprint (supplement only) | implementation agent | quick equality check | must not replace structured intent |
 | `identityAssetId` / `styleAssetId` (short ids) | implementation agent | confirm authorities | not on panel path today |
 | `status` / `kind` | already present | terminal result / rejection | covered |
 
-Structure blocked failures continue via existing `failures[].code` (and optional panel address fields if already safe). Do not log prompts, raw descriptions, credentials, provider payloads, or image bytes.
+Together with panel address, compiler version, identity/style authority ids, and terminal result/failure reason, the structured canonical intent evidence must be sufficient to reconstruct or understand the compiler input. A fingerprint alone is insufficient.
 
-**Alternatives rejected**: ZIP export, prompt archive, provider-response storage, image fixtures, new observability service.
+Structure blocked failures continue via existing `failures[].code` (and optional panel address fields if already safe). Do not log raw panel descriptions, source material, user material, complete prompts, provider payloads, credentials, secret-bearing URLs, or image bytes.
+
+**Alternatives rejected**: fingerprint-as-sole-intent-evidence; ZIP export; prompt archive; provider-response storage; image fixtures; new observability service; new table/migration/persistent entity.
 
 ### D7: No new persistence, operations, or 006 architecture
 
@@ -177,8 +190,8 @@ Structure blocked failures continue via existing `failures[].code` (and optional
 3. With approved identity + project style, generate one eligible panel via existing frame/panel Visual path with no performance reference and no user regeneration prompt.
 4. Review character-only waist-up-or-closer result on solid matte background in existing FrameRenderer geometry.
 
-Human-reviewed: identity, style, framing, matte background, absence of invented environment/furniture/props/people/interaction, artistic acceptance.  
-Deterministic: source fidelity, subject cardinality, unsupported-category rejection, compiler non-concatenation, FrameRenderer untouched, authority preflight.
+Human-reviewed: identity, style, framing, matte background, absence of invented environment/furniture/props/people/interaction, artistic acceptance.
+Deterministic: source fidelity, subject cardinality, unsupported-category rejection, canonical closed compiler (canary prose absent), structured diagnostic intent evidence, FrameRenderer untouched, authority preflight.
 
 Live provider environmental invention cannot serve as acceptance evidence; preserve as reproducible failure and require smallest correction (FR-019).
 
@@ -189,8 +202,8 @@ Live provider environmental invention cannot serve as acceptance evidence; prese
 | Structure insertion point | `assessPanelIntent` inside `buildChecked`; Stage/edit prompts constrain upstream |
 | Repair vs reject | Reject for first slice |
 | Typed persistent intent fields | Not required; ephemeral compile-time intent only |
-| Compiler concatenation | Remove description concatenation on eligible system-created path |
-| Diagnostics | Minimal `logVisual` field additions only |
+| Compiler concatenation | Canonical closed eligible compiler; no description substring copy except cast-resolved character name; no full-description fallback |
+| Diagnostics | Minimal `logVisual` additions: structured canonical intent evidence required; fingerprint optional supplement only |
 | Q-020 / Q-035 / Q-036 | Do not expand into layout-rendition systems, auto package review, or new framing UX in this slice |
 | Q-033 / DEC-036 | No new AI role; image-preparation remains one function owning briefs/compilation |
 
