@@ -13,7 +13,9 @@
     "spike:contest-api": "node --test spikes/contest-chat-completions/test/offline.test.mjs",
     "spike:contest-api:live": "node --env-file-if-exists=.env.local spikes/contest-chat-completions/live.mjs",
     "spike:contest-image": "node --test spikes/contest-image-generation/test/offline.test.mjs spikes/contest-image-generation/test/blind-review.test.mjs",
-    "spike:contest-image:serve": "node spikes/contest-image-generation/server.mjs"
+    "spike:contest-image:serve": "node spikes/contest-image-generation/server.mjs",
+    "spike:model-health": "node --test spikes/model-health-check/test/offline.test.mjs",
+    "spike:model-health:serve": "node spikes/model-health-check/server.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",
