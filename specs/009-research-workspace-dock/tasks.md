@@ -54,7 +54,7 @@
 
 - [ ] T005 [P] Create `app/storyboard-web/test/research-store.test.mjs` with failing offline DI cases: append `note`; monotonic `seq`; at most one `action_start` and one `action_terminal` per `correlation_id`; terminal derives `semanticAction`/`surface`/`commandTarget`/`editTarget`/`context`/`submittedText` from stored start; `durationMs` from server timestamps; terminal without start requires `startSnapshot` and sets `outcomeFlags.evidenceIncomplete` with `durationMs: null`; duplicate start/terminal rejected; display vs structure frame fields remain distinct in frozen context. **FR-011, FR-019, FR-022, FR-023**. **Done when**: tests fail before store exists. **Proof**: `node --test test/research-store.test.mjs`.
 
-- [ ] T006 Create `app/storyboard-web/test/research-api.test.mjs` that (a) compiles `specs/009-research-workspace-dock/contracts/research-event.schema.json` with Ajv Draft 2020-12 + `ajv-formats` (`strict: true`) and fails until schema is loadable/contract-aligned; (b) fails HTTP cases via `createServer({ researchStore })` for `POST /api/research/notes`, `POST /api/research/events`, `GET /api/research/trace` (+ `?kind=note`, `?surface=dock_commands`); `kind=protected-content` with **no** secret echo in body/logs; forbidden object keys → `invalid-request`; oversize body → `413` empty; `reading` `submittedText` longer than 8000 chars accepted within `DEFAULT_MAX_BODY_BYTES` (account for JSON envelope); no universal 8000 rejection; operational `logLine` never includes `submittedText`. **FR-019, FR-021, FR-025, FR-028–FR-031, FR-033**; [research-api.md](./contracts/research-api.md). **Done when**: suite exists and is red for missing routes/policy/wiring. **Proof**: `node --test test/research-api.test.mjs`.
+- [ ] T006 Create `app/storyboard-web/test/research-api.test.mjs` that (a) compiles `specs/009-research-workspace-dock/contracts/research-event.schema.json` with Ajv Draft 2020-12 + `ajv-formats` (`strict: true`) as a **baseline contract assertion** that may be green immediately (the accepted schema already exists and compiles); (b) adds HTTP cases via `createServer({ researchStore })` for `POST /api/research/notes`, `POST /api/research/events`, `GET /api/research/trace` (+ `?kind=note`, `?surface=dock_commands`); `kind=protected-content` with **no** secret echo in body/logs; forbidden object keys → `invalid-request`; oversize body → `413` empty; `reading` `submittedText` longer than 8000 chars accepted within `DEFAULT_MAX_BODY_BYTES` (account for JSON envelope); no universal 8000 rejection; operational `logLine` never includes `submittedText` — these route/store cases are expected to fail before implementation. **FR-019, FR-021, FR-025, FR-028–FR-031, FR-033**; [research-api.md](./contracts/research-api.md). **Done when**: suite exists; schema compile is baseline-green; new route/store cases are red for missing routes/policy/wiring. **Proof**: `node --test test/research-api.test.mjs`.
 
 - [ ] T007 Create `app/storyboard-web/test/postgres/research-persistence.test.mjs` (skip unless `STORYBOARD_TEST_DATABASE_URL` → `comics_test`) with failing cases: migration `005_research_workspace_dock` applies; Notes + full ordered trace survive pool reconnect / simulated app restart; partial unique indexes enforce one start/terminal per correlation; long draft `reading` row stores full text without truncation. **FR-024–FR-026, SC-003**. **Done when**: file exists and fails before migration/store wiring against real PG. **Proof**: focused PG test output when URL set; skip recorded when unset.
 
@@ -94,7 +94,7 @@
 
 - [ ] T017 [US1] Integrate dock in `app/storyboard-web/public/app.js`: mount `research-dock.mjs`; on `detail.showModal()` / `openDetail` reparent `#research-dock` into `#detail`; on close restore host; Notes send bypasses `runBusy`; emit minimal research `action_start`/`action_terminal` around at least one existing product busy path used for Operations demo (prefer Structure edit or frame/panel generate already behind `runBusy`); preserve local control notices. **FR-002, FR-015–FR-018, FR-020, FR-027**. **Done when**: T013 green for US1 behaviors. **Proof**: `node --test test/research-dock.test.mjs`.
 
-- [ ] T018 [US1] MVP checkpoint: with provider doubles / DI stores, prove Notes persist across reload (API+page) and Operations never treats unmatched starts as running after hydrate. **FR-024–FR-027, SC-001 (partial), SC-003 (Notes)**. **Done when**: documented passing assertions in research-dock/api/postgres tests cover note round-trip + non-running unmatched start. **Proof**: test output summary.
+- [ ] T018 [US1] MVP checkpoint: with provider doubles / DI stores, prove Notes persist across reload (API+page) and Operations never treats unmatched starts as running after hydrate. Assertions live in `app/storyboard-web/test/research-dock.test.mjs`, `app/storyboard-web/test/research-api.test.mjs`, and `app/storyboard-web/test/postgres/research-persistence.test.mjs` (no new test file). **FR-024–FR-027, SC-001 (partial), SC-003 (Notes)**. **Done when**: those three files contain passing assertions covering note round-trip + non-running unmatched start. **Proof**: `cd app/storyboard-web && node --test test/research-dock.test.mjs test/research-api.test.mjs test/postgres/research-persistence.test.mjs` (PG file requires `STORYBOARD_TEST_DATABASE_URL` → `comics_test`).
 
 **Checkpoint**: Visible dock + durable Notes + honest Operations busy/terminal. Suggested Cursor range: **T013–T018**.
 
@@ -114,7 +114,7 @@
 
 - [ ] T020 [US2] Implement Commands UI + sticky target mode in `app/storyboard-web/public/research-dock.mjs` and dispatch through existing `POST /api/visual/storyboard/edit` and `POST /api/visual/frames/:frameId/panels/:panelIndex/generate` from `app/storyboard-web/public/app.js` with research start/terminal (`surface=dock_commands`); label actual target including display vs structure ids; block Commands while product busy. **FR-007–FR-011, FR-015**. **Done when**: T019 green. **Proof**: `node --test test/research-dock.test.mjs`.
 
-- [ ] T021 [US2] Confirm product Structure form (`#structure-edit-form`) and dock Commands both record separable surfaces/event kinds without consuming each other’s drafts. **FR-004, FR-005, FR-020**. **Done when**: assertion in research-dock or research-capture tests proves independence. **Proof**: test output.
+- [ ] T021 [US2] Confirm product Structure form (`#structure-edit-form`) in `app/storyboard-web/public/app.js` and dock Commands both record separable surfaces/event kinds without consuming each other’s drafts. Prove independence in `app/storyboard-web/test/research-dock.test.mjs` and, if matrix coverage is needed for the product-control surface, `app/storyboard-web/test/research-capture.test.mjs`. **FR-004, FR-005, FR-020**. **Done when**: those test file(s) assert Structure-form vs Commands independence. **Proof**: `cd app/storyboard-web && node --test test/research-dock.test.mjs test/research-capture.test.mjs`.
 
 **Checkpoint**: Supported Commands usable beside Notes. Suggested Cursor range: **T019–T021**.
 
@@ -130,7 +130,7 @@
 
 - [ ] T022 [US3] Create `app/storyboard-web/test/research-capture.test.mjs` with failing matrix coverage for instrumentation hooks: `reading` (full draft), `confirm_material`, `stage_storyboard`, `structure_edit`/`structure_undo`, `panel_generate`/`frame_generate`, `placement_commit` on zoom `change` only (not `input`), `identity_save` (comment only), `anchor_generate`/`anchor_approve`, `visual_approve`, `cast_edit` for `character_rename`/`alias_assignment`/`speaker_assignment` × `pending_reading`/`material_state` on successful `saveCast()` with value-only `editTarget` (no whole-cast dump); autosave/keystrokes/placement scrubbing produce **no** events. **FR-019–FR-021, FR-023**. **Done when**: suite fails before full `app.js` instrumentation. **Proof**: `node --test test/research-capture.test.mjs`.
 
-- [ ] T023 [P] [US3] Extend `app/storyboard-web/test/research-api.test.mjs` / `research-store.test.mjs` with failing/red-to-green cases for navigation between start and terminal (terminal cannot rewrite start context), duplicate correlation rejection, and unmatched start after restart remaining non-running evidence only. **FR-022, FR-023, FR-027**. **Done when**: cases exist; fail until store/API rules hold end-to-end. **Proof**: focused test output.
+- [ ] T023 [P] [US3] Extend `app/storyboard-web/test/research-api.test.mjs` and `app/storyboard-web/test/research-store.test.mjs` with end-to-end assertions for navigation between start and terminal (terminal cannot rewrite start context), duplicate correlation rejection, and unmatched start after restart remaining non-running evidence only. Record as baseline-green when Foundational store/API rules already satisfy a case; expect failure only for genuinely missing end-to-end behavior. **FR-022, FR-023, FR-027**. **Done when**: those assertions exist and either pass as baseline or fail only where behavior is still missing. **Proof**: `cd app/storyboard-web && node --test test/research-api.test.mjs test/research-store.test.mjs`.
 
 ### Implementation
 
@@ -262,20 +262,21 @@ Task: "T023 Extend research-api/store correlation/navigation cases …"
 
 ### MVP First (US1)
 
-1. Phase 1 Setup  
-2. Phase 2 Foundational  
-3. Phase 3 US1 (T013–T018)  
-4. **STOP and VALIDATE** independent US1 test  
-5. Demo dock + Notes + Operations before Commands/matrix hardening  
+1. Phase 1 Setup
+2. Phase 2 Foundational
+3. Phase 3 US1 (T013–T018)
+4. **STOP and VALIDATE** independent US1 test
+5. Demo dock + Notes + Operations before Commands/matrix hardening
 
 ### Incremental Delivery
 
-1. Setup + Foundational → research seam ready  
-2. US1 → MVP dock  
-3. US2 → Commands  
-4. US3 → reconstructible trace  
-5. US4 → failure honesty  
-6. Polish → quickstart/browser/PG gates  
+1. Setup + Foundational → research seam ready
+2. US1 → MVP dock
+3. US2 → Commands
+4. US3 → reconstructible trace
+5. US4 → failure honesty
+6. Polish → quickstart/browser/PG gates
+
 
 ---
 
