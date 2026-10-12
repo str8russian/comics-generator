@@ -118,9 +118,35 @@ function partition(dialogue, segments) {
   return ranges;
 }
 
+function structureIdentity(frame) {
+  const structureFrameId = typeof frame?.structureFrameId === "string"
+    ? frame.structureFrameId
+    : (typeof frame?.id === "string" ? frame.id : null);
+  const structureSegmentIndex = Number.isInteger(frame?.structureSegmentIndex)
+    ? frame.structureSegmentIndex
+    : null;
+  return { structureFrameId, structureSegmentIndex };
+}
+
+function withStructureIdentity(frame, pieceFrame, id) {
+  const fallback = structureIdentity(frame);
+  return {
+    ...pieceFrame,
+    id,
+    structureFrameId: typeof pieceFrame?.structureFrameId === "string"
+      ? pieceFrame.structureFrameId
+      : fallback.structureFrameId,
+    structureSegmentIndex: Number.isInteger(pieceFrame?.structureSegmentIndex)
+      ? pieceFrame.structureSegmentIndex
+      : fallback.structureSegmentIndex,
+  };
+}
+
 function withIds(frame, frames) {
-  if (frames.length === 1) return [{ ...frames[0], id: frame.id }];
-  return frames.map((pieceFrame, index) => ({ ...pieceFrame, id: `${frame.id}#${index + 1}` }));
+  if (frames.length === 1) return [withStructureIdentity(frame, frames[0], frame.id)];
+  return frames.map((pieceFrame, index) => (
+    withStructureIdentity(frame, pieceFrame, `${frame.id}#${index + 1}`)
+  ));
 }
 
 function compileDirecting(frame, measure) {
@@ -129,6 +155,7 @@ function compileDirecting(frame, measure) {
     return { ok: false, failures: [{ code: "invalid-directing-beat", sourceItemId: frame.sourceItemId }] };
   }
   const frames = [];
+  const structureFrameId = typeof frame.structureFrameId === "string" ? frame.structureFrameId : frame.id;
   for (let index = 0; index < frame.segments.length; index += 1) {
     const segment = frame.segments[index];
     const built = compileQuote(frame, segment.quote, {
@@ -137,15 +164,21 @@ function compileDirecting(frame, measure) {
       panels: segment.panels,
     }, ranges[index].start, measure);
     if (!built.ok) return built;
-    frames.push(...built.frames);
+    frames.push(...built.frames.map((pieceFrame) => ({
+      ...pieceFrame,
+      structureFrameId,
+      structureSegmentIndex: index,
+    })));
   }
   return { ok: true, frames: withIds(frame, frames) };
 }
 
 function copySilent(frame) {
   const panels = Array.isArray(frame.panels) ? frame.panels.map(copyPanel) : [];
+  const identity = structureIdentity(frame);
   const copy = {
     ...frame,
+    ...identity,
     panels,
     visualReady: frameVisualReady(panels),
   };

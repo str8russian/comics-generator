@@ -202,3 +202,40 @@ test("unmatched demo frame stays in Structure presentation", async () => {
   assert.equal(presented.mode, "structure");
   assert.equal(presented.frame.panels[0].asset, undefined);
 });
+
+test("captureResearchContext keeps distinct display and structure frame identity for open detail", async () => {
+  const page = await loadVisualPage();
+  page.setResearchDetailState([{
+    id: "display-2",
+    structureFrameId: "structure-1",
+    structureSegmentIndex: 0,
+    dialogue: "Реплика",
+    panels: [{ description: "Кадр" }],
+  }], 0);
+
+  const context = page.captureResearchContext();
+  assert.equal(context.displayFrameId, "display-2");
+  assert.equal(context.structureFrameId, "structure-1");
+  assert.equal(context.structureSegmentIndex, 0);
+  assert.equal(context.displayFrameNumber, 1);
+  assert.notEqual(context.displayFrameId, context.structureFrameId);
+
+  const appJs = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(appJs, /getContext:\s*captureResearchContext/);
+});
+
+test("research context keeps frame identity null when no detail frame is active", async () => {
+  const page = await loadVisualPage();
+  page.setResearchDetailState([
+    {
+      id: "display-2",
+      structureFrameId: "structure-1",
+      structureSegmentIndex: 0,
+    },
+  ], -1);
+  const context = page.captureResearchContext();
+  assert.equal(context.displayFrameId, null);
+  assert.equal(context.structureFrameId, null);
+  assert.equal(context.structureSegmentIndex, null);
+  assert.equal(context.displayFrameNumber, null);
+});

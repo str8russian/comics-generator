@@ -77,6 +77,61 @@ test("splits at the minimum size and concatenates the spoken text", () => {
   ]);
 });
 
+test("overflow fitting preserves structureFrameId and structureSegmentIndex on every display piece", () => {
+  const dialogue = "аб вг";
+  const frame = utterance({
+    id: "structure-1",
+    dialogue,
+    layout: "split2",
+    speakerPanel: 1,
+    panels: [{ description: "Левая" }, { description: "Правая" }],
+    displayBlock: { sourceItemId: "u1", start: 0, end: dialogue.length },
+    structureFrameId: "structure-1",
+    structureSegmentIndex: 0,
+  });
+  const minimum = FONT_LADDER.split2.at(-1);
+  const result = compileOverflow([frame], (text, options) => {
+    if (text.length <= 2) return true;
+    return options.fontSize === minimum && text.length <= 4;
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.frames.map((piece) => piece.id), ["structure-1#1", "structure-1#2"]);
+  for (const piece of result.frames) {
+    assert.notEqual(piece.id, piece.structureFrameId);
+    assert.equal(piece.structureFrameId, "structure-1");
+    assert.equal(piece.structureSegmentIndex, 0);
+  }
+});
+
+test("silent frames retain honest structural identity without rewriting display id", () => {
+  const withExplicit = compileOverflow([{
+    id: "display-silent",
+    dialogue: "",
+    layout: "single",
+    speakerPanel: 0,
+    panels: [{ description: "Тишина" }],
+    structureFrameId: "structure-silent",
+    structureSegmentIndex: 0,
+  }], () => true);
+  assert.equal(withExplicit.ok, true);
+  assert.equal(withExplicit.frames.length, 1);
+  assert.equal(withExplicit.frames[0].id, "display-silent");
+  assert.equal(withExplicit.frames[0].structureFrameId, "structure-silent");
+  assert.equal(withExplicit.frames[0].structureSegmentIndex, 0);
+
+  const rawStructure = compileOverflow([{
+    id: "frame-7",
+    dialogue: "",
+    layout: "single",
+    speakerPanel: 0,
+    panels: [{ description: "Без реплики" }],
+  }], () => true);
+  assert.equal(rawStructure.ok, true);
+  assert.equal(rawStructure.frames[0].id, "frame-7");
+  assert.equal(rawStructure.frames[0].structureFrameId, "frame-7");
+  assert.equal(rawStructure.frames[0].structureSegmentIndex, null);
+});
+
 test("keeps a directing segment's composition when that segment splits further", () => {
   const dialogue = "аа бббб";
   const frame = utterance({

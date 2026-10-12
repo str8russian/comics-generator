@@ -56,7 +56,12 @@ let visual = null;
 let detailIndex = -1;
 let busy = false;
 
-function captureResearchContext() {
+export function setResearchDetailState(frames, index = -1) {
+  readyFrames = Array.isArray(frames) ? frames.slice() : [];
+  detailIndex = Number.isInteger(index) ? index : -1;
+}
+
+export function captureResearchContext() {
   let workflowPhase = null;
   if (visual?.readyForVideo || visual?.approved) workflowPhase = "approved";
   else if (visual?.allAnchorsApproved) workflowPhase = "visual";
@@ -72,8 +77,8 @@ function captureResearchContext() {
     storyboardVersionId: typeof visual?.storyboardVersionId === "string" ? visual.storyboardVersionId : null,
     displayFrameNumber: detailIndex >= 0 ? detailIndex + 1 : null,
     displayFrameId: typeof frame?.id === "string" ? frame.id : null,
-    structureFrameId: typeof frame?.id === "string" ? frame.id : null,
-    structureSegmentIndex: null,
+    structureFrameId: typeof frame?.structureFrameId === "string" ? frame.structureFrameId : null,
+    structureSegmentIndex: Number.isInteger(frame?.structureSegmentIndex) ? frame.structureSegmentIndex : null,
     panelIndex: null,
     panelSubject: null,
     imageAssetId: null,

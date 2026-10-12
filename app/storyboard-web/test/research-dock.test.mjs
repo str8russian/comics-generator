@@ -465,6 +465,58 @@ test("collapse toggles open-page state only and does not require unsent draft pe
   assert.equal(document.querySelector("#research-notes-draft").value, "черновик");
 });
 
+test("Notes send posts production captureResearchContext display vs structure identity", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { register } = await import("node:module");
+  register(new URL("./draft-page-loader.mjs", import.meta.url));
+  const page = await import("../public/app.js");
+  const requests = [];
+  const dock = (await import("../public/research-dock.mjs")).bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: page.captureResearchContext,
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      const body = init.body == null ? null : JSON.parse(init.body);
+      requests.push({ path, method: init.method ?? "GET", body });
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/notes") {
+        return jsonResponse(201, {
+          event: {
+            eventKind: "note",
+            submittedText: body.submittedText,
+            occurredAt: "2026-10-13T05:00:00.000Z",
+            context: body.context,
+            seq: 1,
+          },
+        });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+
+  page.setResearchDetailState([{
+    id: "display-2",
+    structureFrameId: "structure-1",
+    structureSegmentIndex: 0,
+  }], 0);
+  document.querySelector("#research-notes-draft").value = "контекст кадра";
+  document.querySelector("#research-notes-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const notePost = requests.find((entry) => entry.path === "/api/research/notes");
+  assert.ok(notePost);
+  assert.equal(notePost.body.context.displayFrameId, "display-2");
+  assert.equal(notePost.body.context.structureFrameId, "structure-1");
+  assert.equal(notePost.body.context.structureSegmentIndex, 0);
+  assert.equal(notePost.body.context.displayFrameNumber, 1);
+  assert.notEqual(notePost.body.context.displayFrameId, notePost.body.context.structureFrameId);
+});
+
 test("Notes hydrate from GET trace kind=note after bind", async () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   installDockDocument(html);
