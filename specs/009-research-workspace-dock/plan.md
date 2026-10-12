@@ -4,7 +4,7 @@
 
 **Input**: Feature specification from `/specs/009-research-workspace-dock/spec.md`
 
-**Note**: Plan-stage only. Tasks and implementation are out of scope for this commit. `GATEKEEPER.md` was not invoked; gates below follow `DEVELOPMENT_PROCESS.md` plan-stage checks.
+**Note**: Plan-stage only. Tasks and implementation are out of scope for this commit. `GATEKEEPER.md` was not invoked; gates below follow `DEVELOPMENT_PROCESS.md` plan-stage checks. Corrective Plan pass tightens contracts without changing the selected PostgreSQL / one-dock / reparent / busy / no-job direction.
 
 ## Summary
 
@@ -13,11 +13,12 @@ Deliver the smallest vertical DEC-052 Research workspace dock: one fixed collaps
 Technical approach (see [research.md](./research.md)):
 
 1. Persist research evidence in one append-only PostgreSQL table on the existing `storyboard-pg` volume via migration `005_research_workspace_dock.sql` and a DI `researchStore`.
-2. Capture at explicit browser action boundaries with allowlisted `note` / `action_start` / `action_terminal` events; keep sanitized operational logs untouched.
-3. Mount one dock state owner; reparent the same DOM node into `#detail` when `showModal()` opens so the dock stays in the native top layer.
-4. Narrow busy CSS/JS so only Notes send remains usable during product busy; Commands and product ops stay single-flight.
-5. Map Commands only to existing Structure edit and panel-generate paths with sticky explicit targets.
-6. Prove with offline + PostgreSQL tests and the continuous browser Happy Path in [quickstart.md](./quickstart.md) using provider doubles for plumbing.
+2. Capture at explicit browser action boundaries with allowlisted `note` / `action_start` / `action_terminal` events; unique start/terminal per `correlation_id`; terminals derive capture-time fields from the stored start (or client `startSnapshot` when incomplete).
+3. Enforce FR-030 with forbidden-key rejection **and** bounded protected-content validation of free-form `submittedText` (atomic reject; no echo).
+4. Action-aware text size: no universal 8000 cap; existing body `413` limit; full draft capture at `reading`.
+5. Include Material-review `cast_edit` with fixed-key `edit_target` (not `command_target`).
+6. Mount one dock state owner; reparent into `#detail` on `showModal()`; Notes-only busy exemption; Commands/Notes/Operations independent history projections.
+7. Prove with offline + PostgreSQL tests and the continuous browser Happy Path in [quickstart.md](./quickstart.md) using provider doubles for plumbing.
 
 ## Technical Context
 
@@ -27,7 +28,7 @@ Technical approach (see [research.md](./research.md)):
 
 **Storage**: PostgreSQL 16 via existing Compose volume `storyboard-pg`; new migration `005_research_workspace_dock.sql` (append-only `research_event`); see [data-model.md](./data-model.md)
 
-**Testing**: `node:test` under `app/storyboard-web/test/**/*.test.mjs`; PostgreSQL lane via `STORYBOARD_TEST_DATABASE_URL` + `test/postgres/verify.mjs`; provider doubles for command/operation plumbing; redaction canaries extend `redaction.test.mjs` patterns
+**Testing**: `node --test` under `app/storyboard-web/test/**/*.test.mjs` (no root `npm test` script); PostgreSQL lane via `STORYBOARD_TEST_DATABASE_URL` + `test/postgres/verify.mjs` (fail-closed unless DB name is `comics_test`); provider doubles for command/operation plumbing; redaction canaries extend `redaction.test.mjs` patterns
 
 **Target Platform**: local `app/storyboard-web` + Docker Compose; browser acceptance on loopback `:4173`
 
@@ -35,7 +36,7 @@ Technical approach (see [research.md](./research.md)):
 
 **Performance Goals**: ordinary single-owner interactive use of the Happy Path; no throughput quotas (FR-039)
 
-**Constraints**: FR-001–FR-039; DEC-052 accepted direction; DEC-053 protected but not implemented; no feature 006 job/operation architecture; zero provider calls in Plan; raw owner text only in research path; operational log redaction preserved
+**Constraints**: FR-001–FR-039; DEC-052 accepted direction; DEC-053 protected but not implemented; no feature 006 job/operation architecture; zero provider calls in Plan; raw owner text only in research path after protected-content checks; operational log redaction preserved
 
 **Scale/Scope**: one local owner, one dock, one ordered research trace; no multi-user, sync, or remote deployment
 
@@ -52,7 +53,7 @@ The repository constitution template remains unfilled. Plan gates use `DEVELOPME
 | New mechanisms justify why smaller reuse fails | Pass — documented in research.md / data-model.md |
 | Provider calls governed | Pass — Plan made 0 calls; live provider not required for dock plumbing |
 
-**Post-design re-check**: Still pass. One new append-only table + thin store/routes/UI module. No worker, event bus, job system, generic analytics framework, or DEC-053 hierarchy. No polished export UI. Operational logs not repurposed.
+**Post-design re-check**: Still pass. One new append-only table + thin store/routes/UI module. No worker, event bus, job system, generic analytics framework, or DEC-053 hierarchy. No polished export UI. Operational logs not repurposed. No speculative `research_error` column.
 
 ## Project Structure
 
@@ -78,27 +79,29 @@ specs/009-research-workspace-dock/
 
 ```text
 app/storyboard-web/
-├── db/migrations/005_research_workspace_dock.sql  # NEW append-only research_event
+├── db/migrations/005_research_workspace_dock.sql  # NEW append-only research_event + partial unique indexes
 ├── research-store.mjs                             # NEW DI store: appendNote/appendEvent/listTrace/listNotes
+├── research-text-policy.mjs                       # NEW bounded protected-content checks for submittedText
 ├── server.mjs                                     # wire research routes + researchStore; no log text leakage
 ├── public/
 │   ├── index.html                                 # research dock markup host
 │   ├── app.css                                    # dock layout; narrow busy exemption
-│   ├── app.js                                     # integrate capture boundaries, busy, dialog reparent hooks
-│   └── research-dock.mjs                          # NEW: one state owner for Commands/Notes/Operations/context
+│   ├── app.js                                     # integrate capture boundaries (incl. saveCast), busy, dialog reparent
+│   └── research-dock.mjs                          # NEW: one state owner for Commands/Notes/Operations/histories/context
 └── test/
     ├── research-store.test.mjs                    # NEW offline/DI
-    ├── research-api.test.mjs                      # NEW HTTP contract + failure honesty
-    ├── research-dock.test.mjs                     # NEW page seams: independence, busy, target labeling
-    ├── research-capture.test.mjs                  # NEW action matrix / placement change-only
+    ├── research-api.test.mjs                      # NEW HTTP contract + failure honesty + correlation
+    ├── research-dock.test.mjs                     # NEW page seams: independence, busy, target labeling, Commands history
+    ├── research-capture.test.mjs                  # NEW action matrix / placement change-only / cast_edit
+    ├── research-text-policy.test.mjs              # NEW embedded protected-content canaries
     ├── redaction.test.mjs                         # extend canaries for research path + logs
-    └── postgres/research-persistence.test.mjs     # NEW restart/order/extract against comics_test
+    └── postgres/research-persistence.test.mjs     # NEW restart/order/extract/long-draft against comics_test
 
 docker-compose.yml   # unchanged volume boundary (storyboard-pg)
 Dockerfile           # unchanged
 ```
 
-**Structure Decision**: Extend `app/storyboard-web/` with one store + one client module. Do not add a second app, worker, or shared analytics package. Do not modify FrameRenderer, generation grammar, or product tables.
+**Structure Decision**: Extend `app/storyboard-web/` with one store + text-policy helper + one client module. Do not add a second app, worker, or shared analytics package. Do not modify FrameRenderer, generation grammar, or product tables.
 
 ## Complexity Tracking
 
@@ -108,30 +111,32 @@ No gate violations. The migration is required because browser-only and ephemeral
 
 ### 1. Persistence and extraction
 
-- Add `research_event` per [data-model.md](./data-model.md).
+- Add `research_event` per [data-model.md](./data-model.md), including partial unique indexes on `(correlation_id)` for start and terminal kinds.
 - Implement `createResearchStore(pool)` with append + ordered list; inject via `createServer({ researchStore })` mirroring project/visual stores.
 - Routes per [contracts/research-api.md](./contracts/research-api.md): `POST /api/research/notes`, `POST /api/research/events`, `GET /api/research/trace`, optional `GET /api/research/notes`.
 - Extraction for acceptance: `GET /api/research/trace` after restart (documented in quickstart). Optional SQL fallback for operators; not a second schema.
 
 ### 2. Event/context/correlation contract
 
-- Closed taxonomy: `note` | `action_start` | `action_terminal` + `semantic_action` enum.
-- Correlate with `correlation_id`; compute `duration_ms` on terminal when start exists.
-- Fixed-key `context` with explicit nulls; distinguish `displayFrameNumber` / `displayFrameId` from `structureFrameId` / `structureSegmentIndex`.
-- `command_target` records actual target; ambient selection alone does not rewrite it.
-- Structurally reject image/data-URL/provider/secret dump fields.
+- Closed taxonomy: `note` | `action_start` | `action_terminal` + `semantic_action` enum including `cast_edit`.
+- At most one start and one terminal per `correlation_id`.
+- When start exists: terminal fields for action identity/target/context/text are derived from the start; `duration_ms` from server timestamps.
+- When start absent: terminal only with client `startSnapshot`; `duration_ms` null; `outcomeFlags.evidenceIncomplete = true`.
+- Fixed-key `context` with explicit nulls; distinguish display vs structure frame fields.
+- `command_target` for Commands/visual targets; `edit_target` for cast corrections only.
+- Reject forbidden object keys **and** protected free-form text content.
 - Never pass `submitted_text` into `logLine` / `logVisual` / `logAllowlisted`.
 
 ### 3. Capture, write, and failure boundaries
 
-- Instrument explicit page actions listed in the contracts capture matrix (existing controls + dock).
-- Sequencing policy from [research.md](./research.md): note-save failure keeps draft; research start failure does not claim evidence but does not hard-block product; product success + terminal research failure keeps product success UI and surfaces evidence-save failure; unpaired starts after restart are non-running historical evidence only.
+- Instrument explicit page actions listed in the contracts capture matrix (existing controls including `saveCast()` cast corrections + dock).
+- Sequencing policy from [research.md](./research.md): note-save / protected-content failure keeps draft; research start failure does not claim evidence but does not hard-block product; product success + terminal research failure keeps product success UI and surfaces evidence-save failure; unpaired starts after restart are non-running historical evidence only.
 - No distributed transaction across product + research; no auto-retry.
 
 ### 4. UI ownership, native dialog, busy isolation
 
 - One `#research-dock` with Commands / Notes / Operations regions; collapse handle; `position: fixed; right/bottom`; max-height and offsets so storyboard controls and `.dialog-actions` stay usable on narrow viewports.
-- Single state owner in `research-dock.mjs` (drafts, histories, collapse for open page, context snapshot helpers). Unsent draft persistence not required.
+- Single state owner in `research-dock.mjs` (drafts, **Notes history**, **Commands history**, Operations projection, collapse for open page, context snapshot helpers). Unsent draft persistence not required. Only Notes history must return after reload/restart.
 - On `detail.showModal()`, reparent dock into `#detail`; on close, reparent back. No duplicate dock.
 - Busy: exempt only Notes send from `pointer-events: none`; Notes send bypasses `runBusy`; Commands uses product busy latch.
 
@@ -142,53 +147,56 @@ No gate violations. The migration is required because browser-only and ephemeral
 
 ### 6. Validation strategy
 
-Tests-before-implementation intent (Tasks will sequence IDs):
+Tests-before-implementation intent (Tasks will sequence IDs). Runnable commands are pinned in [quickstart.md](./quickstart.md).
 
 | Area | Proof |
 | --- | --- |
 | Persistence across reload + app/DB restart | postgres research persistence test + quickstart restart |
-| Ordering / correlation / duration / context / frame distinction | store + API tests against schema |
-| Commands/Notes independence | dock unit + browser step 5 |
+| Ordering / unique correlation / duration / navigation-stable terminal context / frame distinction | store + API tests against schema |
+| Duplicate/mismatched correlation pairs | API/store reject or derive-from-start proofs |
+| Commands/Notes independence + separate Commands-history projection | dock unit + browser step 5 |
 | Notes during busy; second product op blocked | dock/page test with busy latch |
 | Dock + `showModal` accessibility | page test / browser HP4 |
 | Supported dispatch + unsupported honesty | dock + API integration |
-| Action matrix incl. placement commit only | capture tests |
+| Action matrix incl. placement commit only + cast_edit kinds/phases | capture tests |
+| Long draft `reading` capture without 8000 failure/truncation | API + postgres tests |
 | Failure honesty + retained last-good | API + visual workflow doubles |
 | Unpaired start ≠ live job | persistence + Operations projection test |
 | Extraction after restart | GET trace |
-| Redaction canaries | extend redaction tests; research forbidden-field rejection |
+| Embedded protected-content rejection (no persist/log leak) + forbidden keys | `research-text-policy` + redaction canaries |
 | Regressions | existing offline + PG verify helpers |
 
 ## Action-to-event matrix (compact)
 
-| Action | semantic_action | start/terminal | Text | Actual target |
+| Action | semantic_action | start/terminal | Text / value | Target descriptor |
 | --- | --- | --- | --- | --- |
 | Notes send | `note` | note row | yes | n/a |
-| Dock/product Structure edit | `structure_edit` | yes | instruction | `storyboard` |
-| Dock/product panel generate | `panel_generate` | yes | instruction | `panel` + ids |
-| Frame generate | `frame_generate` | yes | no | frame ids in context/target |
+| Dock/product Structure edit | `structure_edit` | yes | instruction | `command_target` storyboard |
+| Dock/product panel generate | `panel_generate` | yes | instruction | `command_target` panel + ids |
+| Frame generate | `frame_generate` | yes | no | `command_target` / context frame ids |
 | Placement `change` | `placement_commit` | yes | no | panel + zoom/position |
 | Placement `input` | — | **none** | — | — |
 | Identity save | `identity_save` | yes | comment only | character |
 | Anchor generate/approve | `anchor_generate` / `anchor_approve` | yes | instruction / none | character/anchor ids |
 | Visual approve | `visual_approve` | yes | no | storyboard |
 | Structure undo | `structure_undo` | yes | no | storyboard |
-| Read draft submit | `reading` | yes | draft at submit | n/a |
+| Character rename / alias / speaker via `saveCast()` | `cast_edit` | yes (success only as terminal success) | selected/submitted value | `edit_target` (not `command_target`) |
+| Read draft submit | `reading` | yes | **full draft** | n/a |
 | Confirm / stage | `confirm_material` / `stage_storyboard` | yes | no | n/a |
-| Draft autosave | — | **none** | — | — |
+| Draft autosave / keystrokes | — | **none** | — | — |
 
 ## Traceability (spec → plan)
 
 | Spec | Plan settlement |
 | --- | --- |
 | FR-001–003 dock shell | UI approach §4; quickstart HP1/HP4 |
-| FR-004–006 independence / no unsent draft persistence | dock state owner; capture matrix |
+| FR-004–006 independence / no unsent draft persistence | dock state owner; Notes + Commands history projections; capture matrix |
 | FR-007–011 Commands | Commands mapping §5; command_target + sticky mode |
 | FR-012–015 Notes | notes route + busy exemption |
 | FR-016–018 Operations | Operations projection §5 |
-| FR-019–023 trace | event contract + matrix |
+| FR-019–023 trace | event contract + matrix + unique correlation + start-derived terminals |
 | FR-024–028 persistence/extraction | PG `research_event` + GET trace |
-| FR-029–031 evidence boundaries | separate store; forbidden fields; log allowlist untouched |
+| FR-029–031 evidence boundaries | separate store; forbidden keys + protected-content policy; log allowlist untouched |
 | FR-032–035 failure honesty | failure policy §3 |
 | FR-036–039 protected / out of scope | exclusions below; no grammar/006/DEC-053 impl |
 | SC-001–007 | quickstart + test strategy |
@@ -199,11 +207,13 @@ Tests-before-implementation intent (Tasks will sequence IDs):
 | --- | --- |
 | Notes + trace survive reload/restart | PostgreSQL `research_event` on `storyboard-pg` |
 | One ordering authority | `seq` bigserial |
-| Action/result association | `correlation_id` + kinds |
-| Capture-time context immutable | append-only rows; fixed null keys |
+| Action/result association | `correlation_id` + unique start/terminal + start-derived terminal fields |
+| Capture-time context immutable | append-only; terminals copy start / `startSnapshot` |
 | Display vs structure frame | separate context/target fields |
 | Raw owner text only in research path | research routes/store; never `logLine` text |
-| No secrets/provider/image bytes in research | schema additionalProperties false + forbidden key rejection |
+| No secrets/provider/image bytes in research | forbidden keys + bounded `submittedText` protected-content policy; canaries |
+| No universal research text quota below product | no 8000 CHECK; body `413`; full draft at `reading` |
+| Cast corrections covered without cast dump | `cast_edit` + `edit_target` |
 | Operational log policy unchanged | no research text fields added to allowlists; redaction tests remain |
 | Notes during busy | CSS/JS exemption; bypass `runBusy` |
 | No overlapping product ops | existing busy latch retained for Commands/product |
@@ -219,6 +229,7 @@ Tests-before-implementation intent (Tasks will sequence IDs):
 - DEC-053 hierarchical revision schema/cascade UI; cumulative revision history; image-generation grammar changes
 - Feature 006 architecture; FrameRenderer geometry changes; weakening source fidelity or approval gates
 - Multi-user, remote deploy, cross-device sync, volume-deletion recovery
+- General secret/DLP classifiers beyond the bounded protected-content policy
 - Editing `spec.md` / product memory / constitution placeholder
 
 ## Assumptions
@@ -226,6 +237,7 @@ Tests-before-implementation intent (Tasks will sequence IDs):
 - Same-local-storage means the existing Compose PostgreSQL volume used by product resume.
 - Provider doubles suffice to accept dock plumbing; live provider evaluation is separately authorized.
 - Collapse state and unsent drafts need not survive reload.
+- Commands history is an independent in-session projection; only Notes history must return after restart per the approved scenario.
 - `GET /api/research/trace` is an extraction mechanism, not a polished export product surface.
 
 ## Unresolved questions
@@ -236,5 +248,6 @@ None that block Plan. No Clarify pass required (see [research.md](./research.md)
 
 - Native top-layer reparenting must be verified in a real browser; jsdom may not fully model `showModal()` top-layer — quickstart HP4 is mandatory before owner acceptance.
 - Global busy exemption must stay Notes-only; accidental broad exemption would reintroduce overlapping Commands/product starts.
-- Reading submit stores full draft text in the research path by design (FR-029/DEC-052); operators must treat the DB volume as owner-research-sensitive (already true for draft/product text).
-- If Tasks attempt to “simplify” by dropping the migration for browser-only storage, restart/extraction acceptance will regress — treat that as a plan violation.
+- Reading submit stores full draft text in the research path by design (FR-029/DEC-052) after protected-content checks; operators must treat the DB volume as owner-research-sensitive (already true for draft/product text).
+- Bounded protected-content patterns will not catch every secret shape; that limitation is explicit and must not be widened into an unbounded DLP project in Tasks.
+- If Tasks attempt to “simplify” by dropping the migration for browser-only storage, or by restoring a universal 8000 text cap, acceptance will regress — treat that as a plan violation.

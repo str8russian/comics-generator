@@ -29,6 +29,7 @@
         "reading",
         "confirm_material",
         "stage_storyboard",
+        "cast_edit",
         "structure_edit",
         "structure_undo",
         "identity_save",
@@ -40,18 +41,27 @@
         "visual_approve"
       ]
     },
-    "correlationId": { "type": ["string", "null"], "format": "uuid" },
+    "correlationId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
     "surface": {
       "type": "string",
       "enum": ["dock_notes", "dock_commands", "product_control"]
     },
-    "submittedText": { "type": ["string", "null"], "maxLength": 8000 },
+    "submittedText": {
+      "type": ["string", "null"],
+      "description": "Raw owner/product text after bounded protected-content validation. No universal maxLength; request size uses server body limit. Never silently truncated."
+    },
     "commandTarget": {
       "type": ["object", "null"],
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
-        "kind": { "type": "string", "enum": ["storyboard", "panel", "none"] },
+        "kind": {
+          "type": "string",
+          "enum": ["storyboard", "panel", "frame", "character", "none"]
+        },
         "displayFrameNumber": { "type": ["integer", "null"], "minimum": 1 },
         "displayFrameId": { "type": ["string", "null"] },
         "structureFrameId": { "type": ["string", "null"] },
@@ -59,7 +69,28 @@
         "panelIndex": { "type": ["integer", "null"], "minimum": 0 },
         "zoom": { "type": ["number", "null"] },
         "positionX": { "type": ["number", "null"] },
-        "positionY": { "type": ["number", "null"] }
+        "positionY": { "type": ["number", "null"] },
+        "characterName": { "type": ["string", "null"] },
+        "anchorVersionId": { "type": ["string", "null"] }
+      }
+    },
+    "editTarget": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["editKind", "castPhase"],
+      "properties": {
+        "editKind": {
+          "type": "string",
+          "enum": ["character_rename", "alias_assignment", "speaker_assignment"]
+        },
+        "castPhase": {
+          "type": "string",
+          "enum": ["pending_reading", "material_state"]
+        },
+        "characterName": { "type": ["string", "null"] },
+        "previousCharacterName": { "type": ["string", "null"] },
+        "surfaceForm": { "type": ["string", "null"] },
+        "sourceItemId": { "type": ["string", "null"] }
       }
     },
     "context": {
@@ -115,7 +146,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "retainedLastGoodImage": { "type": "boolean" }
+        "retainedLastGoodImage": { "type": "boolean" },
+        "evidenceIncomplete": { "type": "boolean" }
       }
     },
     "durationMs": { "type": ["integer", "null"], "minimum": 0 }
@@ -128,7 +160,8 @@
           "correlationId": { "type": "null" },
           "outcome": { "type": "null" },
           "semanticAction": { "const": "note" },
-          "surface": { "const": "dock_notes" }
+          "surface": { "const": "dock_notes" },
+          "editTarget": { "type": "null" }
         }
       }
     },
@@ -140,7 +173,9 @@
       },
       "then": {
         "required": ["correlationId"],
-        "properties": { "correlationId": { "type": "string", "format": "uuid" } }
+        "properties": {
+          "correlationId": { "type": "string", "format": "uuid" }
+        }
       }
     },
     {
@@ -148,7 +183,35 @@
       "then": {
         "required": ["outcome"],
         "properties": {
-          "outcome": { "type": "string", "enum": ["success", "failure", "blocked"] }
+          "outcome": {
+            "type": "string",
+            "enum": ["success", "failure", "blocked"]
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "semanticAction": { "const": "cast_edit" } } },
+      "then": {
+        "required": ["editTarget"],
+        "properties": {
+          "editTarget": { "type": "object" },
+          "commandTarget": { "type": "null" },
+          "surface": { "const": "product_control" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semanticAction": {
+            "not": { "const": "cast_edit" }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "editTarget": { "type": "null" }
         }
       }
     }
