@@ -60,7 +60,7 @@ button:disabled {
   opacity: 0.48;
 }
 
-body[data-busy="true"] button {
+body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   pointer-events: none;
 }
 
@@ -407,5 +407,124 @@ body[data-busy="true"] button {
 
   .approval-panel {
     grid-template-columns: 1fr;
+  }
+}
+
+#research-dock-host {
+  position: contents;
+}
+
+#research-dock {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(42vh, calc(100vh - 120px));
+  border: 1px solid #7f878c;
+  background: #f7f4ee;
+  box-shadow: 0 8px 24px rgba(18, 24, 28, 0.18);
+}
+
+#detail #research-dock {
+  right: 12px;
+  bottom: 64px;
+  max-height: min(36vh, calc(100% - 96px));
+  z-index: 5;
+}
+
+.research-dock-toggle {
+  align-self: stretch;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid #c7c2b8;
+  background: #ebe6dc;
+  font: 14px/1.2 Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.research-dock-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+
+#research-dock.research-dock--collapsed {
+  max-height: none;
+}
+
+#research-dock.research-dock--collapsed .research-dock-body {
+  display: none;
+}
+
+.research-region {
+  display: grid;
+  gap: 8px;
+}
+
+.research-region h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.research-helper,
+.research-label,
+.research-status {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.research-notes-draft {
+  width: 100%;
+  min-height: 72px;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid #9aa3a8;
+  font: 14px/1.4 Arial, Helvetica, sans-serif;
+  resize: vertical;
+}
+
+#research-notes-send {
+  justify-self: start;
+  padding: 6px 12px;
+  border: 1px solid #1d2428;
+  background: #f7f4ee;
+  font: 14px/1.2 Arial, Helvetica, sans-serif;
+  cursor: pointer;
+}
+
+.research-status[data-kind="error"] {
+  color: #8a1f1f;
+}
+
+.research-history {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.research-history li {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  #research-dock {
+    right: 8px;
+    bottom: 8px;
+    width: min(320px, calc(100vw - 16px));
+    max-height: min(38vh, calc(100vh - 112px));
+  }
+
+  #detail #research-dock {
+    bottom: 72px;
   }
 }

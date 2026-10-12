@@ -34,6 +34,7 @@ export const routes = [
   { method: "GET", path: "/app.js", file: "app/storyboard-web/public/app.js" },
   { method: "GET", path: "/app.css", file: "app/storyboard-web/public/app.css" },
   { method: "GET", path: "/draft-autosave.mjs", file: "app/storyboard-web/public/draft-autosave.mjs" },
+  { method: "GET", path: "/research-dock.mjs", file: "app/storyboard-web/public/research-dock.mjs" },
   { method: "GET", path: "/overflow.mjs", file: "app/storyboard-web/overflow.mjs" },
   { method: "GET", path: "/frame-renderer.mjs", file: "prototypes/storyboard-viewer/frame-renderer.mjs" },
   { method: "GET", path: "/viewer.css", file: "prototypes/storyboard-viewer/viewer.css" },

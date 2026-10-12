@@ -1,6 +1,11 @@
 import { bindDraftAutosave } from "/draft-autosave.mjs";
 import { assessDialogue, compileOverflow, pageState } from "/overflow.mjs";
 import * as FrameRenderer from "/frame-renderer.mjs";
+import {
+  bindResearchDock,
+  createEmptyCommandTarget,
+  createEmptyContext,
+} from "/research-dock.mjs";
 import { presentVisualFrame } from "/visual-anchors.mjs";
 
 const form = document.querySelector("#draft-form");
@@ -40,6 +45,8 @@ const materialFindings = document.querySelector("#material-findings");
 const materialMismatch = document.querySelector("#material-mismatch");
 const confirmMaterial = document.querySelector("#confirm-material");
 const stageMaterial = document.querySelector("#stage-material");
+const researchDockHost = document.querySelector("#research-dock-host");
+const researchDockRoot = document.querySelector("#research-dock");
 
 let readyFrames = [];
 let draftSync = { state: "boot", savedText: null };
@@ -48,6 +55,57 @@ let castChain = Promise.resolve();
 let visual = null;
 let detailIndex = -1;
 let busy = false;
+
+function captureResearchContext() {
+  let workflowPhase = null;
+  if (visual?.readyForVideo || visual?.approved) workflowPhase = "approved";
+  else if (visual?.allAnchorsApproved) workflowPhase = "visual";
+  else if (visual?.characters?.length) workflowPhase = "characters";
+  else if (readyFrames.length) workflowPhase = "structure";
+  else if (review?.mode === "material") workflowPhase = "material";
+  else if (review?.mode === "reading") workflowPhase = "reading";
+  else if (typeof draftField?.value === "string" && draftField.value.length > 0) workflowPhase = "draft";
+
+  const frame = detailIndex >= 0 ? readyFrames[detailIndex] : null;
+  return createEmptyContext({
+    workflowPhase,
+    storyboardVersionId: typeof visual?.storyboardVersionId === "string" ? visual.storyboardVersionId : null,
+    displayFrameNumber: detailIndex >= 0 ? detailIndex + 1 : null,
+    displayFrameId: typeof frame?.id === "string" ? frame.id : null,
+    structureFrameId: typeof frame?.id === "string" ? frame.id : null,
+    structureSegmentIndex: null,
+    panelIndex: null,
+    panelSubject: null,
+    imageAssetId: null,
+    generationId: null,
+    characterName: null,
+    anchorVersionId: null,
+  });
+}
+
+const researchDock = researchDockRoot
+  ? bindResearchDock({
+    root: researchDockRoot,
+    host: researchDockHost,
+    detail,
+    getContext: captureResearchContext,
+  })
+  : null;
+
+async function postResearchEvent(body) {
+  try {
+    const response = await fetch("/api/research/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return payload?.event ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export const draftAutosave = bindDraftAutosave({
   textarea: draftField,
@@ -251,6 +309,7 @@ function openDetail(index) {
   if (following) {
     nextFrame.textContent = following.visualReady ? "Открыть следующий кадр" : "Создать следующий кадр";
   }
+  researchDock?.enterDetail();
   if (!detail.open) detail.showModal();
 }
 
@@ -714,17 +773,70 @@ structureEditForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const instruction = structureInstruction.value.trim();
   if (!instruction) return;
+  const correlationId = crypto.randomUUID();
+  const context = captureResearchContext();
+  const commandTarget = createEmptyCommandTarget("storyboard");
+  const startSnapshot = {
+    semanticAction: "structure_edit",
+    surface: "product_control",
+    submittedText: instruction,
+    commandTarget,
+    editTarget: null,
+    context,
+  };
   await runBusy("Применяю структурную правку к раскадровке…", async () => {
-    const next = await fetchJson("/api/visual/storyboard/edit", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ instruction }),
+    researchDock?.setLiveOperation({
+      correlationId,
+      semanticAction: "structure_edit",
+      surface: "product_control",
     });
-    applyVisual(next);
-    structureInstruction.value = "";
-    structureResult.hidden = false;
-    structureResult.textContent = "Правка применена. Предыдущую структуру можно вернуть.";
-    showActionNotice("Раскадровка обновлена.");
+    let startSaved = false;
+    try {
+      const startEvent = await postResearchEvent({
+        eventKind: "action_start",
+        correlationId,
+        ...startSnapshot,
+      });
+      startSaved = Boolean(startEvent);
+    } catch {
+      startSaved = false;
+    }
+
+    try {
+      const next = await fetchJson("/api/visual/storyboard/edit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ instruction }),
+      });
+      applyVisual(next);
+      structureInstruction.value = "";
+      structureResult.hidden = false;
+      structureResult.textContent = "Правка применена. Предыдущую структуру можно вернуть.";
+      showActionNotice("Раскадровка обновлена.");
+      const terminalBody = {
+        eventKind: "action_terminal",
+        correlationId,
+        outcome: "success",
+        outcomeFlags: {},
+      };
+      if (!startSaved) terminalBody.startSnapshot = startSnapshot;
+      const terminalEvent = await postResearchEvent(terminalBody);
+      if (terminalEvent) researchDock?.recordTerminalEvent(terminalEvent);
+    } catch (error) {
+      const terminalBody = {
+        eventKind: "action_terminal",
+        correlationId,
+        outcome: "failure",
+        outcomeKind: typeof error?.kind === "string" ? error.kind : "request-failed",
+        outcomeFlags: {},
+      };
+      if (!startSaved) terminalBody.startSnapshot = startSnapshot;
+      const terminalEvent = await postResearchEvent(terminalBody);
+      if (terminalEvent) researchDock?.recordTerminalEvent(terminalEvent);
+      throw error;
+    } finally {
+      researchDock?.clearLiveOperation();
+    }
   });
 });
 

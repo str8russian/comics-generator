@@ -81,6 +81,33 @@
     </section>
     <p id="ready-for-video" class="ready-for-video" hidden>Визуальная раскадровка утверждена и готова к созданию видео.</p>
   </main>
+  <div id="research-dock-host">
+    <aside id="research-dock" class="research-dock" aria-label="Research workspace">
+      <button type="button" id="research-dock-toggle" class="research-dock-toggle" aria-expanded="true" aria-controls="research-dock-body">
+        Research
+      </button>
+      <div id="research-dock-body" class="research-dock-body">
+        <section id="research-commands" class="research-region" aria-labelledby="research-commands-title">
+          <h2 id="research-commands-title">Commands</h2>
+          <p id="research-commands-unavailable" class="research-helper">
+            Команды пока недоступны: поддерживаемая цель ещё не подключена.
+          </p>
+        </section>
+        <section id="research-notes" class="research-region" aria-labelledby="research-notes-title">
+          <h2 id="research-notes-title">Notes</h2>
+          <label class="research-label" for="research-notes-draft">Заметка</label>
+          <textarea id="research-notes-draft" class="research-notes-draft" rows="3"></textarea>
+          <button type="button" id="research-notes-send" data-research-allow="notes-send">Отправить заметку</button>
+          <p id="research-notes-status" class="research-status" hidden></p>
+          <ol id="research-notes-history" class="research-history" aria-live="polite"></ol>
+        </section>
+        <section id="research-operations" class="research-region" aria-labelledby="research-operations-title">
+          <h2 id="research-operations-title">Operations</h2>
+          <ol id="research-operations-list" class="research-history" aria-live="polite"></ol>
+        </section>
+      </div>
+    </aside>
+  </div>
   <dialog id="detail">
     <div class="detail-layout">
       <div id="detail-frame" class="frame-host"></div>
