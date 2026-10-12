@@ -80,7 +80,7 @@ specs/009-research-workspace-dock/
 ```text
 app/storyboard-web/
 ├── db/migrations/005_research_workspace_dock.sql  # NEW append-only research_event + partial unique indexes
-├── research-store.mjs                             # NEW DI store: appendNote/appendEvent/listTrace/listNotes
+├── research-store.mjs                             # NEW DI store: appendNote/appendEvent/listTrace
 ├── research-text-policy.mjs                       # NEW bounded protected-content checks for submittedText
 ├── server.mjs                                     # wire research routes + researchStore; no log text leakage
 ├── public/
@@ -113,7 +113,7 @@ No gate violations. The migration is required because browser-only and ephemeral
 
 - Add `research_event` per [data-model.md](./data-model.md), including partial unique indexes on `(correlation_id)` for start and terminal kinds.
 - Implement `createResearchStore(pool)` with append + ordered list; inject via `createServer({ researchStore })` mirroring project/visual stores.
-- Routes per [contracts/research-api.md](./contracts/research-api.md): `POST /api/research/notes`, `POST /api/research/events`, `GET /api/research/trace`, optional `GET /api/research/notes`.
+- Routes per [contracts/research-api.md](./contracts/research-api.md): `POST /api/research/notes`, `POST /api/research/events`, `GET /api/research/trace`.
 - Extraction for acceptance: `GET /api/research/trace` after restart (documented in quickstart). Optional SQL fallback for operators; not a second schema.
 
 ### 2. Event/context/correlation contract

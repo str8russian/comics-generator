@@ -181,10 +181,6 @@ Optional query `?kind=note` may filter Notes for dock hydration; `?surface=dock_
 
 This read may return raw owner `submittedText` by design (FR-029). It is not an operational log channel.
 
-## `GET /api/research/notes`
-
-Convenience equivalent to notes filter for dock reload. Success 200: `{ "notes": [ ... note events by seq ... ] }`. Not a polished export surface.
-
 ## Client capture matrix (normative coverage)
 
 | UI action | Product API (unchanged) | Research writes | submittedText / edit evidence |
