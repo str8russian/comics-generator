@@ -373,7 +373,7 @@ test("eligible compiler never copies arbitrary description substrings and never 
   assert.equal(intent.compilerVersion, "constrained-panel-intent/v1");
   assert.equal(intent.framing, "chest-up");
   assert.equal(intent.upperBody, "visible shoulders and upper torso");
-  assert.equal(intent.gesture, "hands rest in crop");
+  assert.equal(intent.gesture, "hands outside crop");
   assert.equal(intent.headPose, "near-frontal head");
   assert.equal(intent.expression, "neutral");
   assert.equal(intent.background, "solid-matte");
@@ -383,6 +383,82 @@ test("eligible compiler never copies arbitrary description substrings and never 
   assert.equal(/No additional description/i.test(prompt), false);
   assert.match(prompt, /solid\s+matte/i);
   assert.match(prompt, /chest-up/i);
+});
+
+test("eligible default hands keep outside crop and do not invite resting hands in frame", () => {
+  for (const description of [
+    "Путин chest-up framing upright torso with visible shoulders near-frontal head gaze to-camera neutral expression",
+    "Путин chest-up framing upright torso with visible shoulders hands rest in crop near-frontal head gaze to-camera neutral expression",
+    "Борис; по грудь; выпрямленный корпус; руки в кадре; голова прямо; взгляд прямо; спокойное выражение лица; сплошной матовый фон.",
+  ]) {
+    const { intent, prompt } = panelReadyCompile({
+      panelIndex: 0,
+      characterName: description.startsWith("Борис") ? "Борис" : "Путин",
+      description,
+    });
+    assert.equal(intent.gesture, "hands outside crop", description);
+    assert.match(prompt, /hands?\s+outside\s+(?:the\s+)?crop/i);
+    assert.equal(/hands\s+rest\s+in\s+crop/i.test(prompt), false, description);
+    assert.equal(/руки\s+в\s+кадре/i.test(prompt), false, description);
+    assert.equal(/In-crop gesture:\s*hands rest/i.test(prompt), false, description);
+  }
+});
+
+test("eligible explicit meaningful hand gesture remains in crop and is not erased by hands-out default", () => {
+  for (const [description, gesture] of [
+    ["Путин chest-up framing upright torso with visible shoulders right hand raised in crop near-frontal head gaze to-camera calm expression", "right hand raised in crop"],
+    ["Аня; по грудь; левая рука поднята в кадре; голова прямо; взгляд прямо; спокойное выражение лица; сплошной матовый фон.", "left hand raised in crop"],
+    [COMPOSITE_DESCRIPTION, "open-palm hand raised in crop"],
+    ["Путин chest-up framing upright torso with visible shoulders one hand raised in a measured explanatory gesture near-frontal head gaze to-camera calm expression", "hand raised in crop"],
+  ]) {
+    const { intent, prompt } = panelReadyCompile({
+      panelIndex: 0,
+      characterName: description.includes("Аня") ? "Аня" : "Путин",
+      description,
+    });
+    assert.equal(intent.gesture, gesture, description);
+    assert.match(prompt, new RegExp(gesture.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+    assert.match(prompt, /in-crop gesture|keep this meaningful hand gesture/i);
+    assert.equal(/hands\s+outside\s+(?:the\s+)?crop/i.test(prompt), false, description);
+    assert.equal(/hands\s+rest\s+in\s+crop/i.test(prompt), false, description);
+  }
+});
+
+test("eligible idle hand visibility cues stay hands-out and do not become in-crop gestures", () => {
+  for (const description of [
+    "Павел Дуров chest-up framing arms close to the body with hands partly visible near the lower edge near-frontal head gaze screen-left calm expression",
+    "Павел Дуров head-and-shoulders framing hands out of crop near-frontal head gaze screen-left calm expression",
+    "Павел Дуров close-up framing one hand barely visible near the lower edge near-frontal head gaze screen-left calm expression",
+  ]) {
+    const { intent, prompt } = panelReadyCompile({
+      panelIndex: 1,
+      characterName: "Павел Дуров",
+      description,
+    });
+    assert.equal(intent.gesture, "hands outside crop", description);
+    assert.match(prompt, /hands?\s+outside\s+(?:the\s+)?crop/i);
+    assert.equal(/In-crop gesture:/i.test(prompt), false, description);
+  }
+});
+
+test("eligible system-owned full-color rule requires style-anchor color and rejects grayscale", () => {
+  const grayscaleCanary = "SOURCE_SAYS_GRAYSCALE_PALETTE_k3n9";
+  const { prompt } = panelReadyCompile({
+    panelIndex: 0,
+    characterName: "Путин",
+    description: `Путин chest-up framing upright torso with visible shoulders near-frontal head gaze to-camera neutral expression ${grayscaleCanary} monochrome treatment`,
+    hasStyle: true,
+  });
+
+  assert.match(prompt, /full[-\s]?color/i);
+  assert.match(prompt, /(?:style|anchor).*(?:color|palette)|(?:color|palette).*(?:style|anchor)/i);
+  assert.match(prompt, /grayscale|monochrome/i);
+  assert.match(prompt, /do not|must not|never|prohibit|reject|no\s+grayscale/i);
+  assert.equal(prompt.includes(grayscaleCanary), false);
+  assert.equal(/Panel description:/i.test(prompt), false);
+  assert.equal(/SOURCE_SAYS_GRAYSCALE/i.test(prompt), false);
+  assert.match(prompt, /solid\s+matte/i);
+  assert.match(prompt, /exactly one|no additional people/i);
 });
 
 test("eligible compiler supports close-up through waist-up framing names and rejects wider framing as provider intent", () => {

@@ -654,6 +654,11 @@ test("eligible frame generate preserves Russian supported intent without raw des
     assert.equal(/direct both eyes toward the viewer'?s?\s+right/i.test(calls[0].prompt), false);
     assert.match(calls[1].prompt, /Борис/);
     assert.match(calls[1].prompt, /toward the camera|to-camera|straight ahead/i);
+    assert.match(calls[1].prompt, /hands?\s+outside\s+(?:the\s+)?crop/i);
+    assert.equal(/hands\s+rest\s+in\s+crop/i.test(calls[1].prompt), false);
+    assert.equal(/руки\s+в\s+кадре/i.test(calls[1].prompt), false);
+    assert.match(calls[1].prompt, /full[-\s]?color/i);
+    assert.match(calls[1].prompt, /grayscale|monochrome/i);
     assert.deepEqual(generated.body.generationFailures, []);
   } finally {
     await close(server);

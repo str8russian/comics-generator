@@ -14,11 +14,13 @@ export const PANEL_READY_COMPILER_VERSION = "constrained-panel-intent/v1";
 const CANONICAL_DEFAULTS = Object.freeze({
   framing: "chest-up",
   upperBody: "visible shoulders and upper torso",
-  gesture: "hands rest in crop",
+  gesture: "hands outside crop",
   headPose: "near-frontal head",
   expression: "neutral",
   background: "solid-matte",
 });
+
+const HANDS_OUT_GESTURE = CANONICAL_DEFAULTS.gesture;
 
 const FRAMING_PATTERNS = [
   { re: /\bwaist[-\s]?up\b/iu, value: "waist-up" },
@@ -39,8 +41,19 @@ const GESTURE_PATTERNS = [
   { re: /лев(?:ая|ую|ой)?\s+рук[аиуеой]*\s+(?:слегка\s+)?поднят/iu, value: "left hand raised in crop" },
   { re: /right\s+hand\s+raised(?:\s+in\s+(?:an\s+open-palm\s+gesture\s+in\s+)?crop)?/iu, value: "right hand raised in crop" },
   { re: /left\s+hand\s+raised(?:\s+in\s+crop)?/iu, value: "left hand raised in crop" },
-  { re: /hands\s+rest\s+in\s+crop|руки\s+в\s+кадре/iu, value: "hands rest in crop" },
+  // Meaningful one-hand gestures from constrained Storyboarder prose (not idle edge visibility).
+  { re: /(?:one\s+)?hand\s+raised\b/iu, value: "hand raised in crop" },
+  { re: /(?:one\s+)?hand\s+lifted\b/iu, value: "hand raised in crop" },
+  { re: /(?:one\s+)?hand\s+(?:making|extending|open)\b/iu, value: "hand gesture in crop" },
+  { re: /(?:one\s+)?hand\s+clenched\b/iu, value: "hand clenched in crop" },
+  { re: /both\s+hands\s+(?:lightly\s+)?raised\b/iu, value: "hands raised in crop" },
+  // Idle / default phrasing is not a meaningful gesture; map to hands-out.
+  { re: /hands\s+rest\s+in\s+crop|hands?\s+out(?:side)?\s+(?:of\s+|the\s+)?crop|руки\s+в\s+кадре|руки\s+вне\s+кадра/iu, value: HANDS_OUT_GESTURE },
 ];
+
+function isHandsOutGesture(gesture) {
+  return !gesture || gesture === HANDS_OUT_GESTURE;
+}
 
 const HEAD_POSE_PATTERNS = [
   { re: /head\s+turned\s+slightly\s+(?:toward\s+)?screen[-\s]?right|голов[аыу]\s+слегка\s+пов[её]рнут\p{L}*\s+вправо/iu, value: "head turned slightly screen-right" },
@@ -332,6 +345,14 @@ export function compilePanelReadyPrompt(intent, {
   }
 
   const framingLabel = String(intent.framing || CANONICAL_DEFAULTS.framing);
+  const gesture = intent.gesture || CANONICAL_DEFAULTS.gesture;
+  const handsOut = isHandsOutGesture(gesture);
+  const framingKeep = handsOut
+    ? "face, mouth, expression, and essential upper body"
+    : "face, mouth, expression, gesture, and essential upper body";
+  const gestureLine = handsOut
+    ? "Hands: keep hands outside the crop. Do not show resting or idle hands inside the frame."
+    : `In-crop gesture: ${gesture}. Keep this meaningful hand gesture visible inside the crop.`;
   const gazeLine = intent.gaze
     ? gazeInstruction(intent.gaze)
     : hasPerformance
@@ -341,9 +362,9 @@ export function compilePanelReadyPrompt(intent, {
   const lines = [
     `Create one independent panel-ready character image${intent.characterName ? ` featuring ${intent.characterName}` : ""}.`,
     "",
-    `Framing: crop-safe ${framingLabel} so the face, mouth, expression, gesture, and essential upper body remain inside the image.`,
+    `Framing: crop-safe ${framingLabel} so the ${framingKeep} remain inside the image.`,
     `Visible upper-body geometry: ${intent.upperBody || CANONICAL_DEFAULTS.upperBody}.`,
-    `In-crop gesture: ${intent.gesture || CANONICAL_DEFAULTS.gesture}.`,
+    gestureLine,
     `Head: ${intent.headPose || CANONICAL_DEFAULTS.headPose}.`,
   ];
   if (gazeLine) lines.push(gazeLine);
@@ -357,6 +378,7 @@ export function compilePanelReadyPrompt(intent, {
   }
   lines.push(`Facial expression: ${intent.expression || CANONICAL_DEFAULTS.expression}.`);
   lines.push("Background: solid matte fill. Do not invent a location, room, landscape, patterned backdrop, or scenic environment.");
+  lines.push("Color: full-color rendering consistent with the approved project style / style-anchor color treatment. Do not render grayscale or monochrome.");
   lines.push("");
   lines.push("Role of the reference images:");
   lines.push(roles.length ? roles.join("\n") : "No reference image is supplied. Follow the canonical panel intent and approved authorities.");
@@ -366,6 +388,7 @@ export function compilePanelReadyPrompt(intent, {
   lines.push("- no nested panels and no split layout inside the generated image");
   lines.push("- no borders, captions, speech bubbles, dialogue bubbles, logos, watermarks, or generated text");
   lines.push("- no unwanted contradictory scene objects");
+  lines.push("- no grayscale or monochrome rendering");
   lines.push("");
   lines.push("Generate only this single character image for later external assembly.");
   lines.push("");
