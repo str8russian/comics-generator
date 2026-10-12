@@ -50,9 +50,9 @@
 
 ### Tests (must fail before matching implementation)
 
-- [ ] T004 Create `app/storyboard-web/test/research-text-policy.test.mjs` with failing canaries for `assertResearchSubmittedTextSafe` (or exported equivalent) covering Authorization/Bearer forms, credential-bearing URL/DSN, sensitive query parameters (`token`/`access_token`/`api_key`/`password`/`secret`/`signature`), and `data:*;base64` / `data:image/…;base64`. Ordinary Russian owner prose must pass unchanged. **FR-030, SC-007**; [research-api.md](./contracts/research-api.md) Protected-content. **Done when**: file exists and fails because module/policy is missing. **Proof**: `node --test test/research-text-policy.test.mjs`.
+- [ ] T004 [P] Create `app/storyboard-web/test/research-text-policy.test.mjs` with failing canaries for `assertResearchSubmittedTextSafe` (or exported equivalent) covering Authorization/Bearer forms, credential-bearing URL/DSN, sensitive query parameters (`token`/`access_token`/`api_key`/`password`/`secret`/`signature`), and `data:*;base64` / `data:image/…;base64`. Ordinary Russian owner prose must pass unchanged. **FR-030, SC-007**; [research-api.md](./contracts/research-api.md) Protected-content. **Done when**: file exists and fails because module/policy is missing. **Proof**: `node --test test/research-text-policy.test.mjs`.
 
-- [ ] T005 Create `app/storyboard-web/test/research-store.test.mjs` with failing offline DI cases: append `note`; monotonic `seq`; at most one `action_start` and one `action_terminal` per `correlation_id`; terminal derives `semanticAction`/`surface`/`commandTarget`/`editTarget`/`context`/`submittedText` from stored start; `durationMs` from server timestamps; terminal without start requires `startSnapshot` and sets `outcomeFlags.evidenceIncomplete` with `durationMs: null`; duplicate start/terminal rejected; display vs structure frame fields remain distinct in frozen context. **FR-011, FR-019, FR-022, FR-023**. **Done when**: tests fail before store exists. **Proof**: `node --test test/research-store.test.mjs`.
+- [ ] T005 [P] Create `app/storyboard-web/test/research-store.test.mjs` with failing offline DI cases: append `note`; monotonic `seq`; at most one `action_start` and one `action_terminal` per `correlation_id`; terminal derives `semanticAction`/`surface`/`commandTarget`/`editTarget`/`context`/`submittedText` from stored start; `durationMs` from server timestamps; terminal without start requires `startSnapshot` and sets `outcomeFlags.evidenceIncomplete` with `durationMs: null`; duplicate start/terminal rejected; display vs structure frame fields remain distinct in frozen context. **FR-011, FR-019, FR-022, FR-023**. **Done when**: tests fail before store exists. **Proof**: `node --test test/research-store.test.mjs`.
 
 - [ ] T006 Create `app/storyboard-web/test/research-api.test.mjs` that (a) compiles `specs/009-research-workspace-dock/contracts/research-event.schema.json` with Ajv Draft 2020-12 + `ajv-formats` (`strict: true`) and fails until schema is loadable/contract-aligned; (b) fails HTTP cases via `createServer({ researchStore })` for `POST /api/research/notes`, `POST /api/research/events`, `GET /api/research/trace` (+ `?kind=note`, `?surface=dock_commands`); `kind=protected-content` with **no** secret echo in body/logs; forbidden object keys → `invalid-request`; oversize body → `413` empty; `reading` `submittedText` longer than 8000 chars accepted within `DEFAULT_MAX_BODY_BYTES` (account for JSON envelope); no universal 8000 rejection; operational `logLine` never includes `submittedText`. **FR-019, FR-021, FR-025, FR-028–FR-031, FR-033**; [research-api.md](./contracts/research-api.md). **Done when**: suite exists and is red for missing routes/policy/wiring. **Proof**: `node --test test/research-api.test.mjs`.
 
@@ -294,18 +294,45 @@ Task: "T023 Extend research-api/store correlation/navigation cases …"
 
 | Requirement / criterion | Tasks |
 | --- | --- |
-| FR-001–FR-003 dock shell | T013–T017, T033 |
-| FR-004–FR-006 Commands/Notes independence | T013, T016, T019–T021 |
-| FR-007–FR-011 Commands targets/context | T019–T021, T005/T010 context fields |
-| FR-012–FR-015 Notes diary + busy | T013–T018, T015 |
-| FR-016–FR-018 Operations | T013, T016–T018, T028–T029 |
-| FR-019–FR-021 ordered trace + matrix | T005–T006, T010–T011, T022–T025 |
-| FR-022–FR-023 correlation + capture-time context | T005, T009–T011, T023–T026 |
-| FR-024–FR-027 persistence / non-recovery | T007, T012, T018, T026, T032–T033 |
-| FR-028 extraction without polished export | T006, T011, T026, T033 |
-| FR-029–FR-031 research path vs logs | T004, T006, T008, T011, T027 |
-| FR-032–FR-035 failure honesty | T013, T016, T027–T029, T033 |
-| FR-036–FR-039 protected / out of scope | T001–T003, T030–T034 |
+| FR-001 one fixed bottom-right dock | T013–T017, T033 |
+| FR-002 collapsible; usable with `#detail`; no critical-control block | T013–T017, T015, T033 |
+| FR-003 three areas; no duplicate docks | T013–T014, T017 |
+| FR-004 independent Commands/Notes inputs/drafts/sends/histories/types | T013, T016, T019–T021 |
+| FR-005 send one does not consume the other | T019–T021 |
+| FR-006 unsent draft persistence not required | T016 |
+| FR-007 reuse supported commands only | T019–T020 |
+| FR-008 visibly identify context and actual command target | T019–T020 |
+| FR-009 honest unsupported context | T019–T020 |
+| FR-010 ambient selection does not silently retarget storyboard-wide commands | T019–T020 |
+| FR-011 display vs structure frame identity | T005, T010, T019–T020 |
+| FR-012 Notes diary; no AI replies | T013, T016 |
+| FR-013 one send → one timestamped note | T013, T016 |
+| FR-014 auto capture-time context; explicit nulls | T005, T016 |
+| FR-015 Notes usable during async; no new product op | T013, T015–T017 |
+| FR-016 read-only Operations running/terminal | T013, T016–T018 |
+| FR-017 keep local control feedback | T017 |
+| FR-018 no fake % / last-good≠success / no job system | T013, T018, T028–T029 |
+| FR-019 ordered research trace contents | T005–T006, T010–T011, T022–T025 |
+| FR-020 include existing product controls | T017, T021–T025 |
+| FR-021 submitted text not keystrokes; placement change not input | T006, T022, T024 |
+| FR-022 ordering + action/result association | T005, T009–T011, T023–T026 |
+| FR-023 capture-time context; no later relabel | T005, T023–T024 |
+| FR-024 survive reload/restart | T007, T012, T018, T026, T032–T033 |
+| FR-025 Notes return; machine-readable trace | T012, T016, T026, T033 |
+| FR-026 not memory-only | T007, T012, T032 |
+| FR-027 evidence ≠ operation recovery | T018, T023, T028–T029 |
+| FR-028 extraction without polished export / prescribed schema in spec | T006, T011, T026, T033 |
+| FR-029 raw owner text on separate research path | T008, T010–T011 |
+| FR-030 exclude credentials/URLs/provider/image bytes (keys + submittedText policy) | T004, T006, T008, T027 |
+| FR-031 protect sanitized operational logs | T006, T011, T027 |
+| FR-032 operation terminal failure honesty | T028–T029, T033 |
+| FR-033 research-save failure not shown as saved | T016, T028–T029, T033 |
+| FR-034 unsaved note text retained | T016, T028–T029 |
+| FR-035 no automatic retry orchestration | T016, T028–T029 |
+| FR-036 preserve fidelity/approvals/authority/geometry/providers/last-good | T001, T030–T034 |
+| FR-037 DEC-053 protected direction only | T002–T003, T034 |
+| FR-038 out-of-scope exclusions | T002–T003, T034 |
+| FR-039 no invented quotas beyond approved reload/restart | T006, T009, T012 |
 | SC-001 Happy Path 1–6 | T018, T020, T033 |
 | SC-002 Commands vs Notes separability | T019–T021, T033 |
 | SC-003 reload/restart Notes + trace | T012, T018, T026, T032–T033 |
