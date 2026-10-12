@@ -192,3 +192,208 @@ test("absent-start terminal requires startSnapshot, sets evidenceIncomplete, nul
   assert.equal(incomplete.event.durationMs, null);
   assert.equal(incomplete.event.outcomeFlags.evidenceIncomplete, true);
 });
+
+function storyboardTarget(overrides = {}) {
+  return {
+    kind: "storyboard",
+    displayFrameNumber: null,
+    displayFrameId: null,
+    structureFrameId: null,
+    structureSegmentIndex: null,
+    panelIndex: null,
+    zoom: null,
+    positionX: null,
+    positionY: null,
+    characterName: null,
+    anchorVersionId: null,
+    ...overrides,
+  };
+}
+
+async function rejectNote(research, context) {
+  const result = await research.appendNote({ submittedText: "ok", context });
+  assert.equal(result.ok, false);
+  assert.equal(result.kind, "invalid-request");
+}
+
+async function rejectStart(research, overrides) {
+  const result = await research.appendEvent({
+    eventKind: "action_start",
+    semanticAction: "structure_edit",
+    correlationId: randomUUID(),
+    surface: "dock_commands",
+    submittedText: "ok",
+    commandTarget: storyboardTarget(),
+    editTarget: null,
+    context: nullContext({ workflowPhase: "structure" }),
+    ...overrides,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.kind, "invalid-request");
+}
+
+test("context rejects unknown keys, invalid enums, wrong types, and invalid minima", async () => {
+  const research = store();
+  await rejectNote(research, nullContext({ workflowPhase: "invented" }));
+  await rejectNote(research, nullContext({ displayFrameNumber: "3" }));
+  await rejectNote(research, nullContext({ displayFrameNumber: 0 }));
+  await rejectNote(research, nullContext({ panelIndex: -1 }));
+  await rejectNote(research, { ...nullContext(), extra: true });
+});
+
+test("commandTarget rejects invalid kind, types, minima, and unknown keys", async () => {
+  const research = store();
+  await rejectStart(research, { commandTarget: storyboardTarget({ kind: "invented" }) });
+  await rejectStart(research, { commandTarget: storyboardTarget({ panelIndex: "0" }) });
+  await rejectStart(research, { commandTarget: storyboardTarget({ displayFrameNumber: 0 }) });
+  await rejectStart(research, { commandTarget: { ...storyboardTarget(), unknown: 1 } });
+});
+
+test("editTarget rejects invalid enums, types, and unknown keys", async () => {
+  const research = store();
+  const castStart = {
+    eventKind: "action_start",
+    semanticAction: "cast_edit",
+    correlationId: randomUUID(),
+    surface: "product_control",
+    submittedText: "Песков",
+    commandTarget: null,
+    editTarget: {
+      editKind: "speaker_assignment",
+      castPhase: "pending_reading",
+      characterName: "Песков",
+      previousCharacterName: null,
+      surfaceForm: null,
+      sourceItemId: "u1",
+    },
+    context: nullContext({ workflowPhase: "material" }),
+  };
+  const badKind = await research.appendEvent({
+    ...castStart,
+    editTarget: { ...castStart.editTarget, editKind: "invented" },
+  });
+  assert.equal(badKind.ok, false);
+  assert.equal(badKind.kind, "invalid-request");
+
+  const badPhase = await research.appendEvent({
+    ...castStart,
+    correlationId: randomUUID(),
+    editTarget: { ...castStart.editTarget, castPhase: "invented" },
+  });
+  assert.equal(badPhase.ok, false);
+  assert.equal(badPhase.kind, "invalid-request");
+
+  const badType = await research.appendEvent({
+    ...castStart,
+    correlationId: randomUUID(),
+    editTarget: { ...castStart.editTarget, characterName: 1 },
+  });
+  assert.equal(badType.ok, false);
+  assert.equal(badType.kind, "invalid-request");
+
+  const unknown = await research.appendEvent({
+    ...castStart,
+    correlationId: randomUUID(),
+    editTarget: { ...castStart.editTarget, dump: "no" },
+  });
+  assert.equal(unknown.ok, false);
+  assert.equal(unknown.kind, "invalid-request");
+});
+
+test("outcomeKind accepts only compact safe codes and never echoes secret-like values", async () => {
+  const research = store();
+  const correlationId = randomUUID();
+  const start = await research.appendEvent({
+    eventKind: "action_start",
+    semanticAction: "structure_edit",
+    correlationId,
+    surface: "product_control",
+    submittedText: null,
+    commandTarget: storyboardTarget(),
+    editTarget: null,
+    context: nullContext({ workflowPhase: "structure" }),
+  });
+  assert.equal(start.ok, true);
+
+  const secret = "Bearer fake-secret-token-value";
+  const secretTerminal = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId,
+    outcome: "failure",
+    outcomeKind: secret,
+    outcomeFlags: {},
+  });
+  assert.equal(secretTerminal.ok, false);
+  assert.equal(secretTerminal.kind, "invalid-request");
+  assert.equal(JSON.stringify(secretTerminal).includes(secret), false);
+
+  const tooLong = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId,
+    outcome: "failure",
+    outcomeKind: "a".repeat(65),
+    outcomeFlags: {},
+  });
+  assert.equal(tooLong.ok, false);
+  assert.equal(tooLong.kind, "invalid-request");
+
+  const okKind = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId,
+    outcome: "failure",
+    outcomeKind: "provider",
+    outcomeFlags: {},
+  });
+  assert.equal(okKind.ok, true);
+  assert.equal(okKind.event.outcomeKind, "provider");
+});
+
+test("evidenceIncomplete is server-derived from start presence", async () => {
+  const research = store();
+  const pairedId = randomUUID();
+  assert.equal((await research.appendEvent({
+    eventKind: "action_start",
+    semanticAction: "structure_edit",
+    correlationId: pairedId,
+    surface: "dock_commands",
+    submittedText: "x",
+    commandTarget: storyboardTarget(),
+    editTarget: null,
+    context: nullContext({ workflowPhase: "structure" }),
+  })).ok, true);
+
+  const paired = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId: pairedId,
+    outcome: "success",
+    outcomeFlags: { evidenceIncomplete: true },
+  });
+  assert.equal(paired.ok, true);
+  assert.notEqual(paired.event.outcomeFlags.evidenceIncomplete, true);
+
+  const incompleteId = randomUUID();
+  const incomplete = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId: incompleteId,
+    outcome: "success",
+    outcomeFlags: { evidenceIncomplete: false },
+    startSnapshot: {
+      semanticAction: "structure_edit",
+      surface: "dock_commands",
+      submittedText: "snap",
+      commandTarget: storyboardTarget(),
+      editTarget: null,
+      context: nullContext({ workflowPhase: "structure" }),
+    },
+  });
+  assert.equal(incomplete.ok, true);
+  assert.equal(incomplete.event.outcomeFlags.evidenceIncomplete, true);
+});
+
+test("memory store requires explicit { memory: true }; invalid pools fail configuration", () => {
+  assert.throws(() => createResearchStore(), { kind: "configuration" });
+  assert.throws(() => createResearchStore({}), { kind: "configuration" });
+  assert.throws(() => createResearchStore({ query() {} }), { kind: "configuration" });
+  const memory = createResearchStore({ memory: true });
+  assert.equal(typeof memory.appendNote, "function");
+});

@@ -24,6 +24,18 @@ const SEMANTIC_ACTIONS = new Set([
 const SURFACES = new Set(["dock_notes", "dock_commands", "product_control"]);
 const OUTCOMES = new Set(["success", "failure", "blocked"]);
 const EVENT_KINDS = new Set(["note", "action_start", "action_terminal"]);
+const WORKFLOW_PHASES = new Set([
+  "draft",
+  "reading",
+  "material",
+  "structure",
+  "characters",
+  "visual",
+  "approved",
+]);
+const COMMAND_KINDS = new Set(["storyboard", "panel", "frame", "character", "none"]);
+const EDIT_KINDS = new Set(["character_rename", "alias_assignment", "speaker_assignment"]);
+const CAST_PHASES = new Set(["pending_reading", "material_state"]);
 
 const CONTEXT_KEYS = [
   "workflowPhase",
@@ -64,6 +76,7 @@ const EDIT_TARGET_KEYS = [
 ];
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const OUTCOME_KIND_RE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 function failed(kind, httpStatus = 400) {
   return { ok: false, status: "failed", kind, httpStatus };
@@ -73,37 +86,103 @@ function isUuid(value) {
   return typeof value === "string" && UUID_RE.test(value);
 }
 
+function isInteger(value) {
+  return Number.isInteger(value);
+}
+
+function isNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function hasOnlyKeys(object, allowed) {
+  return Object.keys(object).every((key) => allowed.has(key));
+}
+
+function nullableString(value) {
+  return value === null || typeof value === "string";
+}
+
+function nullableIntegerMin(value, minimum) {
+  return value === null || (isInteger(value) && value >= minimum);
+}
+
+function nullableNumber(value) {
+  return value === null || isNumber(value);
+}
+
 function normalizeContext(context) {
   if (!context || typeof context !== "object" || Array.isArray(context)) return null;
+  const allowed = new Set(CONTEXT_KEYS);
+  if (!hasOnlyKeys(context, allowed)) return null;
+
   const out = {};
   for (const key of CONTEXT_KEYS) {
     out[key] = Object.hasOwn(context, key) ? context[key] : null;
   }
+
+  if (!(out.workflowPhase === null
+    || (typeof out.workflowPhase === "string" && WORKFLOW_PHASES.has(out.workflowPhase)))) {
+    return null;
+  }
+  if (!nullableString(out.storyboardVersionId)) return null;
+  if (!nullableIntegerMin(out.displayFrameNumber, 1)) return null;
+  if (!nullableString(out.displayFrameId)) return null;
+  if (!nullableString(out.structureFrameId)) return null;
+  if (!nullableIntegerMin(out.structureSegmentIndex, 0)) return null;
+  if (!nullableIntegerMin(out.panelIndex, 0)) return null;
+  if (!nullableString(out.panelSubject)) return null;
+  if (!nullableString(out.imageAssetId)) return null;
+  if (!nullableString(out.generationId)) return null;
+  if (!nullableString(out.characterName)) return null;
+  if (!nullableString(out.anchorVersionId)) return null;
   return out;
 }
 
 function normalizeCommandTarget(value) {
   if (value == null) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  if (typeof value.kind !== "string") return undefined;
-  const out = {};
-  for (const key of COMMAND_TARGET_KEYS) {
-    out[key] = Object.hasOwn(value, key) ? value[key] : (key === "kind" ? value.kind : null);
+  const allowed = new Set(COMMAND_TARGET_KEYS);
+  if (!hasOnlyKeys(value, allowed)) return undefined;
+  if (!Object.hasOwn(value, "kind") || typeof value.kind !== "string" || !COMMAND_KINDS.has(value.kind)) {
+    return undefined;
   }
-  out.kind = value.kind;
+
+  const out = { kind: value.kind };
+  for (const key of COMMAND_TARGET_KEYS) {
+    if (key === "kind") continue;
+    const present = Object.hasOwn(value, key) ? value[key] : null;
+    if (key === "displayFrameNumber") {
+      if (!nullableIntegerMin(present, 1)) return undefined;
+    } else if (key === "structureSegmentIndex" || key === "panelIndex") {
+      if (!nullableIntegerMin(present, 0)) return undefined;
+    } else if (key === "zoom" || key === "positionX" || key === "positionY") {
+      if (!nullableNumber(present)) return undefined;
+    } else if (!nullableString(present)) {
+      return undefined;
+    }
+    out[key] = present;
+  }
   return out;
 }
 
 function normalizeEditTarget(value) {
   if (value == null) return null;
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  if (typeof value.editKind !== "string" || typeof value.castPhase !== "string") return undefined;
-  const out = {};
+  const allowed = new Set(EDIT_TARGET_KEYS);
+  if (!hasOnlyKeys(value, allowed)) return undefined;
+  if (!Object.hasOwn(value, "editKind") || !EDIT_KINDS.has(value.editKind)) return undefined;
+  if (!Object.hasOwn(value, "castPhase") || !CAST_PHASES.has(value.castPhase)) return undefined;
+
+  const out = {
+    editKind: value.editKind,
+    castPhase: value.castPhase,
+  };
   for (const key of EDIT_TARGET_KEYS) {
-    out[key] = Object.hasOwn(value, key) ? value[key] : null;
+    if (key === "editKind" || key === "castPhase") continue;
+    const present = Object.hasOwn(value, key) ? value[key] : null;
+    if (!nullableString(present)) return undefined;
+    out[key] = present;
   }
-  out.editKind = value.editKind;
-  out.castPhase = value.castPhase;
   return out;
 }
 
@@ -123,6 +202,14 @@ function normalizeOutcomeFlags(value) {
     if (key !== "retainedLastGoodImage" && key !== "evidenceIncomplete") return undefined;
   }
   return out;
+}
+
+function normalizeOutcomeKind(value) {
+  if (value == null) return null;
+  if (typeof value !== "string") return undefined;
+  if (value.length === 0 || value.length > 64) return undefined;
+  if (!OUTCOME_KIND_RE.test(value)) return undefined;
+  return value;
 }
 
 function validateTextPolicy(submittedText, editTarget) {
@@ -247,13 +334,11 @@ function validateEventInput(input) {
     };
   }
 
-  // action_terminal
   if (!OUTCOMES.has(input.outcome)) return failed("invalid-request");
   const outcomeFlags = normalizeOutcomeFlags(input.outcomeFlags);
   if (outcomeFlags === undefined) return failed("invalid-request");
-  if (input.outcomeKind != null && typeof input.outcomeKind !== "string") {
-    return failed("invalid-request");
-  }
+  const outcomeKind = normalizeOutcomeKind(input.outcomeKind);
+  if (outcomeKind === undefined) return failed("invalid-request");
   let startSnapshot = null;
   if (input.startSnapshot != null) {
     startSnapshot = validateStartSnapshot(input.startSnapshot);
@@ -270,10 +355,17 @@ function validateEventInput(input) {
     id: input.id ?? randomUUID(),
     correlationId: input.correlationId,
     outcome: input.outcome,
-    outcomeKind: input.outcomeKind ?? null,
+    outcomeKind,
     outcomeFlags,
     startSnapshot,
   };
+}
+
+function deriveTerminalFlags(clientFlags, { incomplete }) {
+  const flags = {};
+  if (clientFlags.retainedLastGoodImage === true) flags.retainedLastGoodImage = true;
+  if (incomplete) flags.evidenceIncomplete = true;
+  return flags;
 }
 
 function createMemoryStore() {
@@ -349,7 +441,7 @@ function createMemoryStore() {
 
     let identity;
     let durationMs = null;
-    let outcomeFlags = { ...validated.outcomeFlags };
+    let outcomeFlags;
 
     if (start) {
       identity = {
@@ -360,16 +452,35 @@ function createMemoryStore() {
         editTarget: start.editTarget,
         context: start.context,
       };
+      outcomeFlags = deriveTerminalFlags(validated.outcomeFlags, { incomplete: false });
+      const occurredAt = new Date();
       const startMs = Date.parse(start.occurredAt);
-      const endMs = Date.now();
-      durationMs = Number.isFinite(startMs) ? Math.max(0, endMs - startMs) : 0;
-    } else {
-      if (!validated.startSnapshot) return failed("invalid-request");
-      identity = validated.startSnapshot;
-      outcomeFlags = { ...outcomeFlags, evidenceIncomplete: true };
-      durationMs = null;
+      durationMs = Number.isFinite(startMs) ? Math.max(0, occurredAt.getTime() - startMs) : 0;
+      seq += 1;
+      const event = {
+        seq,
+        id: validated.id,
+        occurredAt: occurredAt.toISOString(),
+        eventKind: "action_terminal",
+        semanticAction: identity.semanticAction,
+        correlationId: validated.correlationId,
+        surface: identity.surface,
+        submittedText: identity.submittedText,
+        commandTarget: identity.commandTarget,
+        editTarget: identity.editTarget,
+        context: identity.context,
+        outcome: validated.outcome,
+        outcomeKind: validated.outcomeKind,
+        outcomeFlags,
+        durationMs,
+      };
+      events.push(event);
+      return { ok: true, event };
     }
 
+    if (!validated.startSnapshot) return failed("invalid-request");
+    identity = validated.startSnapshot;
+    outcomeFlags = deriveTerminalFlags(validated.outcomeFlags, { incomplete: true });
     seq += 1;
     const event = {
       seq,
@@ -386,7 +497,7 @@ function createMemoryStore() {
       outcome: validated.outcome,
       outcomeKind: validated.outcomeKind,
       outcomeFlags,
-      durationMs,
+      durationMs: null,
     };
     events.push(event);
     return { ok: true, event };
@@ -420,19 +531,20 @@ function createPgStore(pool) {
   async function insertRow(client, row) {
     const result = await client.query(`
       INSERT INTO research_event (
-        id, event_kind, semantic_action, correlation_id, surface,
+        id, occurred_at, event_kind, semantic_action, correlation_id, surface,
         submitted_text, command_target, edit_target, context,
         outcome, outcome_flags, outcome_kind, duration_ms
       ) VALUES (
-        $1::uuid, $2, $3, $4::uuid, $5,
-        $6, $7::jsonb, $8::jsonb, $9::jsonb,
-        $10, $11::jsonb, $12, $13
+        $1::uuid, COALESCE($2::timestamptz, clock_timestamp()), $3, $4, $5::uuid, $6,
+        $7, $8::jsonb, $9::jsonb, $10::jsonb,
+        $11, $12::jsonb, $13, $14
       )
       RETURNING seq, id, occurred_at, event_kind, semantic_action, correlation_id, surface,
                 submitted_text, command_target, edit_target, context,
                 outcome, outcome_flags, outcome_kind, duration_ms
     `, [
       row.id,
+      row.occurredAt ?? null,
       row.eventKind,
       row.semanticAction,
       row.correlationId,
@@ -509,11 +621,13 @@ function createPgStore(pool) {
           WHERE correlation_id = $1::uuid AND event_kind = 'action_start'
           LIMIT 1
         `, [validated.correlationId]);
-        const startRow = startResult.rows[0] ? mapRow(startResult.rows[0]) : null;
+        const startRaw = startResult.rows[0] ?? null;
+        const startRow = startRaw ? mapRow(startRaw) : null;
 
         let identity;
         let durationMs = null;
-        let outcomeFlags = { ...validated.outcomeFlags };
+        let outcomeFlags;
+        let occurredAt = null;
 
         if (startRow) {
           identity = {
@@ -524,19 +638,36 @@ function createPgStore(pool) {
             editTarget: startRow.editTarget,
             context: startRow.context,
           };
-          const durationResult = await client.query(`
-            SELECT GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (clock_timestamp() - $1::timestamptz)) * 1000))::int AS ms
-          `, [startRow.occurredAt]);
-          durationMs = durationResult.rows[0].ms;
+          outcomeFlags = deriveTerminalFlags(validated.outcomeFlags, { incomplete: false });
+          // One DB timestamp for both the inserted terminal row and duration_ms.
+          // Millisecond truncation matches JSON date-time precision of occurredAt.
+          const stamp = await client.query(`
+            WITH terminal AS (
+              SELECT date_trunc('milliseconds', clock_timestamp()) AS occurred_at
+            )
+            SELECT
+              terminal.occurred_at,
+              GREATEST(
+                0,
+                (
+                  (EXTRACT(EPOCH FROM terminal.occurred_at) * 1000)::bigint
+                  - (EXTRACT(EPOCH FROM date_trunc('milliseconds', $1::timestamptz)) * 1000)::bigint
+                )
+              )::int AS duration_ms
+            FROM terminal
+          `, [startRaw.occurred_at]);
+          occurredAt = stamp.rows[0].occurred_at;
+          durationMs = stamp.rows[0].duration_ms;
         } else {
           if (!validated.startSnapshot) return failed("invalid-request");
           identity = validated.startSnapshot;
-          outcomeFlags = { ...outcomeFlags, evidenceIncomplete: true };
+          outcomeFlags = deriveTerminalFlags(validated.outcomeFlags, { incomplete: true });
           durationMs = null;
         }
 
         const event = await insertRow(client, {
           id: validated.id,
+          occurredAt,
           eventKind: "action_terminal",
           semanticAction: identity.semanticAction,
           correlationId: validated.correlationId,
@@ -590,10 +721,19 @@ function createPgStore(pool) {
   return { appendNote, appendEvent, listTrace };
 }
 
+export class ResearchStoreConfigurationError extends Error {
+  constructor() {
+    super("configuration");
+    this.name = "ResearchStoreConfigurationError";
+    this.kind = "configuration";
+    this.httpStatus = 500;
+  }
+}
+
 export function createResearchStore(pool) {
   if (pool && pool.memory === true) return createMemoryStore();
   if (!pool || typeof pool.query !== "function" || typeof pool.connect !== "function") {
-    return createMemoryStore();
+    throw new ResearchStoreConfigurationError();
   }
   return createPgStore(pool);
 }

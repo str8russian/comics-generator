@@ -81,6 +81,28 @@ test("research_event migration, restart durability, uniqueness, and long reading
       outcomeFlags: {},
     });
     assert.equal(terminal.ok, true);
+    assert.equal(typeof terminal.event.durationMs, "number");
+    const fromReturnedTimestamps = Math.max(
+      0,
+      Date.parse(terminal.event.occurredAt) - Date.parse(start.event.occurredAt),
+    );
+    assert.equal(terminal.event.durationMs, fromReturnedTimestamps);
+    const fromPersisted = await poolA.query(`
+      SELECT GREATEST(
+        0,
+        (
+          (EXTRACT(EPOCH FROM date_trunc('milliseconds', term.occurred_at)) * 1000)::bigint
+          - (EXTRACT(EPOCH FROM date_trunc('milliseconds', start_row.occurred_at)) * 1000)::bigint
+        )
+      )::int AS ms
+      FROM research_event AS term
+      JOIN research_event AS start_row
+        ON start_row.correlation_id = term.correlation_id
+       AND start_row.event_kind = 'action_start'
+      WHERE term.correlation_id = $1::uuid
+        AND term.event_kind = 'action_terminal'
+    `, [correlationId]);
+    assert.equal(terminal.event.durationMs, fromPersisted.rows[0].ms);
 
     // Simulate app restart with a fresh pool (lock held on a separate pool).
     await poolA.end();

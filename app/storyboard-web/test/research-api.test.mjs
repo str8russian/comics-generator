@@ -101,11 +101,16 @@ async function withServer(fn, { logger } = {}) {
   }
 }
 
-test("research-event schema compiles with Ajv Draft 2020-12 and formats (baseline)", () => {
+function compileResearchEventValidator() {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   addFormats(ajv);
-  const validate = ajv.compile(structuredClone(schema));
-  assert.equal(typeof validate, "function");
+  return ajv.compile(structuredClone(schema));
+}
+
+const validateResearchEvent = compileResearchEventValidator();
+
+test("research-event schema compiles with Ajv Draft 2020-12 and formats (baseline)", () => {
+  assert.equal(typeof validateResearchEvent, "function");
 });
 
 test("POST notes, POST events, GET trace with kind and surface filters", async () => {
@@ -120,6 +125,7 @@ test("POST notes, POST events, GET trace with kind and surface filters", async (
     const noteBody = JSON.parse(note.body);
     assert.equal(noteBody.event.eventKind, "note");
     assert.equal(noteBody.event.submittedText, "заметка");
+    assert.equal(validateResearchEvent(noteBody.event), true, JSON.stringify(validateResearchEvent.errors));
 
     const correlationId = randomUUID();
     const start = await send(port, {
@@ -138,6 +144,7 @@ test("POST notes, POST events, GET trace with kind and surface filters", async (
       }),
     });
     assert.equal(start.status, 201);
+    assert.equal(validateResearchEvent(JSON.parse(start.body).event), true, JSON.stringify(validateResearchEvent.errors));
 
     const terminal = await send(port, {
       method: "POST",
@@ -151,6 +158,7 @@ test("POST notes, POST events, GET trace with kind and surface filters", async (
       }),
     });
     assert.equal(terminal.status, 201);
+    assert.equal(validateResearchEvent(JSON.parse(terminal.body).event), true, JSON.stringify(validateResearchEvent.errors));
 
     const productNote = await send(port, {
       method: "POST",
@@ -164,6 +172,9 @@ test("POST notes, POST events, GET trace with kind and surface filters", async (
     assert.equal(all.status, 200);
     const allBody = JSON.parse(all.body);
     assert.ok(allBody.events.length >= 4);
+    for (const event of allBody.events) {
+      assert.equal(validateResearchEvent(event), true, JSON.stringify(validateResearchEvent.errors));
+    }
 
     const notes = await send(port, { path: "/api/research/trace?kind=note" });
     assert.equal(notes.status, 200);
@@ -183,6 +194,10 @@ test("protected-content rejects without echoing secret in body or logs", async (
   const secret = "Bearer eyJhbGciOiJIUzI1NiJ9.secret-payload.signature";
   const logs = [];
   await withServer(async ({ port }) => {
+    const before = await send(port, { path: "/api/research/trace" });
+    assert.equal(before.status, 200);
+    const beforeCount = JSON.parse(before.body).events.length;
+
     const response = await send(port, {
       method: "POST",
       path: "/api/research/notes",
@@ -194,6 +209,50 @@ test("protected-content rejects without echoing secret in body or logs", async (
     const captured = [...logs, response.body].join("\n");
     assert.equal(captured.includes(secret), false);
     assert.equal(captured.includes("eyJhbGciOiJIUzI1NiJ9"), false);
+
+    const after = await send(port, { path: "/api/research/trace" });
+    assert.equal(after.status, 200);
+    assert.equal(JSON.parse(after.body).events.length, beforeCount);
+  }, { logger: { log(line) { logs.push(String(line)); } } });
+});
+
+test("HTTP outcomeKind rejects secret-like values without echo", async () => {
+  const secret = "Bearer fake-secret-token-value";
+  const logs = [];
+  await withServer(async ({ port }) => {
+    const correlationId = randomUUID();
+    const start = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "structure_edit",
+        correlationId,
+        surface: "product_control",
+        submittedText: null,
+        commandTarget: { kind: "storyboard" },
+        editTarget: null,
+        context: nullContext({ workflowPhase: "structure" }),
+      }),
+    });
+    assert.equal(start.status, 201);
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_terminal",
+        correlationId,
+        outcome: "failure",
+        outcomeKind: secret,
+        outcomeFlags: {},
+      }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "invalid-request" });
+    const captured = [...logs, response.body].join("\n");
+    assert.equal(captured.includes(secret), false);
   }, { logger: { log(line) { logs.push(String(line)); } } });
 });
 
