@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "research-event.schema.json",
+  "title": "ResearchEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "seq",
+    "id",
+    "occurredAt",
+    "eventKind",
+    "semanticAction",
+    "surface",
+    "context",
+    "outcomeFlags"
+  ],
+  "properties": {
+    "seq": { "type": "integer", "minimum": 1 },
+    "id": { "type": "string", "format": "uuid" },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "eventKind": {
+      "type": "string",
+      "enum": ["note", "action_start", "action_terminal"]
+    },
+    "semanticAction": {
+      "type": "string",
+      "enum": [
+        "note",
+        "reading",
+        "confirm_material",
+        "stage_storyboard",
+        "structure_edit",
+        "structure_undo",
+        "identity_save",
+        "anchor_generate",
+        "anchor_approve",
+        "frame_generate",
+        "panel_generate",
+        "placement_commit",
+        "visual_approve"
+      ]
+    },
+    "correlationId": { "type": ["string", "null"], "format": "uuid" },
+    "surface": {
+      "type": "string",
+      "enum": ["dock_notes", "dock_commands", "product_control"]
+    },
+    "submittedText": { "type": ["string", "null"], "maxLength": 8000 },
+    "commandTarget": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["storyboard", "panel", "none"] },
+        "displayFrameNumber": { "type": ["integer", "null"], "minimum": 1 },
+        "displayFrameId": { "type": ["string", "null"] },
+        "structureFrameId": { "type": ["string", "null"] },
+        "structureSegmentIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "panelIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "zoom": { "type": ["number", "null"] },
+        "positionX": { "type": ["number", "null"] },
+        "positionY": { "type": ["number", "null"] }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflowPhase",
+        "storyboardVersionId",
+        "displayFrameNumber",
+        "displayFrameId",
+        "structureFrameId",
+        "structureSegmentIndex",
+        "panelIndex",
+        "panelSubject",
+        "imageAssetId",
+        "generationId",
+        "characterName",
+        "anchorVersionId"
+      ],
+      "properties": {
+        "workflowPhase": {
+          "type": ["string", "null"],
+          "enum": [
+            "draft",
+            "reading",
+            "material",
+            "structure",
+            "characters",
+            "visual",
+            "approved",
+            null
+          ]
+        },
+        "storyboardVersionId": { "type": ["string", "null"] },
+        "displayFrameNumber": { "type": ["integer", "null"], "minimum": 1 },
+        "displayFrameId": { "type": ["string", "null"] },
+        "structureFrameId": { "type": ["string", "null"] },
+        "structureSegmentIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "panelIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "panelSubject": { "type": ["string", "null"] },
+        "imageAssetId": { "type": ["string", "null"] },
+        "generationId": { "type": ["string", "null"] },
+        "characterName": { "type": ["string", "null"] },
+        "anchorVersionId": { "type": ["string", "null"] }
+      }
+    },
+    "outcome": {
+      "type": ["string", "null"],
+      "enum": ["success", "failure", "blocked", null]
+    },
+    "outcomeKind": { "type": ["string", "null"], "maxLength": 64 },
+    "outcomeFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "retainedLastGoodImage": { "type": "boolean" }
+      }
+    },
+    "durationMs": { "type": ["integer", "null"], "minimum": 0 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "eventKind": { "const": "note" } } },
+      "then": {
+        "properties": {
+          "correlationId": { "type": "null" },
+          "outcome": { "type": "null" },
+          "semanticAction": { "const": "note" },
+          "surface": { "const": "dock_notes" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "eventKind": { "enum": ["action_start", "action_terminal"] }
+        }
+      },
+      "then": {
+        "required": ["correlationId"],
+        "properties": { "correlationId": { "type": "string", "format": "uuid" } }
+      }
+    },
+    {
+      "if": { "properties": { "eventKind": { "const": "action_terminal" } } },
+      "then": {
+        "required": ["outcome"],
+        "properties": {
+          "outcome": { "type": "string", "enum": ["success", "failure", "blocked"] }
+        }
+      }
+    }
+  ]
+}
