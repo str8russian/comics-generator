@@ -88,14 +88,29 @@ export function captureResearchContext() {
   });
 }
 
-const researchDock = researchDockRoot
-  ? bindResearchDock({
-    root: researchDockRoot,
-    host: researchDockHost,
-    detail,
-    getContext: captureResearchContext,
-  })
-  : null;
+function collectResearchCommandTargets() {
+  const storyboardAvailable = Boolean(visual) && structureTools && !structureTools.hidden;
+  const panels = [];
+  const frame = detailIndex >= 0 ? readyFrames[detailIndex] : null;
+  if (frame && Array.isArray(frame.panels)) {
+    frame.panels.forEach((_, panelIndex) => {
+      panels.push({
+        displayFrameNumber: detailIndex + 1,
+        displayFrameId: typeof frame.id === "string" ? frame.id : null,
+        structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
+        structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex)
+          ? frame.structureSegmentIndex
+          : null,
+        panelIndex,
+      });
+    });
+  }
+  return { storyboardAvailable, panels };
+}
+
+function syncResearchCommandTargets() {
+  researchDock?.setAvailableTargets?.(collectResearchCommandTargets());
+}
 
 async function postResearchEvent(body) {
   try {
@@ -111,6 +126,99 @@ async function postResearchEvent(body) {
     return null;
   }
 }
+
+async function runStructureEditProduct(instruction, { clearProductForm = false } = {}) {
+  const next = await fetchJson("/api/visual/storyboard/edit", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ instruction }),
+  });
+  applyVisual(next);
+  if (clearProductForm && structureInstruction) {
+    structureInstruction.value = "";
+    if (structureResult) {
+      structureResult.hidden = false;
+      structureResult.textContent = "Правка применена. Предыдущую структуру можно вернуть.";
+    }
+  }
+  showActionNotice("Раскадровка обновлена.");
+  return next;
+}
+
+async function runPanelGenerateProduct({ frameId, panelIndex, instruction, displayFrameNumber = null }) {
+  const next = await fetchJson(
+    `/api/visual/frames/${encodeURIComponent(frameId)}/panels/${panelIndex}/generate`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ instruction }),
+    },
+  );
+  applyVisual(next);
+  const frameLabel = displayFrameNumber == null ? "" : ` кадра ${displayFrameNumber}`;
+  showActionNotice(`Панель ${panelIndex + 1}${frameLabel} готова.`);
+  return next;
+}
+
+async function executeDockCommand({ instruction, commandTarget }) {
+  if (busy) return { ok: false, blocked: true };
+  if (!commandTarget || (commandTarget.kind !== "storyboard" && commandTarget.kind !== "panel")) {
+    return { ok: false, unsupported: true };
+  }
+
+  let outcome = { ok: false };
+  if (commandTarget.kind === "storyboard") {
+    await runBusy("Применяю структурную правку к раскадровке…", async () => {
+      try {
+        await runStructureEditProduct(instruction, { clearProductForm: false });
+        outcome = { ok: true };
+      } catch (error) {
+        outcome = { ok: false, error };
+        throw error;
+      }
+    });
+    return outcome;
+  }
+
+  const frameId = commandTarget.displayFrameId;
+  const panelIndex = commandTarget.panelIndex;
+  if (typeof frameId !== "string" || !Number.isInteger(panelIndex)) {
+    return { ok: false, unsupported: true };
+  }
+  await runBusy(
+    `Создаю панель ${panelIndex + 1}${
+      commandTarget.displayFrameNumber == null ? "" : ` кадра ${commandTarget.displayFrameNumber}`
+    }…`,
+    async () => {
+      try {
+        await runPanelGenerateProduct({
+          frameId,
+          panelIndex,
+          instruction,
+          displayFrameNumber: commandTarget.displayFrameNumber,
+        });
+        outcome = { ok: true };
+      } catch (error) {
+        outcome = { ok: false, error };
+        throw error;
+      }
+    },
+  );
+  return outcome;
+}
+
+const researchDock = researchDockRoot
+  ? bindResearchDock({
+    root: researchDockRoot,
+    host: researchDockHost,
+    detail,
+    getContext: captureResearchContext,
+    isProductBusy: () => busy,
+    executeDockCommand,
+  })
+  : null;
+
+syncResearchCommandTargets();
 
 export const draftAutosave = bindDraftAutosave({
   textarea: draftField,
@@ -134,6 +242,7 @@ function clearBoard() {
   visualApproval.hidden = true;
   readyForVideo.hidden = true;
   document.body.dataset.state = "";
+  syncResearchCommandTargets();
 }
 
 function showLoading() {
@@ -314,6 +423,7 @@ function openDetail(index) {
   if (following) {
     nextFrame.textContent = following.visualReady ? "Открыть следующий кадр" : "Создать следующий кадр";
   }
+  syncResearchCommandTargets();
   researchDock?.enterDetail();
   if (!detail.open) detail.showModal();
 }
@@ -629,6 +739,7 @@ function applyVisual(next) {
     ? "Текущая версия утверждена."
     : "Просмотрите все кадры и утвердите текущую версию.";
   readyForVideo.hidden = !next.readyForVideo;
+  syncResearchCommandTargets();
   if (detail.open && detailIndex >= 0) openDetail(detailIndex);
 }
 
@@ -808,16 +919,7 @@ structureEditForm?.addEventListener("submit", async (event) => {
     }
 
     try {
-      const next = await fetchJson("/api/visual/storyboard/edit", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ instruction }),
-      });
-      applyVisual(next);
-      structureInstruction.value = "";
-      structureResult.hidden = false;
-      structureResult.textContent = "Правка применена. Предыдущую структуру можно вернуть.";
-      showActionNotice("Раскадровка обновлена.");
+      await runStructureEditProduct(instruction, { clearProductForm: true });
       const terminalBody = {
         eventKind: "action_terminal",
         correlationId,

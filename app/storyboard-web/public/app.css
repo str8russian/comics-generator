@@ -480,7 +480,8 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   line-height: 1.35;
 }
 
-.research-notes-draft {
+.research-notes-draft,
+.research-commands-draft {
   width: 100%;
   min-height: 72px;
   box-sizing: border-box;
@@ -490,7 +491,22 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   resize: vertical;
 }
 
-#research-notes-send {
+.research-commands-form {
+  display: grid;
+  gap: 8px;
+}
+
+.research-commands-target {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid #9aa3a8;
+  font: 13px/1.3 Arial, Helvetica, sans-serif;
+  background: #fff;
+}
+
+#research-notes-send,
+#research-commands-send {
   justify-self: start;
   padding: 6px 12px;
   border: 1px solid #1d2428;

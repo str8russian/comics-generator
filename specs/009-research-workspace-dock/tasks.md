@@ -108,13 +108,13 @@
 
 ### Tests
 
-- [ ] T019 [US2] Extend `app/storyboard-web/test/research-dock.test.mjs` with failing cases: Commands vs Notes independence; sticky storyboard target not silently changed by opening `#detail`; panel target only when explicitly selected; unsupported context messaging; Commands history projection from `surface=dock_commands` distinct from Notes. **FR-004–FR-011, SC-002**. **Done when**: new cases fail before Commands wiring. **Proof**: focused failing names. Not `[P]` with T013 (same file).
+- [X] T019 [US2] Extend `app/storyboard-web/test/research-dock.test.mjs` with failing cases: Commands vs Notes independence; sticky storyboard target not silently changed by opening `#detail`; panel target only when explicitly selected; unsupported context messaging; Commands history projection from `surface=dock_commands` distinct from Notes. **FR-004–FR-011, SC-002**. **Done when**: new cases fail before Commands wiring. **Proof**: focused failing names. Not `[P]` with T013 (same file).
 
 ### Implementation
 
-- [ ] T020 [US2] Implement Commands UI + sticky target mode in `app/storyboard-web/public/research-dock.mjs` and dispatch through existing `POST /api/visual/storyboard/edit` and `POST /api/visual/frames/:frameId/panels/:panelIndex/generate` from `app/storyboard-web/public/app.js` with research start/terminal (`surface=dock_commands`); label actual target including display vs structure ids; block Commands while product busy. **FR-007–FR-011, FR-015**. **Done when**: T019 green. **Proof**: `node --test test/research-dock.test.mjs`.
+- [X] T020 [US2] Implement Commands UI + sticky target mode in `app/storyboard-web/public/research-dock.mjs` and dispatch through existing `POST /api/visual/storyboard/edit` and `POST /api/visual/frames/:frameId/panels/:panelIndex/generate` from `app/storyboard-web/public/app.js` with research start/terminal (`surface=dock_commands`); label actual target including display vs structure ids; block Commands while product busy. **FR-007–FR-011, FR-015**. **Done when**: T019 green. **Proof**: `node --test test/research-dock.test.mjs`.
 
-- [ ] T021 [US2] Confirm product Structure form (`#structure-edit-form`) in `app/storyboard-web/public/app.js` and dock Commands both record separable surfaces/event kinds without consuming each other’s drafts. Prove independence in `app/storyboard-web/test/research-dock.test.mjs` (full product-control capture matrix, including `structure_edit`, remains T022/T024). **FR-004, FR-005, FR-020**. **Done when**: `research-dock.test.mjs` asserts Structure-form vs Commands independence. **Proof**: `cd app/storyboard-web && node --test test/research-dock.test.mjs`.
+- [X] T021 [US2] Confirm product Structure form (`#structure-edit-form`) in `app/storyboard-web/public/app.js` and dock Commands both record separable surfaces/event kinds without consuming each other’s drafts. Prove independence in `app/storyboard-web/test/research-dock.test.mjs` (full product-control capture matrix, including `structure_edit`, remains T022/T024). **FR-004, FR-005, FR-020**. **Done when**: `research-dock.test.mjs` asserts Structure-form vs Commands independence. **Proof**: `cd app/storyboard-web && node --test test/research-dock.test.mjs`.
 
 **Checkpoint**: Supported Commands usable beside Notes. Suggested Cursor range: **T019–T021**.
 

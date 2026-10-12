@@ -180,25 +180,103 @@ async function defaultFetch(url, init) {
   return globalThis.fetch(url, init);
 }
 
+function panelTargetKey(panel) {
+  return [
+    "panel",
+    panel?.displayFrameId ?? "",
+    String(panel?.panelIndex ?? ""),
+    panel?.structureFrameId ?? "",
+  ].join(":");
+}
+
+function samePanelTarget(a, b) {
+  if (!a || !b) return false;
+  return a.kind === "panel"
+    && b.kind === "panel"
+    && a.displayFrameId === b.displayFrameId
+    && a.panelIndex === b.panelIndex
+    && a.structureFrameId === b.structureFrameId;
+}
+
+function formatCommandTargetLabel(target, { unsupported = false } = {}) {
+  if (unsupported || !target) {
+    return "Цель: недоступна / устарела — выберите поддерживаемую цель явно";
+  }
+  if (target.kind === "storyboard") {
+    return "Цель: раскадровка (storyboard Structure edit)";
+  }
+  if (target.kind === "panel") {
+    const displayNumber = target.displayFrameNumber == null ? "?" : String(target.displayFrameNumber);
+    const displayId = target.displayFrameId ?? "—";
+    const structureId = target.structureFrameId ?? "—";
+    const segment = target.structureSegmentIndex == null ? "—" : String(target.structureSegmentIndex);
+    const zeroBased = target.panelIndex == null ? "—" : String(target.panelIndex);
+    const oneBased = target.panelIndex == null ? "—" : String(target.panelIndex + 1);
+    return [
+      `Цель: панель ${oneBased} (1-based) / panelIndex ${zeroBased} (0-based)`,
+      `display кадр ${displayNumber} / ${displayId}`,
+      `structure ${structureId} / segment ${segment}`,
+    ].join(" · ");
+  }
+  return "Цель: не поддерживается";
+}
+
+function formatCommandsHistoryItem(event) {
+  const stamp = event.occurredAt || "";
+  if (event.eventKind === "action_start") {
+    const action = event.semanticAction || "command";
+    const text = event.submittedText || "";
+    return stamp ? `${stamp} — ${action}: ${text}` : `${action}: ${text}`;
+  }
+  if (event.eventKind === "action_terminal") {
+    const action = event.semanticAction || "command";
+    const outcome = event.outcome || "failure";
+    return stamp ? `${stamp} — ${action} → ${outcome}` : `${action} → ${outcome}`;
+  }
+  return stamp ? `${stamp} — ${event.submittedText || ""}` : String(event.submittedText || "");
+}
+
+function newCorrelationId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `00000000-0000-4000-8000-${String(Date.now()).padStart(12, "0").slice(-12)}`;
+}
+
 export function bindResearchDock({
   root,
   host,
   detail,
   getContext,
   fetchImpl = defaultFetch,
+  executeDockCommand = null,
+  isProductBusy = null,
 } = {}) {
-  const draft = document.querySelector("#research-notes-draft");
-  const send = document.querySelector("#research-notes-send");
-  const history = document.querySelector("#research-notes-history");
-  const status = document.querySelector("#research-notes-status");
+  const notesDraft = document.querySelector("#research-notes-draft");
+  const notesSend = document.querySelector("#research-notes-send");
+  const notesHistory = document.querySelector("#research-notes-history");
+  const notesStatus = document.querySelector("#research-notes-status");
+  const commandsDraft = document.querySelector("#research-commands-draft");
+  const commandsSend = document.querySelector("#research-commands-send");
+  const commandsForm = document.querySelector("#research-commands-form");
+  const commandsStatus = document.querySelector("#research-commands-status");
+  const commandsHistory = document.querySelector("#research-commands-history");
+  const commandsTarget = document.querySelector("#research-commands-target");
+  const commandsTargetLabel = document.querySelector("#research-commands-target-label");
+  const commandsUnavailable = document.querySelector("#research-commands-unavailable");
   const operationsList = document.querySelector("#research-operations-list");
   const toggle = document.querySelector("#research-dock-toggle");
 
   let collapsed = false;
   let notes = [];
+  let commandEvents = [];
   let terminalEvents = [];
   let live = null;
-  let sending = false;
+  let sendingNote = false;
+  let sendingCommand = false;
+  let availableTargets = { storyboardAvailable: false, panels: [] };
+  let stickyTarget = createEmptyCommandTarget("storyboard");
+  let targetUnsupported = true;
 
   function snapshotContext() {
     const base = createEmptyContext();
@@ -207,26 +285,54 @@ export function bindResearchDock({
     return createEmptyContext(provided);
   }
 
+  function productBusy() {
+    if (typeof isProductBusy === "function") return Boolean(isProductBusy());
+    return document?.body?.dataset?.busy === "true";
+  }
+
   function setNotesStatus(text, kind = "info") {
-    if (!status) return;
+    if (!notesStatus) return;
     if (!text) {
-      status.hidden = true;
-      status.textContent = "";
-      delete status.dataset.kind;
+      notesStatus.hidden = true;
+      notesStatus.textContent = "";
+      delete notesStatus.dataset.kind;
       return;
     }
-    status.hidden = false;
-    status.textContent = text;
-    status.dataset.kind = kind;
+    notesStatus.hidden = false;
+    notesStatus.textContent = text;
+    notesStatus.dataset.kind = kind;
+  }
+
+  function setCommandsStatus(text, kind = "info") {
+    if (!commandsStatus) return;
+    if (!text) {
+      commandsStatus.hidden = true;
+      commandsStatus.textContent = "";
+      delete commandsStatus.dataset.kind;
+      return;
+    }
+    commandsStatus.hidden = false;
+    commandsStatus.textContent = text;
+    commandsStatus.dataset.kind = kind;
   }
 
   function renderNotes() {
-    if (!history) return;
-    clearChildren(history);
+    if (!notesHistory) return;
+    clearChildren(notesHistory);
     for (const note of notes) {
       const stamp = note.occurredAt || "";
       const text = note.submittedText || "";
-      appendTextItem(history, stamp ? `${stamp} — ${text}` : text);
+      appendTextItem(notesHistory, stamp ? `${stamp} — ${text}` : text);
+    }
+  }
+
+  function renderCommandsHistory() {
+    if (!commandsHistory) return;
+    clearChildren(commandsHistory);
+    for (const event of commandEvents) {
+      if (event?.surface && event.surface !== "dock_commands") continue;
+      if (event?.eventKind !== "action_start" && event?.eventKind !== "action_terminal") continue;
+      appendTextItem(commandsHistory, formatCommandsHistoryItem(event));
     }
   }
 
@@ -237,6 +343,94 @@ export function bindResearchDock({
     for (const item of projection) {
       const stamp = item.occurredAt ? `${item.occurredAt} — ` : "";
       appendTextItem(operationsList, `${stamp}${item.label}`);
+    }
+  }
+
+  function resolveStickyAgainstAvailable() {
+    if (stickyTarget?.kind === "storyboard") {
+      if (availableTargets.storyboardAvailable) {
+        targetUnsupported = false;
+        stickyTarget = createEmptyCommandTarget("storyboard");
+        return;
+      }
+      targetUnsupported = true;
+      return;
+    }
+    if (stickyTarget?.kind === "panel") {
+      const match = (availableTargets.panels || []).find((panel) => samePanelTarget(
+        createEmptyCommandTarget("panel", panel),
+        stickyTarget,
+      ));
+      if (match) {
+        targetUnsupported = false;
+        stickyTarget = createEmptyCommandTarget("panel", match);
+        return;
+      }
+      targetUnsupported = true;
+      return;
+    }
+    targetUnsupported = true;
+  }
+
+  function ensureDefaultStoryboardTarget() {
+    if (stickyTarget?.kind === "panel") return;
+    if (availableTargets.storyboardAvailable) {
+      stickyTarget = createEmptyCommandTarget("storyboard");
+      targetUnsupported = false;
+      return;
+    }
+    if (!stickyTarget || stickyTarget.kind === "storyboard") {
+      stickyTarget = createEmptyCommandTarget("storyboard");
+      targetUnsupported = true;
+    }
+  }
+
+  function renderTargetControls() {
+    resolveStickyAgainstAvailable();
+    if (commandsTarget) {
+      clearChildren(commandsTarget);
+      if (availableTargets.storyboardAvailable) {
+        const option = document.createElement("option");
+        option.value = "storyboard";
+        option.textContent = "Раскадровка (Structure edit)";
+        commandsTarget.append(option);
+      }
+      for (const panel of availableTargets.panels || []) {
+        const option = document.createElement("option");
+        option.value = panelTargetKey(panel);
+        const oneBased = panel.panelIndex + 1;
+        option.textContent = [
+          `Панель ${oneBased}`,
+          `display ${panel.displayFrameNumber}/${panel.displayFrameId}`,
+          `structure ${panel.structureFrameId ?? "—"}`,
+          `panelIndex ${panel.panelIndex} (0-based)`,
+        ].join(" · ");
+        commandsTarget.append(option);
+      }
+      if (stickyTarget?.kind === "storyboard" && availableTargets.storyboardAvailable) {
+        commandsTarget.value = "storyboard";
+      } else if (stickyTarget?.kind === "panel" && !targetUnsupported) {
+        commandsTarget.value = panelTargetKey(stickyTarget);
+      } else if (commandsTarget.children?.length) {
+        // Keep select populated but do not silently change stickyTarget.
+        commandsTarget.value = commandsTarget.children[0].value;
+      }
+    }
+    if (commandsTargetLabel) {
+      commandsTargetLabel.textContent = formatCommandTargetLabel(stickyTarget, {
+        unsupported: targetUnsupported,
+      });
+    }
+    if (commandsUnavailable) {
+      const noChoices = !availableTargets.storyboardAvailable
+        && !(availableTargets.panels || []).length;
+      commandsUnavailable.hidden = !noChoices && !targetUnsupported;
+      if (targetUnsupported) {
+        commandsUnavailable.hidden = false;
+        commandsUnavailable.textContent = noChoices
+          ? "Нет поддерживаемой цели команды. Доступны только правка раскадровки и явно выбранная панель."
+          : "Выбранная цель недоступна или устарела. Выберите поддерживаемую цель явно.";
+      }
     }
   }
 
@@ -256,6 +450,21 @@ export function bindResearchDock({
     }
   }
 
+  async function postResearchEvent(body) {
+    try {
+      const response = await fetchImpl("/api/research/events", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response?.ok) return null;
+      const payload = await response.json();
+      return payload?.event ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   async function hydrate() {
     try {
       const notesResponse = await fetchImpl("/api/research/trace?kind=note");
@@ -268,6 +477,22 @@ export function bindResearchDock({
       }
     } catch {
       // Isolated page tests and offline boots may not expose research routes.
+    }
+
+    try {
+      const commandsResponse = await fetchImpl("/api/research/trace?surface=dock_commands");
+      if (commandsResponse?.ok) {
+        const payload = await commandsResponse.json();
+        commandEvents = Array.isArray(payload?.events)
+          ? payload.events.filter((event) => (
+            event?.surface === "dock_commands"
+            && (event?.eventKind === "action_start" || event?.eventKind === "action_terminal")
+          ))
+          : [];
+        renderCommandsHistory();
+      }
+    } catch {
+      // Same offline tolerance as Notes hydrate.
     }
 
     try {
@@ -287,10 +512,10 @@ export function bindResearchDock({
   }
 
   async function sendNote() {
-    if (!draft || sending) return;
-    const submittedText = String(draft.value || "");
+    if (!notesDraft || sendingNote) return;
+    const submittedText = String(notesDraft.value || "");
     if (!submittedText.trim()) return;
-    sending = true;
+    sendingNote = true;
     setNotesStatus("");
     try {
       const response = await fetchImpl("/api/research/notes", {
@@ -312,14 +537,173 @@ export function bindResearchDock({
         return;
       }
       notes = [...notes, payload.event];
-      draft.value = "";
+      notesDraft.value = "";
       setNotesStatus("");
       renderNotes();
     } catch {
       setNotesStatus("Не удалось сохранить заметку.", "error");
     } finally {
-      sending = false;
+      sendingNote = false;
     }
+  }
+
+  async function sendCommand(event) {
+    if (event?.preventDefault) event.preventDefault();
+    if (!commandsDraft || sendingCommand) return;
+    if (productBusy()) {
+      setCommandsStatus("Команды недоступны, пока выполняется продуктовая операция.", "error");
+      return;
+    }
+    const instruction = String(commandsDraft.value || "");
+    if (!instruction.trim()) return;
+
+    resolveStickyAgainstAvailable();
+    if (targetUnsupported || !stickyTarget) {
+      setCommandsStatus(
+        "Выбранная цель недоступна или не поддерживается. Выберите цель явно — продуктовый вызов не выполнен.",
+        "error",
+      );
+      return;
+    }
+    if (typeof executeDockCommand !== "function") {
+      setCommandsStatus("Команды ещё не подключены к продукту.", "error");
+      return;
+    }
+
+    const commandTarget = createEmptyCommandTarget(stickyTarget.kind, stickyTarget);
+    const semanticAction = commandTarget.kind === "panel" ? "panel_generate" : "structure_edit";
+    const correlationId = newCorrelationId();
+    const context = snapshotContext();
+    const startSnapshot = {
+      semanticAction,
+      surface: "dock_commands",
+      submittedText: instruction,
+      commandTarget,
+      editTarget: null,
+      context,
+    };
+
+    sendingCommand = true;
+    setCommandsStatus("");
+    let startSaved = false;
+    try {
+      const startEvent = await postResearchEvent({
+        eventKind: "action_start",
+        correlationId,
+        ...startSnapshot,
+      });
+      startSaved = Boolean(startEvent);
+      if (startEvent) {
+        commandEvents = [...commandEvents, startEvent];
+        terminalEvents = [...terminalEvents, startEvent];
+        renderCommandsHistory();
+        renderOperations();
+      }
+    } catch {
+      startSaved = false;
+    }
+
+    live = {
+      correlationId,
+      semanticAction,
+      surface: "dock_commands",
+    };
+    renderOperations();
+
+    let productOk = false;
+    let productError = null;
+    try {
+      const result = await executeDockCommand({
+        instruction,
+        commandTarget,
+        correlationId,
+        semanticAction,
+        context,
+      });
+      productOk = Boolean(result?.ok);
+      productError = result?.error ?? null;
+      if (result?.blocked) {
+        setCommandsStatus("Команды недоступны, пока выполняется продуктовая операция.", "error");
+      } else if (!productOk) {
+        setCommandsStatus("Команда не выполнена.", "error");
+      }
+    } catch (error) {
+      productOk = false;
+      productError = error;
+      setCommandsStatus("Команда не выполнена.", "error");
+    }
+
+    const terminalBody = {
+      eventKind: "action_terminal",
+      correlationId,
+      outcome: productOk ? "success" : "failure",
+      outcomeKind: productOk
+        ? null
+        : (typeof productError?.kind === "string" ? productError.kind : "request-failed"),
+      outcomeFlags: {},
+    };
+    if (!startSaved) terminalBody.startSnapshot = startSnapshot;
+    const terminalEvent = await postResearchEvent(terminalBody);
+    if (terminalEvent) {
+      commandEvents = [...commandEvents, terminalEvent];
+      terminalEvents = [...terminalEvents, terminalEvent];
+      renderCommandsHistory();
+      renderOperations();
+    }
+
+    live = null;
+    renderOperations();
+    if (productOk) {
+      commandsDraft.value = "";
+      setCommandsStatus("");
+    }
+    sendingCommand = false;
+  }
+
+  function selectCommandTarget(next) {
+    if (!next || typeof next !== "object") return;
+    if (next.kind === "storyboard") {
+      stickyTarget = createEmptyCommandTarget("storyboard");
+      resolveStickyAgainstAvailable();
+      renderTargetControls();
+      return;
+    }
+    if (next.kind === "panel") {
+      stickyTarget = createEmptyCommandTarget("panel", next);
+      resolveStickyAgainstAvailable();
+      renderTargetControls();
+    }
+  }
+
+  function setAvailableTargets(next = {}) {
+    availableTargets = {
+      storyboardAvailable: Boolean(next.storyboardAvailable),
+      panels: Array.isArray(next.panels) ? next.panels.map((panel) => ({
+        displayFrameNumber: panel.displayFrameNumber ?? null,
+        displayFrameId: panel.displayFrameId ?? null,
+        structureFrameId: panel.structureFrameId ?? null,
+        structureSegmentIndex: Number.isInteger(panel.structureSegmentIndex)
+          ? panel.structureSegmentIndex
+          : null,
+        panelIndex: Number.isInteger(panel.panelIndex) ? panel.panelIndex : null,
+      })).filter((panel) => panel.displayFrameId && Number.isInteger(panel.panelIndex)) : [],
+    };
+    if (stickyTarget?.kind !== "panel") {
+      ensureDefaultStoryboardTarget();
+    }
+    resolveStickyAgainstAvailable();
+    renderTargetControls();
+  }
+
+  function onTargetSelectChange() {
+    if (!commandsTarget) return;
+    const value = commandsTarget.value;
+    if (value === "storyboard") {
+      selectCommandTarget({ kind: "storyboard" });
+      return;
+    }
+    const panel = (availableTargets.panels || []).find((entry) => panelTargetKey(entry) === value);
+    if (panel) selectCommandTarget({ kind: "panel", ...panel });
   }
 
   function enterDetail() {
@@ -330,10 +714,32 @@ export function bindResearchDock({
     restoreDockToHost({ dock: root, host, detail });
   }
 
-  if (send) {
-    setElementAttribute(send, "data-research-allow", "notes-send");
-    send.addEventListener("click", () => {
+  if (notesSend) {
+    setElementAttribute(notesSend, "data-research-allow", "notes-send");
+    notesSend.addEventListener("click", () => {
       void sendNote();
+    });
+  }
+  if (commandsForm) {
+    commandsForm.addEventListener("submit", (event) => {
+      void sendCommand(event);
+    });
+  }
+  if (commandsSend) {
+    commandsSend.addEventListener("click", () => {
+      void sendCommand();
+    });
+  }
+  if (commandsDraft) {
+    commandsDraft.addEventListener("keydown", (event) => {
+      if (event?.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        void sendCommand(event);
+      }
+    });
+  }
+  if (commandsTarget) {
+    commandsTarget.addEventListener("change", () => {
+      onTargetSelectChange();
     });
   }
   if (toggle) {
@@ -349,7 +755,9 @@ export function bindResearchDock({
 
   setCollapsed(false);
   renderNotes();
+  renderCommandsHistory();
   renderOperations();
+  renderTargetControls();
   const ready = hydrate();
 
   return {
@@ -370,9 +778,17 @@ export function bindResearchDock({
     recordTerminalEvent(event) {
       if (!event) return;
       terminalEvents = [...terminalEvents, event];
+      if (event.surface === "dock_commands") {
+        commandEvents = [...commandEvents, event];
+        renderCommandsHistory();
+      }
       renderOperations();
     },
     captureContext: snapshotContext,
     createEmptyCommandTarget,
+    setAvailableTargets,
+    selectCommandTarget,
+    getCommandTarget: () => createEmptyCommandTarget(stickyTarget?.kind || "storyboard", stickyTarget || {}),
+    isCommandTargetUnsupported: () => targetUnsupported,
   };
 }

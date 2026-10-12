@@ -89,9 +89,19 @@
       <div id="research-dock-body" class="research-dock-body">
         <section id="research-commands" class="research-region" aria-labelledby="research-commands-title">
           <h2 id="research-commands-title">Commands</h2>
-          <p id="research-commands-unavailable" class="research-helper">
-            Команды пока недоступны: поддерживаемая цель ещё не подключена.
+          <p id="research-commands-target-label" class="research-helper">Цель: не выбрана</p>
+          <label class="research-label" for="research-commands-target">Цель команды</label>
+          <select id="research-commands-target" class="research-commands-target"></select>
+          <form id="research-commands-form" class="research-commands-form">
+            <label class="research-label" for="research-commands-draft">Команда</label>
+            <textarea id="research-commands-draft" class="research-commands-draft" rows="3"></textarea>
+            <button type="button" id="research-commands-send">Отправить команду</button>
+          </form>
+          <p id="research-commands-status" class="research-status" hidden></p>
+          <p id="research-commands-unavailable" class="research-helper" hidden>
+            Нет поддерживаемой цели команды. Доступны только правка раскадровки и явно выбранная панель.
           </p>
+          <ol id="research-commands-history" class="research-history" aria-live="polite"></ol>
         </section>
         <section id="research-notes" class="research-region" aria-labelledby="research-notes-title">
           <h2 id="research-notes-title">Notes</h2>
