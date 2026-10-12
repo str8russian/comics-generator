@@ -1,0 +1,285 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import http from "node:http";
+import test from "node:test";
+import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
+import { createServer, DEFAULT_MAX_BODY_BYTES } from "../server.mjs";
+
+const schema = JSON.parse(readFileSync(
+  new URL("../../../specs/009-research-workspace-dock/contracts/research-event.schema.json", import.meta.url),
+  "utf8",
+));
+
+function nullContext(overrides = {}) {
+  return {
+    workflowPhase: null,
+    storyboardVersionId: null,
+    displayFrameNumber: null,
+    displayFrameId: null,
+    structureFrameId: null,
+    structureSegmentIndex: null,
+    panelIndex: null,
+    panelSubject: null,
+    imageAssetId: null,
+    generationId: null,
+    characterName: null,
+    anchorVersionId: null,
+    ...overrides,
+  };
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+  });
+}
+
+function close(server) {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+function send(port, { method = "GET", path = "/", headers = {}, body } = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = body == null ? null : body;
+    const req = http.request({
+      hostname: "127.0.0.1",
+      port,
+      method,
+      path,
+      headers: {
+        ...headers,
+        ...(payload == null ? {} : { "content-length": Buffer.byteLength(payload) }),
+      },
+    }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("end", () => {
+        resolve({
+          status: res.statusCode,
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+      });
+    });
+    req.on("error", reject);
+    if (payload != null) req.write(payload);
+    req.end();
+  });
+}
+
+function json(value) {
+  return JSON.stringify(value);
+}
+
+async function withServer(fn, { logger } = {}) {
+  const { createResearchStore } = await import("../research-store.mjs");
+  const researchStore = createResearchStore({ memory: true });
+  const server = createServer({
+    migrate: false,
+    researchStore,
+    projectStore: {
+      async loadProject() {
+        throw new Error("project store should not be required for research routes");
+      },
+    },
+    visualStore: {
+      async load() {
+        throw new Error("visual store should not be required for research routes");
+      },
+    },
+    logger: logger ?? { log() {} },
+  });
+  const port = await listen(server);
+  try {
+    return await fn({ port, researchStore, server });
+  } finally {
+    await close(server);
+  }
+}
+
+test("research-event schema compiles with Ajv Draft 2020-12 and formats (baseline)", () => {
+  const ajv = new Ajv2020({ allErrors: true, strict: true });
+  addFormats(ajv);
+  const validate = ajv.compile(structuredClone(schema));
+  assert.equal(typeof validate, "function");
+});
+
+test("POST notes, POST events, GET trace with kind and surface filters", async () => {
+  await withServer(async ({ port }) => {
+    const note = await send(port, {
+      method: "POST",
+      path: "/api/research/notes",
+      headers: { "content-type": "application/json" },
+      body: json({ submittedText: "заметка", context: nullContext({ workflowPhase: "structure" }) }),
+    });
+    assert.equal(note.status, 201);
+    const noteBody = JSON.parse(note.body);
+    assert.equal(noteBody.event.eventKind, "note");
+    assert.equal(noteBody.event.submittedText, "заметка");
+
+    const correlationId = randomUUID();
+    const start = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "structure_edit",
+        correlationId,
+        surface: "dock_commands",
+        submittedText: "команда",
+        commandTarget: { kind: "storyboard" },
+        editTarget: null,
+        context: nullContext({ workflowPhase: "structure" }),
+      }),
+    });
+    assert.equal(start.status, 201);
+
+    const terminal = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_terminal",
+        correlationId,
+        outcome: "success",
+        outcomeFlags: {},
+      }),
+    });
+    assert.equal(terminal.status, 201);
+
+    const productNote = await send(port, {
+      method: "POST",
+      path: "/api/research/notes",
+      headers: { "content-type": "application/json" },
+      body: json({ submittedText: "ещё", context: nullContext() }),
+    });
+    assert.equal(productNote.status, 201);
+
+    const all = await send(port, { path: "/api/research/trace" });
+    assert.equal(all.status, 200);
+    const allBody = JSON.parse(all.body);
+    assert.ok(allBody.events.length >= 4);
+
+    const notes = await send(port, { path: "/api/research/trace?kind=note" });
+    assert.equal(notes.status, 200);
+    const notesBody = JSON.parse(notes.body);
+    assert.ok(notesBody.events.every((event) => event.eventKind === "note"));
+    assert.ok(notesBody.events.length >= 2);
+
+    const commands = await send(port, { path: "/api/research/trace?surface=dock_commands" });
+    assert.equal(commands.status, 200);
+    const commandsBody = JSON.parse(commands.body);
+    assert.ok(commandsBody.events.every((event) => event.surface === "dock_commands"));
+    assert.ok(commandsBody.events.length >= 2);
+  });
+});
+
+test("protected-content rejects without echoing secret in body or logs", async () => {
+  const secret = "Bearer eyJhbGciOiJIUzI1NiJ9.secret-payload.signature";
+  const logs = [];
+  await withServer(async ({ port }) => {
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/research/notes",
+      headers: { "content-type": "application/json" },
+      body: json({ submittedText: secret, context: nullContext() }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "protected-content" });
+    const captured = [...logs, response.body].join("\n");
+    assert.equal(captured.includes(secret), false);
+    assert.equal(captured.includes("eyJhbGciOiJIUzI1NiJ9"), false);
+  }, { logger: { log(line) { logs.push(String(line)); } } });
+});
+
+test("forbidden object keys are invalid-request", async () => {
+  await withServer(async ({ port }) => {
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/research/notes",
+      headers: { "content-type": "application/json" },
+      body: json({
+        submittedText: "ok",
+        context: nullContext(),
+        imageBytes: "not-allowed",
+      }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "invalid-request" });
+  });
+});
+
+test("ordinary invalid request is invalid-request", async () => {
+  await withServer(async ({ port }) => {
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({ eventKind: "not-a-kind", correlationId: randomUUID() }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "invalid-request" });
+  });
+});
+
+test("genuinely oversized research body returns empty 413", async () => {
+  await withServer(async ({ port }) => {
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/research/notes",
+      headers: { "content-type": "application/json" },
+      body: Buffer.alloc(DEFAULT_MAX_BODY_BYTES + 1, 0x61),
+    });
+    assert.equal(response.status, 413);
+    assert.equal(response.body, "");
+  });
+});
+
+test("reading submittedText longer than 8000 is accepted within DEFAULT_MAX_BODY_BYTES without truncation", async () => {
+  const longText = "Я".repeat(9000);
+  assert.ok(longText.length > 8000);
+  await withServer(async ({ port }) => {
+    const correlationId = randomUUID();
+    const start = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "reading",
+        correlationId,
+        surface: "product_control",
+        submittedText: longText,
+        commandTarget: null,
+        editTarget: null,
+        context: nullContext({ workflowPhase: "draft" }),
+      }),
+    });
+    assert.equal(start.status, 201, start.body);
+    const body = JSON.parse(start.body);
+    assert.equal(body.event.submittedText, longText);
+    assert.equal(body.event.submittedText.length, 9000);
+  });
+});
+
+test("operational logLine never includes research submittedText", async () => {
+  const marker = "УНИКАЛЬНЫЙ-ТЕКСТ-ИССЛЕДОВАНИЯ-009";
+  const logs = [];
+  await withServer(async ({ port }) => {
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/research/notes",
+      headers: { "content-type": "application/json" },
+      body: json({ submittedText: marker, context: nullContext() }),
+    });
+    assert.equal(response.status, 201);
+    const captured = logs.join("\n");
+    assert.equal(captured.includes(marker), false);
+    assert.match(captured, /event=research-note/);
+  }, { logger: { log(line) { logs.push(String(line)); } } });
+});
