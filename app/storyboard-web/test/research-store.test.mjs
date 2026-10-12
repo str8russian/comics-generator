@@ -397,3 +397,87 @@ test("memory store requires explicit { memory: true }; invalid pools fail config
   const memory = createResearchStore({ memory: true });
   assert.equal(typeof memory.appendNote, "function");
 });
+
+function castEditTarget(overrides = {}) {
+  return {
+    editKind: "character_rename",
+    castPhase: "pending_reading",
+    characterName: "А",
+    previousCharacterName: "Б",
+    surfaceForm: null,
+    sourceItemId: null,
+    ...overrides,
+  };
+}
+
+test("cast_edit starts reject non-product_control surfaces and add no rows", async () => {
+  const research = store();
+  for (const surface of ["dock_commands", "dock_notes"]) {
+    const before = await research.listTrace();
+    const rejected = await research.appendEvent({
+      eventKind: "action_start",
+      semanticAction: "cast_edit",
+      correlationId: randomUUID(),
+      surface,
+      submittedText: "А",
+      commandTarget: null,
+      editTarget: castEditTarget(),
+      context: nullContext({ workflowPhase: "material" }),
+    });
+    assert.equal(rejected.ok, false, surface);
+    assert.equal(rejected.kind, "invalid-request", surface);
+    const after = await research.listTrace();
+    assert.equal(after.events.length, before.events.length, surface);
+  }
+});
+
+test("cast_edit startSnapshot with non-product_control surface is rejected", async () => {
+  const research = store();
+  const before = await research.listTrace();
+  const rejected = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId: randomUUID(),
+    outcome: "success",
+    outcomeFlags: {},
+    startSnapshot: {
+      semanticAction: "cast_edit",
+      surface: "dock_commands",
+      submittedText: "А",
+      commandTarget: null,
+      editTarget: castEditTarget(),
+      context: nullContext({ workflowPhase: "material" }),
+    },
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.kind, "invalid-request");
+  const after = await research.listTrace();
+  assert.equal(after.events.length, before.events.length);
+});
+
+test("valid cast_edit on product_control is accepted", async () => {
+  const research = store();
+  const correlationId = randomUUID();
+  const start = await research.appendEvent({
+    eventKind: "action_start",
+    semanticAction: "cast_edit",
+    correlationId,
+    surface: "product_control",
+    submittedText: "А",
+    commandTarget: null,
+    editTarget: castEditTarget(),
+    context: nullContext({ workflowPhase: "material" }),
+  });
+  assert.equal(start.ok, true);
+  assert.equal(start.event.surface, "product_control");
+  assert.equal(start.event.semanticAction, "cast_edit");
+
+  const terminal = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId,
+    outcome: "success",
+    outcomeFlags: {},
+  });
+  assert.equal(terminal.ok, true);
+  assert.equal(terminal.event.surface, "product_control");
+  assert.equal(terminal.event.semanticAction, "cast_edit");
+});

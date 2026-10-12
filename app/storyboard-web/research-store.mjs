@@ -278,6 +278,7 @@ function validateStartSnapshot(snapshot) {
   const editTarget = normalizeEditTarget(snapshot.editTarget);
   if (editTarget === undefined) return null;
   if (snapshot.semanticAction === "cast_edit") {
+    if (snapshot.surface !== "product_control") return null;
     if (!editTarget || commandTarget != null) return null;
   } else if (editTarget != null) {
     return null;
@@ -311,6 +312,7 @@ function validateEventInput(input) {
     const editTarget = normalizeEditTarget(input.editTarget);
     if (editTarget === undefined) return failed("invalid-request");
     if (input.semanticAction === "cast_edit") {
+      if (input.surface !== "product_control") return failed("invalid-request");
       if (!editTarget || commandTarget != null) return failed("invalid-request");
     } else if (editTarget != null) {
       return failed("invalid-request");

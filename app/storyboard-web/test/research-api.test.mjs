@@ -216,6 +216,81 @@ test("protected-content rejects without echoing secret in body or logs", async (
   }, { logger: { log(line) { logs.push(String(line)); } } });
 });
 
+test("HTTP cast_edit requires product_control surface and schema-validates accepted events", async () => {
+  await withServer(async ({ port }) => {
+    const before = await send(port, { path: "/api/research/trace" });
+    assert.equal(before.status, 200);
+    const beforeCount = JSON.parse(before.body).events.length;
+
+    const invalid = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "cast_edit",
+        correlationId: randomUUID(),
+        surface: "dock_commands",
+        submittedText: "А",
+        commandTarget: null,
+        editTarget: {
+          editKind: "character_rename",
+          castPhase: "pending_reading",
+          characterName: "А",
+          previousCharacterName: "Б",
+          surfaceForm: null,
+          sourceItemId: null,
+        },
+        context: nullContext({ workflowPhase: "material" }),
+      }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(JSON.parse(invalid.body), { status: "failed", kind: "invalid-request" });
+    const afterInvalid = await send(port, { path: "/api/research/trace" });
+    assert.equal(JSON.parse(afterInvalid.body).events.length, beforeCount);
+
+    const correlationId = randomUUID();
+    const start = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "cast_edit",
+        correlationId,
+        surface: "product_control",
+        submittedText: "А",
+        commandTarget: null,
+        editTarget: {
+          editKind: "character_rename",
+          castPhase: "pending_reading",
+          characterName: "А",
+          previousCharacterName: "Б",
+          surfaceForm: null,
+          sourceItemId: null,
+        },
+        context: nullContext({ workflowPhase: "material" }),
+      }),
+    });
+    assert.equal(start.status, 201, start.body);
+    assert.equal(validateResearchEvent(JSON.parse(start.body).event), true, JSON.stringify(validateResearchEvent.errors));
+
+    const terminal = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_terminal",
+        correlationId,
+        outcome: "success",
+        outcomeFlags: {},
+      }),
+    });
+    assert.equal(terminal.status, 201, terminal.body);
+    assert.equal(validateResearchEvent(JSON.parse(terminal.body).event), true, JSON.stringify(validateResearchEvent.errors));
+  });
+});
+
 test("HTTP outcomeKind rejects secret-like values without echo", async () => {
   const secret = "Bearer fake-secret-token-value";
   const logs = [];
