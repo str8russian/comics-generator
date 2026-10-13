@@ -2225,3 +2225,296 @@ test("T035 Commands history shows submissions only; Operations owns terminal row
     .join("\n");
   assert.match(opsText, /Успех|success/i);
 });
+
+test("createEmptyCommandTarget omits panelSubject even when override supplies it", async () => {
+  const { createEmptyCommandTarget } = await import("../public/research-dock.mjs");
+  const target = createEmptyCommandTarget("panel", {
+    displayFrameNumber: 12,
+    displayFrameId: "disp-12",
+    structureFrameId: "struct-9",
+    structureSegmentIndex: 0,
+    panelIndex: 1,
+    panelSubject: "Дуров",
+  });
+  assert.equal(Object.hasOwn(target, "panelSubject"), false);
+  assert.equal(target.kind, "panel");
+  assert.equal(target.displayFrameNumber, 12);
+  assert.equal(target.displayFrameId, "disp-12");
+  assert.equal(target.structureFrameId, "struct-9");
+  assert.equal(target.structureSegmentIndex, 0);
+  assert.equal(target.panelIndex, 1);
+  assert.deepEqual(Object.keys(target).sort(), [
+    "anchorVersionId",
+    "characterName",
+    "displayFrameId",
+    "displayFrameNumber",
+    "kind",
+    "panelIndex",
+    "positionX",
+    "positionY",
+    "structureFrameId",
+    "structureSegmentIndex",
+    "zoom",
+  ]);
+});
+
+test("storyboard createEmptyCommandTarget omits panelSubject key rather than null", async () => {
+  const { createEmptyCommandTarget } = await import("../public/research-dock.mjs");
+  const target = createEmptyCommandTarget("storyboard");
+  assert.equal(Object.hasOwn(target, "panelSubject"), false);
+  assert.equal(target.kind, "storyboard");
+});
+
+test("Commands option and selected labels keep — Дуров from available panel descriptor only", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext, createEmptyCommandTarget } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 12,
+      displayFrameId: "disp-12",
+      structureFrameId: "struct-9",
+      structureSegmentIndex: 0,
+      panelIndex: 1,
+      panelSubject: "Дуров",
+    }],
+  });
+  dock.selectCommandTarget({
+    kind: "panel",
+    displayFrameNumber: 12,
+    displayFrameId: "disp-12",
+    structureFrameId: "struct-9",
+    structureSegmentIndex: 0,
+    panelIndex: 1,
+    panelSubject: "Дуров",
+  });
+  const sticky = dock.getCommandTarget();
+  assert.equal(Object.hasOwn(sticky, "panelSubject"), false);
+  assert.equal(Object.hasOwn(createEmptyCommandTarget("panel", sticky), "panelSubject"), false);
+  const panelLabel = document.querySelector("#research-commands-target-label").textContent;
+  assert.match(panelLabel, /Перегенерировать изображение: кадр 12, панель 2 — Дуров/);
+  const optionsText = document.querySelector("#research-commands-target").children
+    .map((child) => child.textContent)
+    .join("\n");
+  assert.match(optionsText, /— Дуров/);
+});
+
+test("dock panel send action_start commandTarget omits panelSubject; context.panelSubject stays when captured", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  const posted = [];
+  let lastCommand = null;
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext({
+      workflowPhase: "visual",
+      displayFrameNumber: 12,
+      displayFrameId: "disp-12",
+      structureFrameId: "struct-9",
+      structureSegmentIndex: 0,
+      panelIndex: 1,
+      panelSubject: "Дуров",
+    }),
+    isProductBusy: () => false,
+    executeDockCommand: async (payload) => {
+      lastCommand = payload;
+      return { ok: true };
+    },
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/events") {
+        const body = JSON.parse(init.body);
+        posted.push(body);
+        return jsonResponse(201, {
+          event: { ...body, seq: posted.length, occurredAt: "2026-10-13T11:00:00.000Z" },
+        });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 12,
+      displayFrameId: "disp-12",
+      structureFrameId: "struct-9",
+      structureSegmentIndex: 0,
+      panelIndex: 1,
+      panelSubject: "Дуров",
+    }],
+  });
+  dock.selectCommandTarget({
+    kind: "panel",
+    displayFrameNumber: 12,
+    displayFrameId: "disp-12",
+    structureFrameId: "struct-9",
+    structureSegmentIndex: 0,
+    panelIndex: 1,
+  });
+  document.querySelector("#research-commands-draft").value = "переделай панель Дурова";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const start = posted.find((body) => body.eventKind === "action_start");
+  assert.ok(start);
+  assert.equal(Object.hasOwn(start.commandTarget, "panelSubject"), false);
+  assert.equal(start.context.panelSubject, "Дуров");
+  assert.equal(Object.hasOwn(lastCommand.commandTarget, "panelSubject"), false);
+  assert.equal(Object.hasOwn(lastCommand.context, "panelSubject"), true);
+  assert.equal(lastCommand.context.panelSubject, "Дуров");
+});
+
+test("incomplete terminal startSnapshot.commandTarget omits panelSubject", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  const posted = [];
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext({ panelSubject: "Дуров" }),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/events") {
+        const body = JSON.parse(init.body);
+        posted.push(body);
+        if (body.eventKind === "action_start") {
+          return jsonResponse(400, { error: { kind: "invalid-request" } });
+        }
+        return jsonResponse(201, {
+          event: {
+            ...body,
+            seq: posted.length,
+            occurredAt: "2026-10-13T11:05:00.000Z",
+            durationMs: null,
+            outcomeFlags: { ...(body.outcomeFlags || {}), evidenceIncomplete: true },
+          },
+        });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 1,
+      displayFrameId: "d1",
+      structureFrameId: "s1",
+      structureSegmentIndex: 0,
+      panelIndex: 0,
+      panelSubject: "Дуров",
+    }],
+  });
+  dock.selectCommandTarget({
+    kind: "panel",
+    displayFrameNumber: 1,
+    displayFrameId: "d1",
+    structureFrameId: "s1",
+    structureSegmentIndex: 0,
+    panelIndex: 0,
+  });
+  document.querySelector("#research-commands-draft").value = "cmd";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const terminal = posted.find((body) => body.eventKind === "action_terminal");
+  assert.ok(terminal);
+  assert.ok(terminal.startSnapshot);
+  assert.equal(Object.hasOwn(terminal.startSnapshot.commandTarget, "panelSubject"), false);
+  assert.equal(terminal.startSnapshot.context.panelSubject, "Дуров");
+});
+
+test("Commands history renders panel subject from context and gracefully without it", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => ({}),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: async (url) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path === "/api/research/trace?kind=note") return jsonResponse(200, { events: [] });
+      if (path === "/api/research/trace?surface=dock_commands") {
+        return jsonResponse(200, {
+          events: [
+            {
+              eventKind: "action_start",
+              surface: "dock_commands",
+              semanticAction: "panel_generate",
+              submittedText: "с субъектом",
+              commandTarget: {
+                kind: "panel",
+                displayFrameNumber: 12,
+                displayFrameId: "disp-12",
+                structureFrameId: "struct-9",
+                structureSegmentIndex: 0,
+                panelIndex: 1,
+              },
+              context: { panelSubject: "Дуров" },
+              correlationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              occurredAt: "2026-10-13T11:10:00.000Z",
+              seq: 1,
+            },
+            {
+              eventKind: "action_start",
+              surface: "dock_commands",
+              semanticAction: "panel_generate",
+              submittedText: "без субъекта",
+              commandTarget: {
+                kind: "panel",
+                displayFrameNumber: 3,
+                displayFrameId: "disp-3",
+                structureFrameId: "struct-3",
+                structureSegmentIndex: 0,
+                panelIndex: 0,
+              },
+              context: { panelSubject: null },
+              correlationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              occurredAt: "2026-10-13T11:11:00.000Z",
+              seq: 2,
+            },
+          ],
+        });
+      }
+      if (path === "/api/research/trace") return jsonResponse(200, { events: [] });
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  const historyText = document.querySelector("#research-commands-history").children
+    .map((child) => child.textContent)
+    .join("\n");
+  assert.match(historyText, /кадр 12, панель 2 — Дуров/);
+  assert.match(historyText, /с субъектом/);
+  assert.match(historyText, /кадр 3, панель 1/);
+  assert.match(historyText, /без субъекта/);
+  assert.equal(/кадр 3, панель 1 —/.test(historyText), false);
+});

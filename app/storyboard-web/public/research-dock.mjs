@@ -20,7 +20,6 @@ const COMMAND_TARGET_KEYS = [
   "structureFrameId",
   "structureSegmentIndex",
   "panelIndex",
-  "panelSubject",
   "zoom",
   "positionX",
   "positionY",
@@ -309,7 +308,11 @@ function samePanelTarget(a, b) {
     && a.structureSegmentIndex === b.structureSegmentIndex;
 }
 
-function ownerFacingCommandLabel(target) {
+function resolvePanelSubjectHint(hint) {
+  return typeof hint === "string" && hint.trim() ? hint.trim() : null;
+}
+
+function ownerFacingCommandLabel(target, { panelSubject = null } = {}) {
   if (!target) return "";
   if (target.kind === "storyboard") {
     return "Изменить структуру всей раскадровки";
@@ -317,28 +320,29 @@ function ownerFacingCommandLabel(target) {
   if (target.kind === "panel") {
     const displayNumber = target.displayFrameNumber == null ? "?" : String(target.displayFrameNumber);
     const oneBased = target.panelIndex == null ? "?" : String(target.panelIndex + 1);
-    const subject = typeof target.panelSubject === "string" && target.panelSubject.trim()
-      ? ` — ${target.panelSubject.trim()}`
-      : "";
-    return `Перегенерировать изображение: кадр ${displayNumber}, панель ${oneBased}${subject}`;
+    const subject = resolvePanelSubjectHint(panelSubject);
+    const subjectSuffix = subject ? ` — ${subject}` : "";
+    return `Перегенерировать изображение: кадр ${displayNumber}, панель ${oneBased}${subjectSuffix}`;
   }
   return "";
 }
 
-function formatCommandTargetLabel(target, { unsupported = false, unselected = false } = {}) {
+function formatCommandTargetLabel(target, { unsupported = false, unselected = false, panelSubject = null } = {}) {
   if (unselected || !target) {
     return "Действие не выбрано — выберите действие, чтобы ограничить выполнение";
   }
   if (unsupported) {
     return "Выбранное действие недоступно — выберите другое действие";
   }
-  return ownerFacingCommandLabel(target) || "Действие не поддерживается";
+  return ownerFacingCommandLabel(target, { panelSubject }) || "Действие не поддерживается";
 }
 
 function formatCommandsHistoryItem(event) {
   if (event?.eventKind !== "action_start") return "";
   const stamp = formatResearchTimestamp(event.occurredAt);
-  const actionLabel = ownerFacingCommandLabel(event.commandTarget)
+  const actionLabel = ownerFacingCommandLabel(event.commandTarget, {
+    panelSubject: event.context?.panelSubject,
+  })
     || (event.semanticAction === "panel_generate"
       ? "Перегенерировать изображение"
       : event.semanticAction === "structure_edit"
@@ -499,6 +503,14 @@ export function bindResearchDock({
     targetUnsupported = false;
   }
 
+  function findAvailablePanelDescriptor(target) {
+    if (!target || target.kind !== "panel") return null;
+    return (availableTargets.panels || []).find((panel) => samePanelTarget(
+      createEmptyCommandTarget("panel", panel),
+      target,
+    )) || null;
+  }
+
   function resolveStickyAgainstAvailable() {
     if (!stickyTarget) {
       targetUnsupported = false;
@@ -514,10 +526,7 @@ export function bindResearchDock({
       return;
     }
     if (stickyTarget.kind === "panel") {
-      const match = (availableTargets.panels || []).find((panel) => samePanelTarget(
-        createEmptyCommandTarget("panel", panel),
-        stickyTarget,
-      ));
+      const match = findAvailablePanelDescriptor(stickyTarget);
       if (match) {
         targetUnsupported = false;
         stickyTarget = createEmptyCommandTarget("panel", match);
@@ -546,7 +555,9 @@ export function bindResearchDock({
       for (const panel of availableTargets.panels || []) {
         const option = document.createElement("option");
         option.value = panelTargetKey(panel);
-        option.textContent = ownerFacingCommandLabel(createEmptyCommandTarget("panel", panel));
+        option.textContent = ownerFacingCommandLabel(createEmptyCommandTarget("panel", panel), {
+          panelSubject: panel.panelSubject,
+        });
         commandsTarget.append(option);
       }
       if (stickyTarget?.kind === "storyboard" && availableTargets.storyboardAvailable && !targetUnsupported) {
@@ -558,9 +569,11 @@ export function bindResearchDock({
       }
     }
     if (commandsTargetLabel) {
+      const matchedPanel = findAvailablePanelDescriptor(stickyTarget);
       commandsTargetLabel.textContent = formatCommandTargetLabel(stickyTarget, {
         unsupported: targetUnsupported,
         unselected: !stickyTarget,
+        panelSubject: matchedPanel?.panelSubject,
       });
     }
     if (commandsUnavailable) {

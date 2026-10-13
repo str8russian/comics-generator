@@ -683,3 +683,73 @@ test("T027 ordinary owner prose persists byte-for-byte on notes and starts", asy
     )));
   });
 });
+
+test("UI dock panel action_start without commandTarget.panelSubject is accepted by store and Ajv-valid", async () => {
+  const { createEmptyCommandTarget, createEmptyContext } = await import("../public/research-dock.mjs");
+  const commandTarget = createEmptyCommandTarget("panel", {
+    displayFrameNumber: 12,
+    displayFrameId: "disp-12",
+    structureFrameId: "struct-9",
+    structureSegmentIndex: 0,
+    panelIndex: 1,
+    panelSubject: "Дуров",
+  });
+  assert.equal(Object.hasOwn(commandTarget, "panelSubject"), false);
+
+  const context = createEmptyContext({
+    workflowPhase: "visual",
+    displayFrameNumber: 12,
+    displayFrameId: "disp-12",
+    structureFrameId: "struct-9",
+    structureSegmentIndex: 0,
+    panelIndex: 1,
+    panelSubject: "Дуров",
+  });
+  assert.equal(context.panelSubject, "Дуров");
+
+  await withServer(async ({ port }) => {
+    const correlationId = randomUUID();
+    const start = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "panel_generate",
+        correlationId,
+        surface: "dock_commands",
+        submittedText: "переделай панель",
+        commandTarget,
+        editTarget: null,
+        context,
+      }),
+    });
+    assert.equal(start.status, 201, start.body);
+    const event = JSON.parse(start.body).event;
+    assert.equal(Object.hasOwn(event.commandTarget, "panelSubject"), false);
+    assert.equal(event.context.panelSubject, "Дуров");
+    assert.equal(validateResearchEvent(event), true, JSON.stringify(validateResearchEvent.errors));
+
+    const storyboardTarget = createEmptyCommandTarget("storyboard");
+    assert.equal(Object.hasOwn(storyboardTarget, "panelSubject"), false);
+    const productStart = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "structure_edit",
+        correlationId: randomUUID(),
+        surface: "product_control",
+        submittedText: "правка структуры",
+        commandTarget: storyboardTarget,
+        editTarget: null,
+        context: nullContext({ workflowPhase: "structure" }),
+      }),
+    });
+    assert.equal(productStart.status, 201, productStart.body);
+    const productEvent = JSON.parse(productStart.body).event;
+    assert.equal(Object.hasOwn(productEvent.commandTarget, "panelSubject"), false);
+    assert.equal(validateResearchEvent(productEvent), true, JSON.stringify(validateResearchEvent.errors));
+  });
+});
