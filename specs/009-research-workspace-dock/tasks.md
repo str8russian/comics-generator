@@ -190,11 +190,13 @@
 
 - [ ] T032 With `STORYBOARD_TEST_DATABASE_URL` pointing at local Compose `comics_test` (same local role as `docker-compose.yml` `db` service; do not commit secrets), run from repo root: `node app/storyboard-web/test/postgres/verify.mjs` (fail-closed). **FR-024–FR-026**. **Done when**: exit 0. **Proof**: verifier exit code.
 
-- [ ] T033 Real-browser acceptance against Compose loopback `:4173` using provider doubles / staged local state: continuous Happy Path steps 1–8 from `specs/009-research-workspace-dock/quickstart.md`; verify native `#detail.showModal()` top-layer accessibility of the **same** reparented `#research-dock` in `app/storyboard-web/public/index.html` / `app/storyboard-web/public/app.js` (DOM-only tests are insufficient alone); forced operation-failure and research-save-failure / protected-content checks; extract via `curl -sS http://127.0.0.1:4173/api/research/trace`. **SC-001–SC-007, FR-001–FR-002**. **Done when**: checklist observations recorded for HP1–8 + failures + extraction. **Proof**: browser notes + trace excerpt (no secrets).
+- [ ] T033 Real-browser acceptance against Compose loopback `:4173` using provider doubles / staged local state: continuous Happy Path steps 1–8 from `specs/009-research-workspace-dock/quickstart.md` (including the 2026-10-13 repeat-T033 five-group checklist); verify native `#detail.showModal()` top-layer accessibility of the **same** reparented `#research-dock` in `app/storyboard-web/public/index.html` / `app/storyboard-web/public/app.js` (DOM-only tests are insufficient alone); forced operation-failure and research-save-failure / protected-content checks; extract via `curl -sS http://127.0.0.1:4173/api/research/trace`. **SC-001–SC-007, FR-001–FR-002**. **Done when**: checklist observations recorded for HP1–8 + failures + extraction. **Proof**: browser notes + trace excerpt (no secrets). **Dependency**: complete **T035** before retrying T033 after the 2026-10-13 owner observation (stable ids T032–T034 retained; do not renumber).
 
 - [ ] T034 Confirm protected diffs empty / in-scope only: `git diff -- prototypes/storyboard-viewer/frame-renderer.mjs docker-compose.yml` empty of feature creep; no new Compose volume; no live provider calls in deterministic suites; worktree clean after final commit. **FR-036–FR-038**. **Done when**: checks recorded. **Proof**: `git status --porcelain=v1` empty; diff commands.
 
-**Checkpoint**: Feature ready for coordinator Analyze authorization. Suggested Cursor range: **T030–T034**.
+- [ ] T035 [Corrective / post-owner-observation 2026-10-13] Before retrying T033, implement the five owner-visible dock corrections test-first in `app/storyboard-web/test/research-dock.test.mjs` then `app/storyboard-web/public/research-dock.mjs` (plus minimal `public/index.html` field/help text and `public/app.css` for resize if required): (1) explicit Commands target — no implicit default, neutral `Выберите действие` blocks product/research on send, sticky explicit storyboard/panel selections, ambient refresh never retargets, stale panel → neutral+block, owner-facing labels only with open-frame explanation (**FR-008–FR-010**); (2) shared deterministic RU UTC+3 visible timestamps in Notes/Commands/Operations (**FR-013**); (3) expanded H+V resize, fixed collapsed handle, same-page restore only, no reload persistence, reparent preserves size (**FR-002**); (4) Operations persisted entries including unmatched starts ordered by authoritative `seq` (**FR-016**, **FR-019**); (5) Commands history renders `dock_commands` `action_start` submissions only — Operations owns terminals (**FR-004**). **Done when**: red-before-green cases for all five groups are green; T030-equivalent focused offline research suite green; T031 broader offline suite green or only expected PG skips; `git diff --check` clean; T032–T034 remain unchecked; provider calls = 0. **Proof**: focused `node --test test/research-dock.test.mjs` + T030/T031 command summaries. Do **not** mark T033 accepted and do **not** start T034 in this corrective pass.
+
+**Checkpoint**: Feature ready for coordinator Analyze authorization. Suggested Cursor range: **T030–T034**. Corrective **T035** must complete before retrying T033 after the 2026-10-13 owner observation.
 
 ---
 
@@ -237,6 +239,7 @@
 | T022–T026 | Full capture + restart extraction |
 | T027–T029 | Failure honesty |
 | T030–T034 | Quickstart verification |
+| T035 | Post-owner-observation dock corrections before retry T033 |
 
 ---
 
@@ -296,24 +299,24 @@ Task: "T023 Extend research-api/store correlation/navigation cases …"
 | Requirement / criterion | Tasks |
 | --- | --- |
 | FR-001 one fixed bottom-right dock | T013–T017, T033 |
-| FR-002 collapsible; usable with `#detail`; no critical-control block | T013–T017, T015, T033 |
+| FR-002 collapsible/resizable; fixed handle; page-session size; usable with `#detail`; no critical-control block | T013–T017, T015, T033, T035 |
 | FR-003 three areas; no duplicate docks | T013–T014, T017 |
-| FR-004 independent Commands/Notes inputs/drafts/sends/histories/types | T013, T016, T019–T021 |
+| FR-004 independent Commands/Notes; Commands history = submissions only | T013, T016, T019–T021, T035 |
 | FR-005 send one does not consume the other | T019–T021 |
 | FR-006 unsent draft persistence not required | T016 |
 | FR-007 reuse supported commands only | T019–T020 |
-| FR-008 visibly identify context and actual command target | T019–T020 |
-| FR-009 honest unsupported context | T019–T020 |
-| FR-010 ambient selection does not silently retarget storyboard-wide commands | T019–T020 |
+| FR-008 explicit target; owner-facing labels; open-frame panel explanation | T019–T020, T035 |
+| FR-009 honest unsupported / neutral / stale block (no product/research) | T019–T020, T035 |
+| FR-010 ambient open/refresh never selects/retargets; sticky while supported | T019–T020, T035 |
 | FR-011 display vs structure frame identity | T005, T010, T019–T020 |
 | FR-012 Notes diary; no AI replies | T013, T016 |
-| FR-013 one send → one timestamped note | T013, T016 |
+| FR-013 one send → one timestamped note; RU UTC+3 visible timestamps | T013, T016, T035 |
 | FR-014 auto capture-time context; explicit nulls | T005, T016 |
 | FR-015 Notes usable during async; no new product op | T013, T015–T017 |
-| FR-016 read-only Operations running/terminal | T013, T016–T018 |
+| FR-016 read-only Operations running/terminal; `seq` order incl. unmatched starts | T013, T016–T018, T035 |
 | FR-017 keep local control feedback | T017 |
 | FR-018 no fake % / last-good≠success / no job system | T013, T018, T028–T029 |
-| FR-019 ordered research trace contents | T005–T006, T010–T011, T022–T025 |
+| FR-019 ordered research trace contents; dock projections respect `seq` / Commands starts-only | T005–T006, T010–T011, T022–T025, T035 |
 | FR-020 include existing product controls | T017, T021–T025 |
 | FR-021 submitted text not keystrokes; placement change not input | T006, T022, T024 |
 | FR-022 ordering + action/result association | T005, T009–T011, T023–T026 |

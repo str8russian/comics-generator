@@ -73,12 +73,12 @@ Minimum new coverage expected by [plan.md](./plan.md):
 Use the ordinary Compose app against the same volume. Prefer provider doubles or already-staged local project state so this proves the dock, not provider quality.
 
 1. **Open / continue** — `docker compose up` (or equivalent documented local start). Open the app. Start or continue storyboard creation until Structure tools and/or Visual frames are available as needed for later steps.
-2. **Note** — Open the Research dock (bottom-right). Type a note in Notes (not Commands). Send once. Confirm one separate timestamped Notes message appears; Commands draft unchanged.
-3. **Operation + Notes during wait** — Start an existing storyboard or image operation from product controls (Structure edit with double, frame/panel generate with double, etc.). Confirm Operations shows running then terminal success/failure. While running, send another note successfully. Confirm product controls/Commands cannot start a second overlapping product operation. Optionally navigate frames during the wait and confirm later extraction still shows the original capture-time context for that correlation.
-4. **Frame/panel dialog** — Open a frame/panel (`showModal`). Confirm the **same** dock remains accessible, reflects available context (display vs structure identities when present), and does not block Close / Next / panel regenerate / zoom controls. Collapse/expand still works.
-5. **Commands** — With a Notes draft still typed (unsent) and Notes history populated, set Commands target explicitly (storyboard-wide Structure edit for this step). Submit a supported instruction. Confirm product edit occurs, research trace records raw text + semantic action + actual storyboard target + result, Notes draft/history stay independent, and Commands history shows the dock command separately from Notes. Ambient open panel must not silently retarget a storyboard-wide command.
+2. **Note** — Open the Research dock (bottom-right). Type a note in Notes (not Commands). Send once. Confirm one separate timestamped Notes message appears with Russian date + 24-hour UTC+3 time (for example `… октября …, HH:MM:SS (UTC+3)`); Commands draft unchanged.
+3. **Operation + Notes during wait** — Start an existing storyboard or image operation from product controls (Structure edit with double, frame/panel generate with double, etc.). Confirm Operations shows running then terminal success/failure with the same RU UTC+3 timestamp style, and persisted rows follow `seq` order. While running, send another note successfully. Confirm product controls/Commands cannot start a second overlapping product operation. Optionally navigate frames during the wait and confirm later extraction still shows the original capture-time context for that correlation.
+4. **Frame/panel dialog** — Open a frame/panel (`showModal`). Confirm the **same** dock remains accessible, reflects available context (display vs structure identities when present), and does not block Close / Next / panel regenerate / zoom controls. Collapse/expand still works. While expanded, resize horizontally and vertically within safe bounds; collapse to the fixed standard handle; re-expand and confirm the last expanded size returns for this open page. After dialog close/reopen (reparent), expanded size for the open page is preserved. Reload is checked under step 7 for non-persistence of size.
+5. **Commands** — Confirm the target selector starts neutral (`Выберите действие` or equally clear). Attempt send while neutral: no product call and no research write; concise local explanation shown. With a Notes draft still typed (unsent) and Notes history populated, explicitly select storyboard-wide Structure edit (owner-facing label). Confirm ambient frame open/refresh does not retarget. Submit a supported instruction. Confirm product edit occurs, research trace records raw text + semantic action + actual storyboard target + result, Notes draft/history stay independent, and Commands history shows the submission (timestamp + text + human target label) **without** a terminal outcome row (Operations owns the terminal). Visible selector labels must not show internal ids / `panelIndex` / 0-based indexes. When a panel is available for the open frame, explicitly select a panel regeneration option labeled for that open frame; confirm it works and that a stale/unavailable panel selection returns to neutral and blocks send.
 6. **Reaction note** — Send a Notes reaction about the command result.
-7. **Reload + restart** — Reload the page: prior Notes return. Then restart the application container/process with the same Compose volume (do not delete `storyboard-pg`). Open the app again: Notes and earlier ordered evidence remain.
+7. **Reload + restart** — Reload the page: prior Notes return; dock size returns to CSS default (expanded size was **not** persisted). Commands timestamps still render RU UTC+3. Then restart the application container/process with the same Compose volume (do not delete `storyboard-pg`). Open the app again: Notes and earlier ordered evidence remain. If an unmatched historical `action_start` exists, Operations shows it as interrupted/non-running in `seq` order (not last solely because unmatched).
 8. **Extract + reconstruct** — Obtain the machine-readable trace:
 
    ```bash
@@ -86,6 +86,16 @@ Use the ordinary Compose app against the same volume. Prefer provider doubles or
    ```
 
    Reconstruct intent → command/action → result → reaction from `events` ordered by `seq` without fabricating null context fields.
+
+### Repeat-T033 checklist after owner-observation corrections (2026-10-13)
+
+Complete corrective task **T035** before retrying T033. On the repeat browser pass, verify all five groups concretely:
+
+1. **Explicit Commands target** — Neutral default; neutral send blocked (0 product/research); sticky explicit storyboard and panel selections; ambient refresh does not retarget; stale panel → neutral + block; owner-facing labels only; panel list explained as open-frame scoped.
+2. **RU UTC+3 timestamps** — Notes, Commands, and Operations visible times match `D месяц YYYY, HH:MM:SS (UTC+3)`; no raw ISO; no `Invalid Date`.
+3. **Resize / collapse / page-session size** — Expanded resize H+V; fixed collapsed handle; same-page restore; reparent preserves size; reload does **not** restore custom size.
+4. **Operations `seq` order** — Hydrated terminals + older unmatched start appear in numeric `seq` ascending; unmatched start is interrupted/non-running.
+5. **Commands history = submissions only** — Start+terminal pair yields one Commands row (start) and one Operations terminal row; hydration preserves that split.
 
 ## Proportionate failure checks
 

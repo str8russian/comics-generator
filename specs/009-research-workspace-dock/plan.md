@@ -6,6 +6,8 @@
 
 **Note**: Plan-stage only. Tasks and implementation are out of scope for this commit. `GATEKEEPER.md` was not invoked; gates below follow `DEVELOPMENT_PROCESS.md` plan-stage checks. Corrective Plan pass tightens contracts without changing the selected PostgreSQL / one-dock / reparent / busy / no-job direction.
 
+**Owner observation refinements (2026-10-13)**: After the first T033 browser observation, a limited corrective addendum refined dock resize/collapse memory, explicit Commands target selection and owner-facing labels, Russian UTC+3 visible timestamps, Operations `seq` ordering (including unmatched starts), and Commands-history starts-only projection. Contracts, schema, data model, research API, and persistence decisions remain unchanged. Corrective implementation is task **T035** and must complete before retrying T033.
+
 ## Summary
 
 Deliver the smallest vertical DEC-052 Research workspace dock: one fixed collapsible bottom-right dock with independent Commands and Notes plus read-only Operations; capture owner notes and meaningful product/dock actions into one ordered local research trace; survive page reload and ordinary Compose/PostgreSQL application restart; expose deterministic machine-readable extraction without a polished export UI.
@@ -136,14 +138,17 @@ No gate violations. The migration is required because browser-only and ephemeral
 ### 4. UI ownership, native dialog, busy isolation
 
 - One `#research-dock` with Commands / Notes / Operations regions; collapse handle; `position: fixed; right/bottom`; max-height and offsets so storyboard controls and `.dialog-actions` stay usable on narrow viewports.
-- Single state owner in `research-dock.mjs` (drafts, **Notes history**, **Commands history**, Operations projection, collapse for open page, context snapshot helpers). Unsent draft persistence not required. Only Notes history must return after reload/restart.
-- On `detail.showModal()`, reparent dock into `#detail`; on close, reparent back. No duplicate dock.
+- While expanded, the dock is resizable horizontally and vertically up to safe viewport/dialog bounds. Collapsed handle uses a fixed standard size independent of the expanded size. Re-expanding restores the last expanded width/height only within the current open page; **do not** persist size across reload (`localStorage`, cookies, DB, research events, or schema). Reload returns to the CSS default size.
+- Single state owner in `research-dock.mjs` (drafts, **Notes history** = submissions diary, **Commands history** = `dock_commands` `action_start` submissions only, Operations projection, collapse/resize for open page, context snapshot helpers, shared RU UTC+3 timestamp formatter). Unsent draft persistence not required. Only Notes history must return after reload/restart.
+- Visible timestamps in Notes, Commands, and Operations use one deterministic formatter: Russian month name, 24-hour clock with seconds, explicit `(UTC+3)` / Europe/Moscow interpretation. Stored timestamps unchanged.
+- On `detail.showModal()`, reparent dock into `#detail`; on close, reparent back. No duplicate dock. Reparent MUST preserve the current-page expanded size and keep critical dialog controls reachable.
 - Busy: exempt only Notes send from `pointer-events: none`; Notes send bypasses `runBusy`; Commands uses product busy latch.
 
 ### 5. Commands and Operations
 
-- **Commands supported targets**: storyboard-wide `POST /api/visual/storyboard/edit`; panel `.../panels/:i/generate` when explicitly selected. Sticky target mode; honest unsupported empty states.
-- **Operations**: live busy projection + terminal history from research store; no percentages/jobs/polling/cancellation. After reload, never show unpaired starts as running.
+- **Commands supported targets**: storyboard-wide `POST /api/visual/storyboard/edit`; panel `.../panels/:i/generate` when explicitly selected. **No implicit/default target** — initial selector is neutral (`Выберите действие`); send in that state performs no product call and no research write. Explicit selection stays sticky while supported; ambient frame open/refresh never selects or retargets; stale/unavailable panel returns to neutral and blocks send. Owner-facing labels only (no internal ids / 0-based indexes in the visible selector); panel choices explained as belonging to the open frame. Captured `commandTarget` fields remain for the trace.
+- **Commands history**: project only `dock_commands` `action_start` rows (localized timestamp, submitted text, human action/target label). Do not render terminal outcome rows in Commands.
+- **Operations**: live busy projection + terminal/interrupted history from research store ordered by authoritative numeric `seq` ascending (including unmatched historical starts as non-running). One current in-page live item may remain first; local-only evidence-save warnings without `seq` may follow persisted items. No percentages/jobs/polling/cancellation. After reload, never show unpaired starts as running or replay them.
 
 ### 6. Validation strategy
 
@@ -189,12 +194,12 @@ Tests-before-implementation intent (Tasks will sequence IDs). Runnable commands 
 
 | Spec | Plan settlement |
 | --- | --- |
-| FR-001–003 dock shell | UI approach §4; quickstart HP1/HP4 |
-| FR-004–006 independence / no unsent draft persistence | dock state owner; Notes + Commands history projections; capture matrix |
-| FR-007–011 Commands | Commands mapping §5; command_target + sticky mode |
-| FR-012–015 Notes | notes route + busy exemption |
-| FR-016–018 Operations | Operations projection §5 |
-| FR-019–023 trace | event contract + matrix + unique correlation + start-derived terminals |
+| FR-001–003 dock shell (incl. FR-002 resize / fixed handle / page-session size) | UI approach §4; quickstart HP1/HP4 + repeat-T033 resize checks |
+| FR-004–006 independence / Commands starts-only history / no unsent draft persistence | dock state owner; Notes + Commands history projections; capture matrix |
+| FR-007–011 Commands (explicit select; owner-facing labels; neutral/stale block) | Commands mapping §5; command_target + sticky/neutral mode |
+| FR-012–015 Notes (FR-013 RU UTC+3 visible timestamps across dock) | notes route + busy exemption + shared formatter §4 |
+| FR-016–018 Operations (`seq` order; unmatched starts interrupted) | Operations projection §5 |
+| FR-019–023 trace (dock projections respect `seq` / Commands starts-only) | event contract + matrix + unique correlation + start-derived terminals |
 | FR-024–028 persistence/extraction | PG `research_event` + GET trace |
 | FR-029–031 evidence boundaries | separate store; forbidden keys + protected-content policy; log allowlist untouched |
 | FR-032–035 failure honesty | failure policy §3 |
