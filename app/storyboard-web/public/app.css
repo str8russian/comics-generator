@@ -422,17 +422,21 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
 }
 
 #research-dock {
+  --research-dock-inset-right: 16px;
+  --research-dock-inset-bottom: 16px;
+  --research-dock-inset-opposite: 16px;
   position: fixed;
-  right: 16px;
-  bottom: 16px;
+  right: var(--research-dock-inset-right);
+  bottom: var(--research-dock-inset-bottom);
   z-index: 40;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  width: min(360px, calc(100vw - 32px));
-  max-width: min(720px, calc(100vw - 32px));
-  height: auto;
-  max-height: min(42vh, calc(100vh - 120px));
+  /* Defaults only — maxima stay viewport-safe so pointer resize can grow. */
+  width: min(360px, calc(100vw - var(--research-dock-inset-right) - var(--research-dock-inset-opposite)));
+  height: min(42vh, calc(100vh - var(--research-dock-inset-bottom) - var(--research-dock-inset-opposite)));
+  max-width: calc(100vw - var(--research-dock-inset-right) - var(--research-dock-inset-opposite));
+  max-height: calc(100vh - var(--research-dock-inset-bottom) - var(--research-dock-inset-opposite));
   overflow: auto;
   border: 1px solid #7f878c;
   background: #f7f4ee;
@@ -440,9 +444,8 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
 }
 
 #detail #research-dock {
-  right: 12px;
-  bottom: 64px;
-  max-height: min(36vh, calc(100vh - 120px));
+  --research-dock-inset-right: 12px;
+  --research-dock-inset-bottom: 64px;
   z-index: 5;
 }
 
@@ -570,13 +573,14 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
 
 @media (max-width: 720px) {
   #research-dock {
-    right: 8px;
-    bottom: 8px;
-    width: min(320px, calc(100vw - 16px));
-    max-height: min(38vh, calc(100vh - 112px));
+    --research-dock-inset-right: 8px;
+    --research-dock-inset-bottom: 8px;
+    --research-dock-inset-opposite: 8px;
+    width: min(320px, calc(100vw - var(--research-dock-inset-right) - var(--research-dock-inset-opposite)));
+    height: min(38vh, calc(100vh - var(--research-dock-inset-bottom) - var(--research-dock-inset-opposite)));
   }
 
   #detail #research-dock {
-    bottom: 72px;
+    --research-dock-inset-bottom: 72px;
   }
 }

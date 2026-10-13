@@ -2843,3 +2843,110 @@ test("detail scroll wrapper owns product scrolling; dock stays outside clipped c
   restoreDockToHost({ dock, host: document.querySelector("#research-dock-host") });
   assert.equal(document.querySelector("#research-dock-host").contains(dock), true);
 });
+
+test("expanded dock CSS has no 720px or vh-fraction max caps; defaults vs viewport maxima stay distinct", () => {
+  const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
+  const hostBlock = css.match(/#research-dock\s*\{[^}]*\}/s)?.[0] || "";
+  const modalBlock = css.match(/#detail\s+#research-dock\s*\{[^}]*\}/s)?.[0] || "";
+  assert.ok(hostBlock.length > 0);
+  assert.ok(modalBlock.length > 0);
+
+  assert.equal(/max-width:\s*min\(\s*720px/i.test(hostBlock), false);
+  assert.equal(/max-width:\s*720px/i.test(hostBlock), false);
+  assert.equal(/max-height:\s*min\(\s*42vh/i.test(hostBlock), false);
+  assert.equal(/max-height:\s*42vh/i.test(hostBlock), false);
+  assert.equal(/max-height:\s*min\(\s*36vh/i.test(modalBlock), false);
+  assert.equal(/max-height:\s*36vh/i.test(modalBlock), false);
+  assert.equal(/max-height:\s*min\(\s*38vh/i.test(css), false);
+
+  assert.match(hostBlock, /width:\s*min\(\s*360px/);
+  assert.match(hostBlock, /height:\s*min\(\s*42vh/);
+  assert.match(hostBlock, /max-width:\s*calc\(\s*100vw\s*-\s*var\(--research-dock-inset-right\)/);
+  assert.match(hostBlock, /max-height:\s*calc\(\s*100vh\s*-\s*var\(--research-dock-inset-bottom\)/);
+  assert.match(hostBlock, /--research-dock-inset-right:\s*16px/);
+  assert.match(hostBlock, /--research-dock-inset-bottom:\s*16px/);
+  assert.match(hostBlock, /--research-dock-inset-opposite:\s*16px/);
+  // Modal only overrides insets; maxima inherit from the shared calc(var(...)) contract.
+  assert.match(modalBlock, /--research-dock-inset-right:\s*12px/);
+  assert.match(modalBlock, /--research-dock-inset-bottom:\s*64px/);
+  assert.equal(/max-width\s*:/i.test(modalBlock), false);
+  assert.equal(/max-height\s*:/i.test(modalBlock), false);
+});
+
+test("large pointer drag exceeds former 720px/42vh caps up to inset-aware viewport bounds", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  globalThis.innerWidth = 1400;
+  globalThis.innerHeight = 900;
+  const hostInsets = { right: "16px", bottom: "16px", opposite: "16px" };
+  const modalInsets = { right: "12px", bottom: "64px", opposite: "16px" };
+  let activeInsets = hostInsets;
+  globalThis.getComputedStyle = (el) => ({
+    getPropertyValue(name) {
+      if (name === "--research-dock-inset-right") return activeInsets.right;
+      if (name === "--research-dock-inset-bottom") return activeInsets.bottom;
+      if (name === "--research-dock-inset-opposite") return activeInsets.opposite;
+      return "";
+    },
+    right: activeInsets.right,
+    bottom: activeInsets.bottom,
+  });
+
+  const { bindResearchDock, RESEARCH_DOCK_MIN_WIDTH, RESEARCH_DOCK_MIN_HEIGHT } = await import("../public/research-dock.mjs");
+  const root = document.querySelector("#research-dock");
+  const grip = document.querySelector("#research-dock-resize");
+  const detail = document.querySelector("#detail");
+  const scroll = document.querySelector("#detail-scroll");
+  root.offsetWidth = 360;
+  root.offsetHeight = 300;
+  const dock = bindResearchDock({
+    root,
+    host: document.querySelector("#research-dock-host"),
+    detail,
+    getContext: () => ({}),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 900, clientY: 700 }));
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: -200, clientY: -200 }));
+  grip.dispatchEvent(pointerEvent("pointerup", { clientX: -200, clientY: -200 }));
+  const hostW = Number.parseFloat(root.style.width);
+  const hostH = Number.parseFloat(root.style.height);
+  assert.ok(hostW > 720, `host width ${hostW} should exceed former 720px cap`);
+  assert.ok(hostH > 0.42 * 900, `host height ${hostH} should exceed former 42vh default`);
+  assert.equal(hostW, 1400 - 16 - 16);
+  assert.equal(hostH, 900 - 16 - 16);
+  assert.equal(root.style.maxWidth, `${hostW}px`);
+  assert.equal(root.style.maxHeight, `${hostH}px`);
+
+  detail.showModal();
+  dock.enterDetail();
+  activeInsets = modalInsets;
+  root.offsetWidth = hostW;
+  root.offsetHeight = hostH;
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 900, clientY: 700 }));
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: -400, clientY: -400 }));
+  grip.dispatchEvent(pointerEvent("pointerup", { clientX: -400, clientY: -400 }));
+  const modalW = Number.parseFloat(root.style.width);
+  const modalH = Number.parseFloat(root.style.height);
+  assert.ok(modalW > 720);
+  assert.ok(modalH > 0.36 * 900, `modal height ${modalH} should exceed former 36vh cap`);
+  assert.equal(modalW, 1400 - 12 - 16);
+  assert.equal(modalH, 900 - 64 - 16);
+  assert.equal(detail.contains(root), true);
+  assert.equal(scroll.contains(root), false);
+
+  dock.setCollapsed(true);
+  assert.match(root.className, /collapsed/);
+  assert.equal(root.style.width === `${modalW}px`, false);
+  dock.setCollapsed(false);
+  assert.equal(root.style.width, `${modalW}px`);
+  assert.equal(root.style.height, `${modalH}px`);
+  assert.equal(/localStorage|sessionStorage|document\.cookie/.test(
+    readFileSync(new URL("../public/research-dock.mjs", import.meta.url), "utf8"),
+  ), false);
+  assert.ok(RESEARCH_DOCK_MIN_WIDTH >= 200);
+  assert.ok(RESEARCH_DOCK_MIN_HEIGHT >= 120);
+  assert.equal([...html.matchAll(/\bid="research-dock"/g)].length, 1);
+});

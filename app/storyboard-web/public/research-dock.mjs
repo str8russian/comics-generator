@@ -17,6 +17,10 @@ export const CONTEXT_KEYS = [
 export const RESEARCH_DOCK_MIN_WIDTH = 240;
 export const RESEARCH_DOCK_MIN_HEIGHT = 160;
 export const RESEARCH_DOCK_VIEWPORT_MARGIN = 16;
+export const RESEARCH_DOCK_HOST_INSET_RIGHT = 16;
+export const RESEARCH_DOCK_HOST_INSET_BOTTOM = 16;
+export const RESEARCH_DOCK_MODAL_INSET_RIGHT = 12;
+export const RESEARCH_DOCK_MODAL_INSET_BOTTOM = 64;
 
 const COMMAND_TARGET_KEYS = [
   "kind",
@@ -608,6 +612,12 @@ export function bindResearchDock({
 
   function applyRememberedExpandedSize() {
     if (!root || !rememberedExpandedSize) return;
+    const width = Number.parseFloat(rememberedExpandedSize.width);
+    const height = Number.parseFloat(rememberedExpandedSize.height);
+    if (Number.isFinite(width) && Number.isFinite(height)) {
+      applyExpandedSize(width, height);
+      return;
+    }
     if (rememberedExpandedSize.width) root.style.width = rememberedExpandedSize.width;
     if (rememberedExpandedSize.height) root.style.height = rememberedExpandedSize.height;
   }
@@ -616,20 +626,59 @@ export function bindResearchDock({
     if (!root?.style) return;
     root.style.width = "";
     root.style.height = "";
+    root.style.maxWidth = "";
+    root.style.maxHeight = "";
     if (typeof root.style.removeProperty === "function") {
       root.style.removeProperty("width");
       root.style.removeProperty("height");
+      root.style.removeProperty("max-width");
+      root.style.removeProperty("max-height");
     }
+  }
+
+  function parseCssPx(value, fallback) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function readDockInsets() {
+    const inDetail = Boolean(detail && root?.parentNode === detail);
+    const fallbackRight = inDetail ? RESEARCH_DOCK_MODAL_INSET_RIGHT : RESEARCH_DOCK_HOST_INSET_RIGHT;
+    const fallbackBottom = inDetail ? RESEARCH_DOCK_MODAL_INSET_BOTTOM : RESEARCH_DOCK_HOST_INSET_BOTTOM;
+    const fallbackOpposite = RESEARCH_DOCK_VIEWPORT_MARGIN;
+    let right = fallbackRight;
+    let bottom = fallbackBottom;
+    let opposite = fallbackOpposite;
+    if (root && typeof globalThis.getComputedStyle === "function") {
+      try {
+        const style = globalThis.getComputedStyle(root);
+        right = parseCssPx(
+          style?.getPropertyValue?.("--research-dock-inset-right") || style?.right,
+          fallbackRight,
+        );
+        bottom = parseCssPx(
+          style?.getPropertyValue?.("--research-dock-inset-bottom") || style?.bottom,
+          fallbackBottom,
+        );
+        opposite = parseCssPx(
+          style?.getPropertyValue?.("--research-dock-inset-opposite"),
+          fallbackOpposite,
+        );
+      } catch {
+        // Harness without full computed-style support keeps CSS/JS contract fallbacks.
+      }
+    }
+    return { right, bottom, opposite };
   }
 
   function viewportSafeMaxSize() {
     const view = globalThis.window || globalThis;
     const vw = Number(view.innerWidth) || Number(globalThis.innerWidth) || 0;
     const vh = Number(view.innerHeight) || Number(globalThis.innerHeight) || 0;
-    const margin = RESEARCH_DOCK_VIEWPORT_MARGIN;
+    const { right, bottom, opposite } = readDockInsets();
     return {
-      maxWidth: Math.max(RESEARCH_DOCK_MIN_WIDTH, vw - margin * 2),
-      maxHeight: Math.max(RESEARCH_DOCK_MIN_HEIGHT, vh - margin * 2),
+      maxWidth: Math.max(RESEARCH_DOCK_MIN_WIDTH, vw - right - opposite),
+      maxHeight: Math.max(RESEARCH_DOCK_MIN_HEIGHT, vh - bottom - opposite),
     };
   }
 
@@ -638,14 +687,25 @@ export function bindResearchDock({
     return {
       width: Math.min(maxWidth, Math.max(RESEARCH_DOCK_MIN_WIDTH, width)),
       height: Math.min(maxHeight, Math.max(RESEARCH_DOCK_MIN_HEIGHT, height)),
+      maxWidth,
+      maxHeight,
     };
   }
 
   function applyExpandedSize(width, height) {
     if (!root || collapsed) return;
     const clamped = clampDockSize(width, height);
-    root.style.width = `${Math.round(clamped.width)}px`;
-    root.style.height = `${Math.round(clamped.height)}px`;
+    const nextWidth = Math.round(clamped.width);
+    const nextHeight = Math.round(clamped.height);
+    const nextMaxWidth = Math.round(clamped.maxWidth);
+    const nextMaxHeight = Math.round(clamped.maxHeight);
+    // Keep inline max-* aligned with the JS clamp so stylesheet caps cannot hide growth.
+    root.style.maxWidth = `${nextMaxWidth}px`;
+    root.style.maxHeight = `${nextMaxHeight}px`;
+    root.style.width = `${nextWidth}px`;
+    root.style.height = `${nextHeight}px`;
+    if (typeof root.offsetWidth === "number") root.offsetWidth = nextWidth;
+    if (typeof root.offsetHeight === "number") root.offsetHeight = nextHeight;
     rememberedExpandedSize = {
       width: root.style.width,
       height: root.style.height,
