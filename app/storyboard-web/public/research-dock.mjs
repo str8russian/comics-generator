@@ -186,6 +186,7 @@ function panelTargetKey(panel) {
     panel?.displayFrameId ?? "",
     String(panel?.panelIndex ?? ""),
     panel?.structureFrameId ?? "",
+    String(panel?.structureSegmentIndex ?? ""),
   ].join(":");
 }
 
@@ -195,7 +196,8 @@ function samePanelTarget(a, b) {
     && b.kind === "panel"
     && a.displayFrameId === b.displayFrameId
     && a.panelIndex === b.panelIndex
-    && a.structureFrameId === b.structureFrameId;
+    && a.structureFrameId === b.structureFrameId
+    && a.structureSegmentIndex === b.structureSegmentIndex;
 }
 
 function formatCommandTargetLabel(target, { unsupported = false } = {}) {
@@ -389,6 +391,10 @@ export function bindResearchDock({
     resolveStickyAgainstAvailable();
     if (commandsTarget) {
       clearChildren(commandsTarget);
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Выберите цель явно";
+      commandsTarget.append(placeholder);
       if (availableTargets.storyboardAvailable) {
         const option = document.createElement("option");
         option.value = "storyboard";
@@ -399,21 +405,23 @@ export function bindResearchDock({
         const option = document.createElement("option");
         option.value = panelTargetKey(panel);
         const oneBased = panel.panelIndex + 1;
+        const segment = panel.structureSegmentIndex == null ? "—" : String(panel.structureSegmentIndex);
         option.textContent = [
           `Панель ${oneBased}`,
           `display ${panel.displayFrameNumber}/${panel.displayFrameId}`,
-          `structure ${panel.structureFrameId ?? "—"}`,
+          `structure ${panel.structureFrameId ?? "—"} / segment ${segment}`,
           `panelIndex ${panel.panelIndex} (0-based)`,
         ].join(" · ");
         commandsTarget.append(option);
       }
-      if (stickyTarget?.kind === "storyboard" && availableTargets.storyboardAvailable) {
+      if (stickyTarget?.kind === "storyboard" && availableTargets.storyboardAvailable && !targetUnsupported) {
         commandsTarget.value = "storyboard";
       } else if (stickyTarget?.kind === "panel" && !targetUnsupported) {
         commandsTarget.value = panelTargetKey(stickyTarget);
-      } else if (commandsTarget.children?.length) {
-        // Keep select populated but do not silently change stickyTarget.
-        commandsTarget.value = commandsTarget.children[0].value;
+      } else {
+        // Neutral placeholder while sticky target is unsupported/stale.
+        // Do not visually auto-select the first concrete option.
+        commandsTarget.value = "";
       }
     }
     if (commandsTargetLabel) {
@@ -698,6 +706,7 @@ export function bindResearchDock({
   function onTargetSelectChange() {
     if (!commandsTarget) return;
     const value = commandsTarget.value;
+    if (!value) return;
     if (value === "storyboard") {
       selectCommandTarget({ kind: "storyboard" });
       return;

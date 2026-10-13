@@ -1156,3 +1156,289 @@ test("product Structure form and dock Commands remain separable by surface and d
   assert.equal(dockStarts.some((event) => event.surface === "product_control"), false);
   assert.equal(structureInstruction.value.includes("dock Commands"), false);
 });
+
+function panelOptionValue(select, predicate = () => true) {
+  const options = select.children || [];
+  const match = options.find((option) => option.value && option.value !== "storyboard" && predicate(option));
+  assert.ok(match, "expected a concrete panel option");
+  return match.value;
+}
+
+test("sole available panel stays behind neutral placeholder until explicit selector change", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  let productCalls = 0;
+  const requests = [];
+  let lastCommand = null;
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext({ workflowPhase: "structure" }),
+    isProductBusy: () => false,
+    executeDockCommand: async (payload) => {
+      productCalls += 1;
+      lastCommand = payload;
+      return { ok: true };
+    },
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      requests.push({ path, method: init.method ?? "GET", body: init.body == null ? null : JSON.parse(init.body) });
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/events") {
+        return jsonResponse(201, {
+          event: { ...JSON.parse(init.body), seq: requests.length, occurredAt: "2026-10-13T12:00:00.000Z" },
+        });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+
+  const solePanel = {
+    displayFrameNumber: 1,
+    displayFrameId: "display-sole",
+    structureFrameId: "structure-sole",
+    structureSegmentIndex: 0,
+    panelIndex: 0,
+  };
+  dock.setAvailableTargets({
+    storyboardAvailable: false,
+    panels: [solePanel],
+  });
+
+  assert.equal(dock.isCommandTargetUnsupported(), true);
+  const select = document.querySelector("#research-commands-target");
+  assert.equal(select.value, "");
+  assert.match(select.children[0].textContent, /выберите цель явно/i);
+  assert.notEqual(select.value, panelOptionValue(select));
+  assert.match(document.querySelector("#research-commands-target-label").textContent, /недоступ|устарел|явно/i);
+
+  document.querySelector("#research-commands-draft").value = "до явного выбора";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(productCalls, 0);
+  assert.equal(requests.some((entry) => entry.path === "/api/research/events"), false);
+
+  const panelValue = panelOptionValue(select);
+  select.value = panelValue;
+  select.dispatchEvent({ type: "change" });
+  assert.equal(dock.isCommandTargetUnsupported(), false);
+  const target = dock.getCommandTarget();
+  assert.equal(target.kind, "panel");
+  assert.equal(target.displayFrameId, "display-sole");
+  assert.equal(target.structureFrameId, "structure-sole");
+  assert.equal(target.structureSegmentIndex, 0);
+  assert.equal(target.panelIndex, 0);
+  assert.equal(select.value, panelValue);
+
+  document.querySelector("#research-commands-draft").value = "после явного выбора";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(productCalls, 1);
+  assert.ok(lastCommand);
+  assert.equal(lastCommand.commandTarget.kind, "panel");
+  assert.equal(lastCommand.commandTarget.structureSegmentIndex, 0);
+  assert.equal(lastCommand.commandTarget.displayFrameId, "display-sole");
+});
+
+test("stale panel returns selector to neutral placeholder instead of auto-selecting replacement", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  let productCalls = 0;
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    isProductBusy: () => false,
+    executeDockCommand: async () => {
+      productCalls += 1;
+      return { ok: true };
+    },
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+
+  dock.setAvailableTargets({
+    storyboardAvailable: false,
+    panels: [{
+      displayFrameNumber: 1,
+      displayFrameId: "display-old",
+      structureFrameId: "structure-old",
+      structureSegmentIndex: 0,
+      panelIndex: 0,
+    }],
+  });
+  const select = document.querySelector("#research-commands-target");
+  select.value = panelOptionValue(select);
+  select.dispatchEvent({ type: "change" });
+  assert.equal(dock.getCommandTarget().displayFrameId, "display-old");
+  assert.equal(dock.isCommandTargetUnsupported(), false);
+
+  dock.setAvailableTargets({
+    storyboardAvailable: false,
+    panels: [{
+      displayFrameNumber: 2,
+      displayFrameId: "display-new",
+      structureFrameId: "structure-new",
+      structureSegmentIndex: 1,
+      panelIndex: 0,
+    }],
+  });
+  assert.equal(dock.isCommandTargetUnsupported(), true);
+  assert.equal(select.value, "");
+  assert.match(select.children[0].textContent, /выберите цель явно/i);
+  assert.equal(dock.getCommandTarget().displayFrameId, "display-old");
+  assert.notEqual(select.value, panelOptionValue(select));
+
+  document.querySelector("#research-commands-draft").value = "stale";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(productCalls, 0);
+
+  select.value = panelOptionValue(select);
+  select.dispatchEvent({ type: "change" });
+  assert.equal(dock.isCommandTargetUnsupported(), false);
+  assert.equal(dock.getCommandTarget().displayFrameId, "display-new");
+  assert.equal(dock.getCommandTarget().structureSegmentIndex, 1);
+});
+
+test("panel target key and matching distinguish structureSegmentIndex including zero", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+
+  const segmentZero = {
+    displayFrameNumber: 1,
+    displayFrameId: "display-same",
+    structureFrameId: "structure-same",
+    structureSegmentIndex: 0,
+    panelIndex: 0,
+  };
+  const segmentOne = {
+    displayFrameNumber: 1,
+    displayFrameId: "display-same",
+    structureFrameId: "structure-same",
+    structureSegmentIndex: 1,
+    panelIndex: 0,
+  };
+  dock.setAvailableTargets({
+    storyboardAvailable: false,
+    panels: [segmentZero, segmentOne],
+  });
+  const select = document.querySelector("#research-commands-target");
+  const values = select.children
+    .filter((option) => option.value)
+    .map((option) => option.value);
+  assert.equal(values.length, 2);
+  assert.notEqual(values[0], values[1]);
+  assert.equal(values.some((value) => value.includes(":0:") || value.endsWith(":0") || /:0(:|$)/.test(value)), true);
+
+  select.value = values[0];
+  select.dispatchEvent({ type: "change" });
+  assert.equal(dock.getCommandTarget().structureSegmentIndex, 0);
+
+  dock.setAvailableTargets({
+    storyboardAvailable: false,
+    panels: [segmentOne],
+  });
+  assert.equal(dock.isCommandTargetUnsupported(), true);
+  assert.equal(select.value, "");
+
+  select.value = panelOptionValue(select);
+  select.dispatchEvent({ type: "change" });
+  assert.equal(dock.getCommandTarget().structureSegmentIndex, 1);
+  assert.equal(dock.isCommandTargetUnsupported(), false);
+
+  dock.setAvailableTargets({
+    storyboardAvailable: false,
+    panels: [segmentZero, segmentOne],
+  });
+  assert.equal(dock.getCommandTarget().structureSegmentIndex, 1);
+  assert.equal(dock.isCommandTargetUnsupported(), false);
+  assert.equal(select.value, values.find((value) => value !== values[0]) || select.value);
+});
+
+test("valid storyboard default and explicit panel selection stay stable across ambient refreshes", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 1,
+      displayFrameId: "d1",
+      structureFrameId: "s1",
+      structureSegmentIndex: 0,
+      panelIndex: 0,
+    }],
+  });
+  const select = document.querySelector("#research-commands-target");
+  assert.equal(dock.getCommandTarget().kind, "storyboard");
+  assert.equal(dock.isCommandTargetUnsupported(), false);
+  assert.equal(select.value, "storyboard");
+
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 2,
+      displayFrameId: "d2",
+      structureFrameId: "s2",
+      structureSegmentIndex: 1,
+      panelIndex: 1,
+    }],
+  });
+  assert.equal(dock.getCommandTarget().kind, "storyboard");
+  assert.equal(select.value, "storyboard");
+
+  select.value = panelOptionValue(select);
+  select.dispatchEvent({ type: "change" });
+  const explicit = structuredClone(dock.getCommandTarget());
+  assert.equal(explicit.kind, "panel");
+  assert.equal(explicit.structureSegmentIndex, 1);
+
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 2,
+      displayFrameId: "d2",
+      structureFrameId: "s2",
+      structureSegmentIndex: 1,
+      panelIndex: 1,
+    }, {
+      displayFrameNumber: 3,
+      displayFrameId: "d3",
+      structureFrameId: "s3",
+      structureSegmentIndex: 0,
+      panelIndex: 0,
+    }],
+  });
+  assert.deepEqual(dock.getCommandTarget(), explicit);
+  assert.equal(dock.isCommandTargetUnsupported(), false);
+  assert.equal(select.value, panelOptionValue(select, (option) => option.value.includes("d2")));
+});
