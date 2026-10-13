@@ -19,21 +19,28 @@ const CONTEXT_KEYS = [
 
 function createElement(tag = "div") {
   const listeners = new Map();
+  const styleTarget = {};
   const element = {
     tagName: String(tag).toUpperCase(),
     id: "",
     hidden: false,
     textContent: "",
+    title: "",
     value: "",
     dataset: {},
-    style: {},
     className: "",
     disabled: false,
     children: [],
     parentNode: null,
+    offsetWidth: 360,
+    offsetHeight: 300,
+    _capturedPointer: null,
     getAttribute(name) {
       if (name === "data-research-allow") return this.dataset.researchAllow ?? null;
       if (name === "aria-expanded") return this.dataset.ariaExpanded ?? this.getAttribute?.["_aria-expanded"] ?? null;
+      if (name === "aria-label") return this.attrs?.["aria-label"] ?? null;
+      if (name === "title") return this.title || this.attrs?.title || null;
+      if (name === "hidden") return this.hidden ? "" : null;
       return this.attrs?.[name] ?? null;
     },
     setAttribute(name, value) {
@@ -41,6 +48,13 @@ function createElement(tag = "div") {
       this.attrs[name] = String(value);
       if (name === "data-research-allow") this.dataset.researchAllow = String(value);
       if (name === "aria-expanded") this.dataset.ariaExpanded = String(value);
+      if (name === "aria-label") this.attrs["aria-label"] = String(value);
+      if (name === "title") this.title = String(value);
+      if (name === "hidden") this.hidden = value !== null && value !== undefined;
+    },
+    removeAttribute(name) {
+      if (name === "hidden") this.hidden = false;
+      if (this.attrs) delete this.attrs[name];
     },
     addEventListener(type, listener) {
       const list = listeners.get(type) ?? [];
@@ -48,7 +62,32 @@ function createElement(tag = "div") {
       listeners.set(type, list);
     },
     dispatchEvent(event) {
-      for (const listener of listeners.get(event.type) ?? []) listener(event);
+      const payload = event && typeof event === "object" ? event : { type: event };
+      if (payload.type == null && typeof event === "string") payload.type = event;
+      for (const listener of listeners.get(payload.type) ?? []) listener(payload);
+      return true;
+    },
+    setPointerCapture(pointerId) {
+      this._capturedPointer = pointerId;
+    },
+    releasePointerCapture(pointerId) {
+      if (this._capturedPointer === pointerId) this._capturedPointer = null;
+    },
+    hasPointerCapture(pointerId) {
+      return this._capturedPointer === pointerId;
+    },
+    getBoundingClientRect() {
+      const width = Number.parseFloat(this.style.width) || this.offsetWidth || 0;
+      const height = Number.parseFloat(this.style.height) || this.offsetHeight || 0;
+      // Prefer globalThis metrics — do not create globalThis.window (overflow.mjs
+      // switches to a browser-only /frame-renderer.mjs import when window exists).
+      const vw = Number(globalThis.innerWidth) || Number(globalThis.window?.innerWidth) || 1024;
+      const vh = Number(globalThis.innerHeight) || Number(globalThis.window?.innerHeight) || 768;
+      const right = vw - 16;
+      const bottom = vh - 16;
+      const left = right - width;
+      const top = bottom - height;
+      return { width, height, left, top, right, bottom, x: left, y: top };
     },
     replaceChildren(...nodes) {
       for (const child of this.children) child.parentNode = null;
@@ -73,17 +112,47 @@ function createElement(tag = "div") {
       if (node === this) return true;
       return this.children.some((child) => child.contains?.(node) || child === node);
     },
-    querySelector() {
+    querySelector(selector) {
+      if (!selector?.startsWith("#")) return null;
+      const id = selector.slice(1);
+      const stack = [...this.children];
+      while (stack.length) {
+        const node = stack.shift();
+        if (node?.id === id) return node;
+        if (node?.children?.length) stack.push(...node.children);
+      }
       return null;
     },
   };
+  element.style = new Proxy(styleTarget, {
+    set(target, prop, value) {
+      target[prop] = value;
+      if (prop === "width") {
+        const parsed = Number.parseFloat(value);
+        if (Number.isFinite(parsed)) element.offsetWidth = parsed;
+      }
+      if (prop === "height") {
+        const parsed = Number.parseFloat(value);
+        if (Number.isFinite(parsed)) element.offsetHeight = parsed;
+      }
+      return true;
+    },
+    get(target, prop) {
+      if (prop === "removeProperty") {
+        return (name) => {
+          delete target[name];
+        };
+      }
+      return target[prop];
+    },
+  });
   return element;
 }
 
 function installDockDocument(html) {
   const elements = new Map();
   for (const match of html.matchAll(/\bid="([^"]+)"/g)) {
-    const el = createElement();
+    const el = createElement(match[1] === "research-dock-resize" || match[1] === "research-dock-toggle" || match[1] === "close-detail" || match[1] === "next-frame" ? "button" : "div");
     el.id = match[1];
     elements.set(match[1], el);
   }
@@ -91,11 +160,19 @@ function installDockDocument(html) {
   if (notesSend && /id="research-notes-send"[^>]*data-research-allow="notes-send"|data-research-allow="notes-send"[^>]*id="research-notes-send"/.test(html)) {
     notesSend.setAttribute("data-research-allow", "notes-send");
   }
+  const resizeGrip = elements.get("research-dock-resize");
+  if (resizeGrip) {
+    const aria = html.match(/id="research-dock-resize"[^>]*aria-label="([^"]+)"|aria-label="([^"]+)"[^>]*id="research-dock-resize"/);
+    const title = html.match(/id="research-dock-resize"[^>]*title="([^"]+)"|title="([^"]+)"[^>]*id="research-dock-resize"/);
+    if (aria) resizeGrip.setAttribute("aria-label", aria[1] || aria[2]);
+    if (title) resizeGrip.setAttribute("title", title[1] || title[2]);
+  }
   const body = createElement("body");
   body.id = "body";
   const host = elements.get("research-dock-host");
   const dock = elements.get("research-dock");
   const detail = elements.get("detail");
+  const detailScroll = elements.get("detail-scroll");
   if (host && dock) {
     host.appendChild(dock);
     body.appendChild(host);
@@ -110,12 +187,21 @@ function installDockDocument(html) {
       detail.dispatchEvent({ type: "close" });
     };
     body.appendChild(detail);
+    if (detailScroll) {
+      detail.appendChild(detailScroll);
+      for (const id of ["detail-frame", "detail-outside", "detail-panel-controls", "next-frame", "close-detail"]) {
+        const child = elements.get(id);
+        if (child) detailScroll.appendChild(child);
+      }
+    }
   }
   for (const [id, el] of elements) {
     if (id.startsWith("research-") && id !== "research-dock" && id !== "research-dock-host" && dock) {
       dock.appendChild(el);
     }
   }
+  if (globalThis.innerWidth == null) globalThis.innerWidth = 1024;
+  if (globalThis.innerHeight == null) globalThis.innerHeight = 768;
   globalThis.document = {
     body,
     querySelector(selector) {
@@ -125,6 +211,10 @@ function installDockDocument(html) {
     createElement,
   };
   return elements;
+}
+
+function pointerEvent(type, { clientX, clientY, pointerId = 1 } = {}) {
+  return { type, clientX, clientY, pointerId, pointerType: "mouse", button: 0, buttons: type === "pointerup" ? 0 : 1 };
 }
 
 function jsonResponse(status, payload) {
@@ -2043,9 +2133,10 @@ test("T035 Notes Commands Operations render Russian UTC+3 timestamps", async () 
 test("T035 expanded dock is resizable; collapsed handle is fixed; same-page restore; no persistence", async () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
-  assert.match(css, /#research-dock\s*\{[^}]*resize:\s*both/s);
-  assert.match(css, /#research-dock\.research-dock--collapsed\s*\{[^}]*resize:\s*none/s);
-  assert.match(css, /#research-dock\.research-dock--collapsed\s*\{[^}]*width:\s*\d+px/s);
+  assert.match(html, /id="research-dock-resize"/);
+  assert.equal(/#research-dock\s*\{[^}]*resize:\s*both/s.test(css), false);
+  assert.match(css, /#research-dock\.research-dock--collapsed\s*\{[^}]*width:\s*148px/s);
+  assert.match(css, /#research-dock\.research-dock--collapsed\s*\{[^}]*height:\s*40px/s);
   assert.equal(/localStorage|sessionStorage|document\.cookie/.test(
     readFileSync(new URL("../public/research-dock.mjs", import.meta.url), "utf8"),
   ), false);
@@ -2059,7 +2150,7 @@ test("T035 expanded dock is resizable; collapsed handle is fixed; same-page rest
   };
   const { bindResearchDock } = await import("../public/research-dock.mjs");
   const root = document.querySelector("#research-dock");
-  root.style = {};
+  const grip = document.querySelector("#research-dock-resize");
   const dock = bindResearchDock({
     root,
     host: document.querySelector("#research-dock-host"),
@@ -2068,13 +2159,13 @@ test("T035 expanded dock is resizable; collapsed handle is fixed; same-page rest
     fetchImpl: emptyTraceFetch(),
   });
   await dock.ready;
-  root.style.width = "420px";
-  root.style.height = "380px";
-  if (typeof dock.rememberExpandedSizeFromDom === "function") {
-    dock.rememberExpandedSizeFromDom();
-  } else {
-    dock.recordExpandedSize?.({ width: "420px", height: "380px" });
-  }
+  root.offsetWidth = 360;
+  root.offsetHeight = 300;
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 200, clientY: 200 }));
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: 140, clientY: 120 }));
+  grip.dispatchEvent(pointerEvent("pointerup", { clientX: 140, clientY: 120 }));
+  assert.equal(root.style.width, "420px");
+  assert.equal(root.style.height, "380px");
   dock.setCollapsed(true);
   assert.match(root.className, /collapsed/);
   assert.equal(root.style.width === "420px", false);
@@ -2517,4 +2608,238 @@ test("Commands history renders panel subject from context and gracefully without
   assert.match(historyText, /кадр 3, панель 1/);
   assert.match(historyText, /без субъекта/);
   assert.equal(/кадр 3, панель 1 —/.test(historyText), false);
+});
+
+// --- Usable pointer resize + modal clipping correction ---
+
+test("production markup has one Russian-labelled research dock resize grip", () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const grips = [...html.matchAll(/\bid="research-dock-resize"/g)];
+  assert.equal(grips.length, 1);
+  assert.equal([...html.matchAll(/\bid="research-dock"/g)].length, 1);
+  const gripChunk = html.slice(html.indexOf('id="research-dock-resize"') - 80, html.indexOf('id="research-dock-resize"') + 220);
+  assert.match(gripChunk, /aria-label="[^"]*[Рр]азмер[^"]*"/);
+  assert.match(gripChunk, /title="[^"]*[Рр]азмер|перетян|измен[^"]*"/i);
+});
+
+test("expanded resize grip is visible with nwse-resize cursor; collapsed grip is suppressed", async () => {
+  const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
+  assert.match(css, /\.research-dock-resize\s*\{[^}]*cursor:\s*nwse-resize/s);
+  assert.match(css, /#research-dock\.research-dock--collapsed[\s\S]*?\.research-dock-resize\s*\{[^}]*display:\s*none/s);
+  assert.equal(/#research-dock\s*\{[^}]*resize:\s*both/s.test(css), false);
+
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => ({}),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+  const grip = document.querySelector("#research-dock-resize");
+  assert.equal(Boolean(grip), true);
+  assert.equal(grip.hidden, false);
+  dock.setCollapsed(true);
+  assert.equal(grip.hidden, true);
+  dock.setCollapsed(false);
+  assert.equal(grip.hidden, false);
+});
+
+test("pointer drag on top-left grip increases width when dragged left and height when dragged up", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock } = await import("../public/research-dock.mjs");
+  const root = document.querySelector("#research-dock");
+  const grip = document.querySelector("#research-dock-resize");
+  root.offsetWidth = 360;
+  root.offsetHeight = 300;
+  const dock = bindResearchDock({
+    root,
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => ({}),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 500, clientY: 400 }));
+  assert.equal(grip.hasPointerCapture(1), true);
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: 440, clientY: 340 }));
+  grip.dispatchEvent(pointerEvent("pointerup", { clientX: 440, clientY: 340 }));
+  assert.equal(root.style.width, "420px");
+  assert.equal(root.style.height, "360px");
+  assert.equal(grip.hasPointerCapture(1), false);
+  assert.equal(dock.getRememberedExpandedSize()?.width, "420px");
+  assert.equal(dock.getRememberedExpandedSize()?.height, "360px");
+});
+
+test("pointercancel releases capture and leaves no active drag state", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock } = await import("../public/research-dock.mjs");
+  const root = document.querySelector("#research-dock");
+  const grip = document.querySelector("#research-dock-resize");
+  root.offsetWidth = 360;
+  root.offsetHeight = 300;
+  const dock = bindResearchDock({
+    root,
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => ({}),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 500, clientY: 400 }));
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: 470, clientY: 370 }));
+  grip.dispatchEvent(pointerEvent("pointercancel", { clientX: 470, clientY: 370 }));
+  assert.equal(grip.hasPointerCapture(1), false);
+  const widthAfterCancel = root.style.width;
+  const heightAfterCancel = root.style.height;
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: 100, clientY: 100 }));
+  assert.equal(root.style.width, widthAfterCancel);
+  assert.equal(root.style.height, heightAfterCancel);
+  assert.equal(dock.isCollapsed(), false);
+});
+
+test("pointer resize clamps to named minimums and viewport-safe maximums", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  globalThis.innerWidth = 800;
+  globalThis.innerHeight = 600;
+  const { bindResearchDock, RESEARCH_DOCK_MIN_WIDTH, RESEARCH_DOCK_MIN_HEIGHT } = await import("../public/research-dock.mjs");
+  assert.equal(typeof RESEARCH_DOCK_MIN_WIDTH, "number");
+  assert.equal(typeof RESEARCH_DOCK_MIN_HEIGHT, "number");
+  assert.ok(RESEARCH_DOCK_MIN_WIDTH >= 200);
+  assert.ok(RESEARCH_DOCK_MIN_HEIGHT >= 120);
+  const root = document.querySelector("#research-dock");
+  const grip = document.querySelector("#research-dock-resize");
+  root.offsetWidth = 360;
+  root.offsetHeight = 300;
+  const dock = bindResearchDock({
+    root,
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => ({}),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 400, clientY: 300 }));
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: 4000, clientY: 3000 }));
+  grip.dispatchEvent(pointerEvent("pointerup", { clientX: 4000, clientY: 3000 }));
+  assert.equal(root.style.width, `${RESEARCH_DOCK_MIN_WIDTH}px`);
+  assert.equal(root.style.height, `${RESEARCH_DOCK_MIN_HEIGHT}px`);
+
+  root.offsetWidth = RESEARCH_DOCK_MIN_WIDTH;
+  root.offsetHeight = RESEARCH_DOCK_MIN_HEIGHT;
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 400, clientY: 300 }));
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: -4000, clientY: -4000 }));
+  grip.dispatchEvent(pointerEvent("pointerup", { clientX: -4000, clientY: -4000 }));
+  const maxW = Number.parseFloat(root.style.width);
+  const maxH = Number.parseFloat(root.style.height);
+  assert.ok(maxW <= globalThis.innerWidth - 32);
+  assert.ok(maxH <= globalThis.innerHeight - 32);
+  const rect = root.getBoundingClientRect();
+  assert.ok(rect.left >= 0);
+  assert.ok(rect.top >= 0);
+  assert.ok(rect.right <= globalThis.innerWidth);
+  assert.ok(rect.bottom <= globalThis.innerHeight);
+});
+
+test("pointer resize works on host, inside open detail, and after restore; collapse restores last size", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock } = await import("../public/research-dock.mjs");
+  const root = document.querySelector("#research-dock");
+  const grip = document.querySelector("#research-dock-resize");
+  const host = document.querySelector("#research-dock-host");
+  const detail = document.querySelector("#detail");
+  const scroll = document.querySelector("#detail-scroll");
+  root.offsetWidth = 360;
+  root.offsetHeight = 300;
+  const dock = bindResearchDock({
+    root,
+    host,
+    detail,
+    getContext: () => ({}),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 300, clientY: 300 }));
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: 250, clientY: 250 }));
+  grip.dispatchEvent(pointerEvent("pointerup", { clientX: 250, clientY: 250 }));
+  assert.equal(root.style.width, "410px");
+  assert.equal(root.style.height, "350px");
+
+  detail.showModal();
+  dock.enterDetail();
+  assert.equal(detail.contains(root), true);
+  assert.equal(scroll.contains(root), false);
+  assert.equal(host.contains(root), false);
+  root.offsetWidth = 410;
+  root.offsetHeight = 350;
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 300, clientY: 300 }));
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: 280, clientY: 260 }));
+  grip.dispatchEvent(pointerEvent("pointerup", { clientX: 280, clientY: 260 }));
+  assert.equal(root.style.width, "430px");
+  assert.equal(root.style.height, "390px");
+
+  detail.close();
+  assert.equal(host.contains(root), true);
+  root.offsetWidth = 430;
+  root.offsetHeight = 390;
+  grip.dispatchEvent(pointerEvent("pointerdown", { clientX: 300, clientY: 300 }));
+  grip.dispatchEvent(pointerEvent("pointermove", { clientX: 290, clientY: 290 }));
+  grip.dispatchEvent(pointerEvent("pointerup", { clientX: 290, clientY: 290 }));
+  assert.equal(root.style.width, "440px");
+  assert.equal(root.style.height, "400px");
+
+  dock.setCollapsed(true);
+  assert.match(root.className, /collapsed/);
+  assert.equal(root.style.width === "440px", false);
+  assert.equal(grip.hidden, true);
+  dock.setCollapsed(false);
+  assert.equal(root.style.width, "440px");
+  assert.equal(root.style.height, "400px");
+  assert.equal(grip.hidden, false);
+});
+
+test("detail scroll wrapper owns product scrolling; dock stays outside clipped content and controls remain reachable", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
+  assert.match(html, /id="detail-scroll"/);
+  assert.match(html, /id="detail-scroll"[\s\S]*class="detail-layout"/);
+  assert.match(html, /id="detail-scroll"[\s\S]*class="dialog-actions"/);
+  assert.match(css, /#detail-scroll\s*\{[^}]*overflow:\s*auto/s);
+  assert.match(css, /#detail\s*\{[^}]*overflow:\s*visible/s);
+  assert.equal(/#detail\s*\{[^}]*overflow:\s*auto/s.test(css), false);
+
+  installDockDocument(html);
+  const detail = document.querySelector("#detail");
+  const scroll = document.querySelector("#detail-scroll");
+  const dock = document.querySelector("#research-dock");
+  const closeBtn = document.querySelector("#close-detail");
+  const nextBtn = document.querySelector("#next-frame");
+  const panelControls = document.querySelector("#detail-panel-controls");
+  assert.equal(Boolean(scroll), true);
+  assert.equal(scroll.contains(closeBtn), true);
+  assert.equal(scroll.contains(nextBtn), true);
+  assert.equal(scroll.contains(panelControls), true);
+  assert.equal(scroll.contains(dock), false);
+
+  const { reparentDockIntoDetail, restoreDockToHost } = await import("../public/research-dock.mjs");
+  reparentDockIntoDetail({ dock, detail });
+  assert.equal(detail.contains(dock), true);
+  assert.equal(scroll.contains(dock), false);
+  assert.equal(scroll.contains(closeBtn), true);
+  const rect = dock.getBoundingClientRect();
+  assert.ok(rect.left >= 0);
+  assert.ok(rect.top >= 0);
+  assert.ok(rect.right <= (globalThis.innerWidth || 1024));
+  assert.ok(rect.bottom <= (globalThis.innerHeight || 768));
+  restoreDockToHost({ dock, host: document.querySelector("#research-dock-host") });
+  assert.equal(document.querySelector("#research-dock-host").contains(dock), true);
 });

@@ -13,6 +13,11 @@ export const CONTEXT_KEYS = [
   "anchorVersionId",
 ];
 
+/** Expanded dock minimums for pointer resize (viewport-safe clamp uses live window size). */
+export const RESEARCH_DOCK_MIN_WIDTH = 240;
+export const RESEARCH_DOCK_MIN_HEIGHT = 160;
+export const RESEARCH_DOCK_VIEWPORT_MARGIN = 16;
+
 const COMMAND_TARGET_KEYS = [
   "kind",
   "displayFrameNumber",
@@ -383,6 +388,7 @@ export function bindResearchDock({
   const commandsUnavailable = document.querySelector("#research-commands-unavailable");
   const operationsList = document.querySelector("#research-operations-list");
   const toggle = document.querySelector("#research-dock-toggle");
+  const resizeGrip = document.querySelector("#research-dock-resize");
 
   let collapsed = false;
   let notes = [];
@@ -392,6 +398,7 @@ export function bindResearchDock({
   let live = null;
   let sendingNote = false;
   let sendingCommand = false;
+  let resizeDrag = null;
   let availableTargets = { storyboardAvailable: false, panels: [] };
   let stickyTarget = null;
   let targetUnsupported = false;
@@ -615,11 +622,94 @@ export function bindResearchDock({
     }
   }
 
+  function viewportSafeMaxSize() {
+    const view = globalThis.window || globalThis;
+    const vw = Number(view.innerWidth) || Number(globalThis.innerWidth) || 0;
+    const vh = Number(view.innerHeight) || Number(globalThis.innerHeight) || 0;
+    const margin = RESEARCH_DOCK_VIEWPORT_MARGIN;
+    return {
+      maxWidth: Math.max(RESEARCH_DOCK_MIN_WIDTH, vw - margin * 2),
+      maxHeight: Math.max(RESEARCH_DOCK_MIN_HEIGHT, vh - margin * 2),
+    };
+  }
+
+  function clampDockSize(width, height) {
+    const { maxWidth, maxHeight } = viewportSafeMaxSize();
+    return {
+      width: Math.min(maxWidth, Math.max(RESEARCH_DOCK_MIN_WIDTH, width)),
+      height: Math.min(maxHeight, Math.max(RESEARCH_DOCK_MIN_HEIGHT, height)),
+    };
+  }
+
+  function applyExpandedSize(width, height) {
+    if (!root || collapsed) return;
+    const clamped = clampDockSize(width, height);
+    root.style.width = `${Math.round(clamped.width)}px`;
+    root.style.height = `${Math.round(clamped.height)}px`;
+    rememberedExpandedSize = {
+      width: root.style.width,
+      height: root.style.height,
+    };
+  }
+
+  function endResizeDrag(event) {
+    if (!resizeDrag) return;
+    const pointerId = event?.pointerId ?? resizeDrag.pointerId;
+    if (resizeGrip && typeof resizeGrip.releasePointerCapture === "function" && pointerId != null) {
+      try {
+        resizeGrip.releasePointerCapture(pointerId);
+      } catch {
+        // Pointer may already be released.
+      }
+    }
+    resizeDrag = null;
+    rememberExpandedSizeFromDom();
+  }
+
+  function onResizePointerDown(event) {
+    if (collapsed || !root || !resizeGrip) return;
+    if (event?.button != null && event.button !== 0) return;
+    const pointerId = event?.pointerId ?? 1;
+    const startWidth = Number(root.offsetWidth) || Number.parseFloat(root.style?.width) || RESEARCH_DOCK_MIN_WIDTH;
+    const startHeight = Number(root.offsetHeight) || Number.parseFloat(root.style?.height) || RESEARCH_DOCK_MIN_HEIGHT;
+    resizeDrag = {
+      pointerId,
+      startX: Number(event?.clientX) || 0,
+      startY: Number(event?.clientY) || 0,
+      startWidth,
+      startHeight,
+    };
+    if (typeof event?.preventDefault === "function") event.preventDefault();
+    if (typeof resizeGrip.setPointerCapture === "function") {
+      try {
+        resizeGrip.setPointerCapture(pointerId);
+      } catch {
+        // Harness or detached node may not support capture.
+      }
+    }
+  }
+
+  function onResizePointerMove(event) {
+    if (!resizeDrag || collapsed || !root) return;
+    if (event?.pointerId != null && event.pointerId !== resizeDrag.pointerId) return;
+    const currentX = Number(event?.clientX) || 0;
+    const currentY = Number(event?.clientY) || 0;
+    const nextWidth = resizeDrag.startWidth + (resizeDrag.startX - currentX);
+    const nextHeight = resizeDrag.startHeight + (resizeDrag.startY - currentY);
+    applyExpandedSize(nextWidth, nextHeight);
+  }
+
+  function syncResizeGripVisibility() {
+    if (!resizeGrip) return;
+    resizeGrip.hidden = Boolean(collapsed);
+  }
+
   function setCollapsed(next) {
     const becomingCollapsed = Boolean(next);
     if (becomingCollapsed && !collapsed) {
       rememberExpandedSizeFromDom();
       clearInlineDockSize();
+      endResizeDrag();
     }
     collapsed = becomingCollapsed;
     if (root) {
@@ -633,6 +723,7 @@ export function bindResearchDock({
     if (!collapsed) {
       applyRememberedExpandedSize();
     }
+    syncResizeGripVisibility();
     if (toggle) {
       setElementAttribute(toggle, "aria-expanded", collapsed ? "false" : "true");
       toggle.textContent = collapsed ? "Research ▴" : "Research ▾";
@@ -970,13 +1061,11 @@ export function bindResearchDock({
       setCollapsed(!collapsed);
     });
   }
-  if (root && typeof root.addEventListener === "function") {
-    root.addEventListener("mouseup", () => {
-      if (!collapsed) rememberExpandedSizeFromDom();
-    });
-    root.addEventListener("pointerup", () => {
-      if (!collapsed) rememberExpandedSizeFromDom();
-    });
+  if (resizeGrip && typeof resizeGrip.addEventListener === "function") {
+    resizeGrip.addEventListener("pointerdown", onResizePointerDown);
+    resizeGrip.addEventListener("pointermove", onResizePointerMove);
+    resizeGrip.addEventListener("pointerup", endResizeDrag);
+    resizeGrip.addEventListener("pointercancel", endResizeDrag);
   }
   if (detail) {
     detail.addEventListener("close", () => {

@@ -83,6 +83,13 @@
   </main>
   <div id="research-dock-host">
     <aside id="research-dock" class="research-dock" aria-label="Research workspace">
+      <button
+        type="button"
+        id="research-dock-resize"
+        class="research-dock-resize"
+        aria-label="Изменить размер панели Research"
+        title="Перетащите, чтобы изменить размер"
+      ></button>
       <button type="button" id="research-dock-toggle" class="research-dock-toggle" aria-expanded="true" aria-controls="research-dock-body">
         Research
       </button>
@@ -122,14 +129,16 @@
     </aside>
   </div>
   <dialog id="detail">
-    <div class="detail-layout">
-      <div id="detail-frame" class="frame-host"></div>
-      <p id="detail-outside" class="outside-frame"></p>
-      <div id="detail-panel-controls" class="panel-controls"></div>
-    </div>
-    <div class="dialog-actions">
-      <button id="next-frame" type="button" hidden>Продолжить к следующему кадру</button>
-      <button id="close-detail" type="button" class="secondary">Закрыть</button>
+    <div id="detail-scroll" class="detail-scroll">
+      <div class="detail-layout">
+        <div id="detail-frame" class="frame-host"></div>
+        <p id="detail-outside" class="outside-frame"></p>
+        <div id="detail-panel-controls" class="panel-controls"></div>
+      </div>
+      <div class="dialog-actions">
+        <button id="next-frame" type="button" hidden>Продолжить к следующему кадру</button>
+        <button id="close-detail" type="button" class="secondary">Закрыть</button>
+      </div>
     </div>
   </dialog>
   <script type="module" src="/app.js"></script>

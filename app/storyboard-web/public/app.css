@@ -160,11 +160,18 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   width: min(1080px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
-  overflow: auto;
+  overflow: visible;
   border: 0;
   border-radius: 16px;
   padding: 20px;
   background: #f3f0e9;
+}
+
+#detail-scroll {
+  max-height: calc(100vh - 72px);
+  overflow: auto;
+  display: grid;
+  gap: 12px;
 }
 
 #detail::backdrop {
@@ -427,7 +434,6 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   height: auto;
   max-height: min(42vh, calc(100vh - 120px));
   overflow: auto;
-  resize: both;
   border: 1px solid #7f878c;
   background: #f7f4ee;
   box-shadow: 0 8px 24px rgba(18, 24, 28, 0.18);
@@ -436,8 +442,26 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
 #detail #research-dock {
   right: 12px;
   bottom: 64px;
-  max-height: min(36vh, calc(100% - 96px));
+  max-height: min(36vh, calc(100vh - 120px));
   z-index: 5;
+}
+
+.research-dock-resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0 4px 0;
+  background:
+    linear-gradient(135deg, transparent 0 42%, #5d656b 42% 48%, transparent 48% 62%, #5d656b 62% 68%, transparent 68%),
+    #d9d3c8;
+  cursor: nwse-resize;
+  touch-action: none;
 }
 
 .research-dock-toggle {
@@ -467,10 +491,10 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   min-width: 148px;
   min-height: 40px;
   overflow: hidden;
-  resize: none;
 }
 
-#research-dock.research-dock--collapsed .research-dock-body {
+#research-dock.research-dock--collapsed .research-dock-body,
+#research-dock.research-dock--collapsed .research-dock-resize {
   display: none;
 }
 
