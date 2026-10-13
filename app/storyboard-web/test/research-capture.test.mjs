@@ -1000,3 +1000,252 @@ test("panel action-specific context stays frozen after navigation in startSnapsh
   assert.notEqual(terminal.startSnapshot.context.panelSubject, "Другой");
   fetchImpl = original;
 });
+
+test("T028 product success with failed terminal research write reports local evidence gap once", async () => {
+  await ensurePage();
+  page.setResearchVisualState(readyVisual());
+  const original = fetchImpl;
+  let terminalPosts = 0;
+  let startPosts = 0;
+  try {
+    fetchImpl = async (url, init = {}) => {
+      const path = new URL(url, "http://127.0.0.1").pathname;
+      if (path === "/api/research/events") {
+        const body = JSON.parse(init.body);
+        if (body.eventKind === "action_start") {
+          startPosts += 1;
+          researchPosts.push(body);
+          return jsonResponse(201, {
+            event: { ...body, seq: startPosts, occurredAt: "2026-10-13T15:00:00.000Z" },
+          });
+        }
+        terminalPosts += 1;
+        return jsonResponse(500, { status: "failed", kind: "database" });
+      }
+      return original(url, init);
+    };
+    document.querySelector("#structure-instruction").value = "правка при сбое evidence";
+    document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(productPosts.some((entry) => entry.path === "/api/visual/storyboard/edit"));
+    assert.equal(startPosts, 1);
+    assert.equal(terminalPosts, 1);
+    assert.equal(researchPosts.some((event) => (
+      event.eventKind === "action_terminal" && event.outcome === "success"
+    )), false);
+    const bound = page.getResearchDock();
+    assert.ok(bound?.getOperationsProjection, "dock seam must expose operations projection");
+    const items = bound.getOperationsProjection();
+    const local = items.filter((item) => item.localOnly === true);
+    assert.ok(local.length >= 1);
+    assert.match(
+      local.at(-1).label || "",
+      /продукт.*выполн|исследован.*не сохран/i,
+    );
+    assert.equal(local.some((item) => item.status === "success"), false);
+  } finally {
+    fetchImpl = original;
+  }
+});
+
+test("T028 panel regenerate failure sets retainedLastGoodImage only when prior asset exists", async () => {
+  await ensurePage();
+  const original = fetchImpl;
+  try {
+    fetchImpl = async (url, init = {}) => {
+      const path = new URL(url, "http://127.0.0.1").pathname;
+      if (/\/panels\/0\/generate$/.test(path)) {
+        return jsonResponse(502, { status: "failed", kind: "provider" });
+      }
+      return original(url, init);
+    };
+
+    researchPosts.length = 0;
+    productPosts.length = 0;
+    page.setResearchVisualState(readyVisual(), 0);
+    let panelSection = document.querySelector("#detail-panel-controls").children[0];
+    let regenerate = [...panelSection.querySelectorAll("button")].find((button) => /панел|Создать|Переделать/i.test(button.textContent));
+    regenerate.dispatchEvent({ type: "click" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const retained = researchPair("panel_generate");
+    assert.equal(retained.terminal.outcome, "failure");
+    assert.equal(retained.terminal.outcomeKind, "provider");
+    assert.equal(retained.terminal.outcomeFlags?.retainedLastGoodImage, true);
+
+    researchPosts.length = 0;
+    page.setResearchVisualState(readyVisual({
+      frames: [{
+        id: "display-1",
+        structureFrameId: "structure-1",
+        structureSegmentIndex: 0,
+        layout: "split2",
+        speakerPanel: 0,
+        dialogue: "Привет",
+        outsideFrameText: "",
+        visualReady: false,
+        panels: [{
+          description: "слева",
+          subject: "Путин",
+          assetId: null,
+          zoom: 1,
+        }, {
+          description: "справа",
+          subject: "Дуров",
+          assetId: null,
+          zoom: 1,
+        }],
+      }],
+    }), 0);
+    panelSection = document.querySelector("#detail-panel-controls").children[0];
+    regenerate = [...panelSection.querySelectorAll("button")].find((button) => /панел|Создать|Переделать/i.test(button.textContent));
+    regenerate.dispatchEvent({ type: "click" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const fresh = researchPair("panel_generate");
+    assert.equal(fresh.terminal.outcome, "failure");
+    assert.equal(fresh.terminal.outcomeKind, "provider");
+    assert.notEqual(fresh.terminal.outcomeFlags?.retainedLastGoodImage, true);
+  } finally {
+    fetchImpl = original;
+  }
+});
+
+test("T028 frame generationFailures write failure terminal with retention only for prior assets", async () => {
+  await ensurePage();
+  const original = fetchImpl;
+  try {
+    fetchImpl = async (url, init = {}) => {
+      const path = new URL(url, "http://127.0.0.1").pathname;
+      if (/\/frames\/[^/]+\/generate$/.test(path)) {
+        return jsonResponse(200, readyVisual({
+          generationFailures: [{ panelIndex: 0, kind: "provider" }],
+          frames: [{
+            id: "display-1",
+            structureFrameId: "structure-1",
+            structureSegmentIndex: 0,
+            layout: "split2",
+            speakerPanel: 0,
+            dialogue: "Привет",
+            outsideFrameText: "",
+            visualReady: true,
+            panels: [{
+              description: "слева",
+              subject: "Путин",
+              assetId: "asset-1",
+              zoom: 1.2,
+            }, {
+              description: "справа",
+              subject: "Дуров",
+              assetId: "asset-2",
+              zoom: 1,
+            }],
+          }],
+        }));
+      }
+      return original(url, init);
+    };
+    researchPosts.length = 0;
+    page.setResearchVisualState(readyVisual(), 0);
+    await page.captureTestGenerateFrame("display-1", 0);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const retained = researchPair("frame_generate");
+    assert.equal(retained.terminal.outcome, "failure");
+    assert.equal(retained.terminal.outcomeKind, "provider");
+    assert.equal(retained.terminal.outcomeFlags?.retainedLastGoodImage, true);
+
+    fetchImpl = async (url, init = {}) => {
+      const path = new URL(url, "http://127.0.0.1").pathname;
+      if (/\/frames\/[^/]+\/generate$/.test(path)) {
+        return jsonResponse(200, readyVisual({
+          generationFailures: [{ panelIndex: 0, kind: "timeout" }],
+          frames: [{
+            id: "display-1",
+            structureFrameId: "structure-1",
+            structureSegmentIndex: 0,
+            layout: "single",
+            speakerPanel: 0,
+            dialogue: "Привет",
+            outsideFrameText: "",
+            visualReady: false,
+            panels: [{
+              description: "слева",
+              subject: "Путин",
+              assetId: null,
+              zoom: 1,
+            }],
+          }],
+        }));
+      }
+      return original(url, init);
+    };
+    researchPosts.length = 0;
+    page.setResearchVisualState(readyVisual({
+      frames: [{
+        id: "display-1",
+        structureFrameId: "structure-1",
+        structureSegmentIndex: 0,
+        layout: "single",
+        speakerPanel: 0,
+        dialogue: "Привет",
+        outsideFrameText: "",
+        visualReady: false,
+        panels: [{
+          description: "слева",
+          subject: "Путин",
+          assetId: null,
+          zoom: 1,
+        }],
+      }],
+    }), 0);
+    await page.captureTestGenerateFrame("display-1", 0);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const fresh = researchPair("frame_generate");
+    assert.equal(fresh.terminal.outcome, "failure");
+    assert.equal(fresh.terminal.outcomeKind, "timeout");
+    assert.notEqual(fresh.terminal.outcomeFlags?.retainedLastGoodImage, true);
+  } finally {
+    fetchImpl = original;
+  }
+});
+
+test("T028 incomplete startSnapshot terminal carries evidenceIncomplete and null durationMs", async () => {
+  await ensurePage();
+  page.setResearchVisualState(readyVisual(), -1);
+  const original = fetchImpl;
+  let researchCalls = 0;
+  try {
+    fetchImpl = async (url, init = {}) => {
+      const path = new URL(url, "http://127.0.0.1").pathname;
+      if (path === "/api/research/events") {
+        researchCalls += 1;
+        const body = JSON.parse(init.body);
+        if (body.eventKind === "action_start") return jsonResponse(500, { status: "failed" });
+        researchPosts.push(body);
+        return jsonResponse(201, {
+          event: {
+            ...body,
+            ...body.startSnapshot,
+            seq: researchCalls,
+            occurredAt: "2026-10-13T15:10:00.000Z",
+            durationMs: null,
+            outcomeFlags: { ...(body.outcomeFlags || {}), evidenceIncomplete: true },
+          },
+        });
+      }
+      return original(url, init);
+    };
+    document.querySelector("#structure-instruction").value = "incomplete evidence path";
+    document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const terminal = researchPosts.find((event) => event.eventKind === "action_terminal");
+    assert.ok(terminal?.startSnapshot);
+    const bound = page.getResearchDock();
+    assert.ok(bound?.getOperationsProjection);
+    const items = bound.getOperationsProjection();
+    assert.equal(items.some((item) => item.status === "running"), false);
+    const incomplete = items.find((item) => item.outcomeFlags?.evidenceIncomplete === true);
+    assert.ok(incomplete);
+    assert.equal(incomplete.durationMs, null);
+  } finally {
+    fetchImpl = original;
+  }
+});

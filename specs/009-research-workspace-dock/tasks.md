@@ -152,13 +152,13 @@
 
 ### Tests
 
-- [ ] T027 [US4] Extend `app/storyboard-web/test/redaction.test.mjs` and/or `research-api.test.mjs` with canaries proving research routes never persist/log/echo secrets from embedded `submittedText` or forbidden keys, and existing draft/visual redaction cases remain green. **FR-030, FR-031, SC-007**. **Done when**: new canaries fail until wiring complete, then pass; legacy redaction still passes. **Proof**: `node --test test/redaction.test.mjs test/research-api.test.mjs`.
+- [X] T027 [US4] Extend `app/storyboard-web/test/redaction.test.mjs` and/or `research-api.test.mjs` with canaries proving research routes never persist/log/echo secrets from embedded `submittedText` or forbidden keys, and existing draft/visual redaction cases remain green. **FR-030, FR-031, SC-007**. **Done when**: new canaries fail until wiring complete, then pass; legacy redaction still passes. **Proof**: `node --test test/redaction.test.mjs test/research-api.test.mjs`.
 
-- [ ] T028 [US4] Extend `app/storyboard-web/test/research-dock.test.mjs` / `research-api.test.mjs` / visual workflow doubles for: Notes research-save failure keeps textarea; product success + failed terminal research write does not claim research success; Operations/local UI show operation `failure` with `retainedLastGoodImage` when applicable; incomplete terminal (`evidenceIncomplete`, `durationMs: null`) does not resume/replay. **FR-018, FR-032–FR-035, SC-005, SC-006**. **Done when**: failing cases exist before final UI polish. **Proof**: focused test output.
+- [X] T028 [US4] Extend `app/storyboard-web/test/research-dock.test.mjs` / `research-api.test.mjs` / visual workflow doubles for: Notes research-save failure keeps textarea; product success + failed terminal research write does not claim research success; Operations/local UI show operation `failure` with `retainedLastGoodImage` when applicable; incomplete terminal (`evidenceIncomplete`, `durationMs: null`) does not resume/replay. **FR-018, FR-032–FR-035, SC-005, SC-006**. **Done when**: failing cases exist before final UI polish. **Proof**: focused test output.
 
 ### Implementation
 
-- [ ] T029 [US4] Implement remaining honest failure UX and flags in `app/storyboard-web/public/research-dock.mjs`, `public/app.js`, and server/store paths so T027–T028 pass; no automatic retry/cancellation/resume. **FR-032–FR-035, SC-005, SC-006**. **Done when**: T027–T028 green. **Proof**: listed test commands.
+- [X] T029 [US4] Implement remaining honest failure UX and flags in `app/storyboard-web/public/research-dock.mjs`, `public/app.js`, and server/store paths so T027–T028 pass; no automatic retry/cancellation/resume. **FR-032–FR-035, SC-005, SC-006**. **Done when**: T027–T028 green. **Proof**: listed test commands.
 
 **Checkpoint**: Failure honesty complete. Suggested Cursor range: **T027–T029**.
 

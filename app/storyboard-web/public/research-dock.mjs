@@ -57,7 +57,9 @@ export function createEmptyEditTarget(editKind, castPhase, overrides = {}) {
   };
 }
 
-export function projectOperations({ live = null, events = [] } = {}) {
+const EVIDENCE_SAVE_FAILURE_LABEL = "Действие продукта выполнено, результат исследования не сохранён.";
+
+export function projectOperations({ live = null, events = [], localEvidenceFailures = [] } = {}) {
   const items = [];
   if (live) {
     items.push({
@@ -67,6 +69,9 @@ export function projectOperations({ live = null, events = [] } = {}) {
       surface: live.surface ?? null,
       occurredAt: live.occurredAt ?? null,
       outcomeKind: null,
+      outcomeFlags: {},
+      durationMs: null,
+      localOnly: false,
       historical: false,
       label: formatOperationLabel({
         status: "running",
@@ -92,6 +97,9 @@ export function projectOperations({ live = null, events = [] } = {}) {
     const status = terminal.outcome === "success" || terminal.outcome === "failure" || terminal.outcome === "blocked"
       ? terminal.outcome
       : "failure";
+    const outcomeFlags = terminal.outcomeFlags && typeof terminal.outcomeFlags === "object"
+      ? { ...terminal.outcomeFlags }
+      : {};
     items.push({
       status,
       correlationId: terminal.correlationId ?? null,
@@ -99,11 +107,15 @@ export function projectOperations({ live = null, events = [] } = {}) {
       surface: terminal.surface ?? null,
       occurredAt: terminal.occurredAt ?? null,
       outcomeKind: terminal.outcomeKind ?? null,
+      outcomeFlags,
+      durationMs: Object.hasOwn(terminal, "durationMs") ? terminal.durationMs : null,
+      localOnly: false,
       historical: false,
       label: formatOperationLabel({
         status,
         semanticAction: terminal.semanticAction,
         outcomeKind: terminal.outcomeKind,
+        outcomeFlags,
       }),
     });
   }
@@ -118,6 +130,9 @@ export function projectOperations({ live = null, events = [] } = {}) {
       surface: start.surface ?? null,
       occurredAt: start.occurredAt ?? null,
       outcomeKind: null,
+      outcomeFlags: {},
+      durationMs: null,
+      localOnly: false,
       historical: true,
       label: formatOperationLabel({
         status: "interrupted",
@@ -127,17 +142,38 @@ export function projectOperations({ live = null, events = [] } = {}) {
     });
   }
 
+  for (const failure of localEvidenceFailures || []) {
+    if (!failure || typeof failure !== "object") continue;
+    items.push({
+      status: "evidence-save-failure",
+      correlationId: failure.correlationId ?? null,
+      semanticAction: failure.semanticAction ?? null,
+      surface: failure.surface ?? null,
+      occurredAt: null,
+      outcomeKind: null,
+      outcomeFlags: {},
+      durationMs: null,
+      localOnly: true,
+      historical: false,
+      label: EVIDENCE_SAVE_FAILURE_LABEL,
+    });
+  }
+
   return items;
 }
 
-function formatOperationLabel({ status, semanticAction, outcomeKind }) {
+function formatOperationLabel({ status, semanticAction, outcomeKind, outcomeFlags = {} }) {
   const action = semanticAction || "operation";
   if (status === "running") return `Выполняется: ${action}`;
   if (status === "success") return `Успех: ${action}`;
   if (status === "interrupted") return `Прервано (историческое): ${action}`;
   if (status === "blocked") return `Блокировано: ${action}`;
+  if (status === "evidence-save-failure") return EVIDENCE_SAVE_FAILURE_LABEL;
   const kind = outcomeKind ? ` (${outcomeKind})` : "";
-  return `Ошибка: ${action}${kind}`;
+  const retained = outcomeFlags?.retainedLastGoodImage === true
+    ? " · показан предыдущий вариант"
+    : "";
+  return `Ошибка: ${action}${kind}${retained}`;
 }
 
 export function reparentDockIntoDetail({ dock, detail }) {
@@ -286,6 +322,7 @@ export function bindResearchDock({
   let notes = [];
   let commandEvents = [];
   let terminalEvents = [];
+  let localEvidenceFailures = [];
   let live = null;
   let sendingNote = false;
   let sendingCommand = false;
@@ -354,11 +391,42 @@ export function bindResearchDock({
   function renderOperations() {
     if (!operationsList) return;
     clearChildren(operationsList);
-    const projection = projectOperations({ live, events: terminalEvents });
+    const projection = projectOperations({
+      live,
+      events: terminalEvents,
+      localEvidenceFailures,
+    });
     for (const item of projection) {
       const stamp = item.occurredAt ? `${item.occurredAt} — ` : "";
       appendTextItem(operationsList, `${stamp}${item.label}`);
     }
+  }
+
+  function reportEvidenceSaveFailure({
+    correlationId = null,
+    semanticAction = null,
+    surface = null,
+    phase = "terminal",
+  } = {}) {
+    const entry = {
+      correlationId,
+      semanticAction,
+      surface,
+      phase,
+    };
+    localEvidenceFailures = [
+      ...localEvidenceFailures.filter((item) => item?.correlationId !== correlationId),
+      entry,
+    ];
+    renderOperations();
+  }
+
+  function clearEvidenceSaveFailure(correlationId) {
+    if (!correlationId) return;
+    const next = localEvidenceFailures.filter((item) => item?.correlationId !== correlationId);
+    if (next.length === localEvidenceFailures.length) return;
+    localEvidenceFailures = next;
+    renderOperations();
   }
 
   function resolveStickyAgainstAvailable() {
@@ -554,7 +622,13 @@ export function bindResearchDock({
         payload = null;
       }
       if (!response.ok || !payload?.event) {
-        setNotesStatus("Не удалось сохранить заметку.", "error");
+        const protectedContent = payload?.kind === "protected-content";
+        setNotesStatus(
+          protectedContent
+            ? "Не удалось сохранить заметку: текст отклонён."
+            : "Не удалось сохранить заметку.",
+          "error",
+        );
         return;
       }
       notes = [...notes, payload.event];
@@ -623,6 +697,14 @@ export function bindResearchDock({
     } catch {
       startSaved = false;
     }
+    if (!startSaved) {
+      reportEvidenceSaveFailure({
+        correlationId,
+        semanticAction,
+        surface: "dock_commands",
+        phase: "start",
+      });
+    }
 
     live = {
       correlationId,
@@ -666,17 +748,36 @@ export function bindResearchDock({
     if (!startSaved) terminalBody.startSnapshot = startSnapshot;
     const terminalEvent = await postResearchEvent(terminalBody);
     if (terminalEvent) {
+      clearEvidenceSaveFailure(correlationId);
       commandEvents = [...commandEvents, terminalEvent];
       terminalEvents = [...terminalEvents, terminalEvent];
       renderCommandsHistory();
       renderOperations();
+    } else if (productOk) {
+      reportEvidenceSaveFailure({
+        correlationId,
+        semanticAction,
+        surface: "dock_commands",
+        phase: "terminal",
+      });
+    } else if (!startSaved) {
+      reportEvidenceSaveFailure({
+        correlationId,
+        semanticAction,
+        surface: "dock_commands",
+        phase: "start",
+      });
     }
 
     live = null;
     renderOperations();
     if (productOk) {
       commandsDraft.value = "";
-      setCommandsStatus("");
+      if (!terminalEvent) {
+        setCommandsStatus(EVIDENCE_SAVE_FAILURE_LABEL, "error");
+      } else {
+        setCommandsStatus("");
+      }
     }
     sendingCommand = false;
   }
@@ -788,7 +889,11 @@ export function bindResearchDock({
     exitDetail,
     isCollapsed: () => collapsed,
     setCollapsed,
-    getOperationsProjection: () => projectOperations({ live, events: terminalEvents }),
+    getOperationsProjection: () => projectOperations({
+      live,
+      events: terminalEvents,
+      localEvidenceFailures,
+    }),
     setLiveOperation(next) {
       live = next ? { ...next } : null;
       renderOperations();
@@ -797,8 +902,11 @@ export function bindResearchDock({
       live = null;
       renderOperations();
     },
+    reportEvidenceSaveFailure,
+    clearEvidenceSaveFailure,
     recordTerminalEvent(event) {
       if (!event) return;
+      if (event.correlationId) clearEvidenceSaveFailure(event.correlationId);
       terminalEvents = [...terminalEvents, event];
       if (event.surface === "dock_commands") {
         commandEvents = [...commandEvents, event];

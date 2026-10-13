@@ -346,3 +346,57 @@ test("storyboard-persist logs and the 504 body omit dialogue, exception text, an
     await close(server);
   }
 });
+
+test("research note protected-content rejection never echoes secrets in body or operational logs", async () => {
+  const { createResearchStore } = await import("../research-store.mjs");
+  const secret = "Bearer redaction-research-canary-token";
+  const logs = [];
+  const researchStore = createResearchStore({ memory: true });
+  const server = createServer({
+    migrate: false,
+    researchStore,
+    logger: { log(line) { logs.push(String(line)); } },
+    projectStore: {
+      async loadProject() {
+        throw new Error("project store unused for research canary");
+      },
+    },
+  });
+  try {
+    const port = await listen(server);
+    const before = await send(port, { method: "GET", path: "/api/research/trace" });
+    assert.equal(before.status, 200);
+    const beforeCount = JSON.parse(before.body).events.length;
+    const response = await send(port, {
+      method: "POST",
+      path: "/api/research/notes",
+      headers: { "content-type": "application/json" },
+      body: json({
+        submittedText: secret,
+        context: {
+          workflowPhase: null,
+          storyboardVersionId: null,
+          displayFrameNumber: null,
+          displayFrameId: null,
+          structureFrameId: null,
+          structureSegmentIndex: null,
+          panelIndex: null,
+          panelSubject: null,
+          imageAssetId: null,
+          generationId: null,
+          characterName: null,
+          anchorVersionId: null,
+        },
+      }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "protected-content" });
+    const captured = [...logs, response.body].join("\n");
+    assert.equal(captured.includes(secret), false);
+    assert.equal(captured.includes("redaction-research-canary-token"), false);
+    const after = await send(port, { method: "GET", path: "/api/research/trace" });
+    assert.equal(JSON.parse(after.body).events.length, beforeCount);
+  } finally {
+    await close(server);
+  }
+});

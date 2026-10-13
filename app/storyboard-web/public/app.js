@@ -250,9 +250,24 @@ function beginProductResearchCapture({
           ...startSnapshot,
         });
         startSaved = Boolean(startEvent);
-        if (startEvent) researchDock?.recordTerminalEvent(startEvent);
+        if (startEvent) {
+          researchDock?.recordTerminalEvent(startEvent);
+        } else {
+          researchDock?.reportEvidenceSaveFailure?.({
+            correlationId,
+            semanticAction,
+            surface: "product_control",
+            phase: "start",
+          });
+        }
       } catch {
         startSaved = false;
+        researchDock?.reportEvidenceSaveFailure?.({
+          correlationId,
+          semanticAction,
+          surface: "product_control",
+          phase: "start",
+        });
       }
       return startSaved;
     },
@@ -268,9 +283,34 @@ function beginProductResearchCapture({
       };
       if (!startSaved) terminalBody.startSnapshot = startSnapshot;
       const terminalEvent = await postResearchEvent(terminalBody);
-      if (terminalEvent) researchDock?.recordTerminalEvent(terminalEvent);
+      if (terminalEvent) {
+        researchDock?.recordTerminalEvent(terminalEvent);
+      } else {
+        researchDock?.reportEvidenceSaveFailure?.({
+          correlationId,
+          semanticAction,
+          surface: "product_control",
+          phase: "terminal",
+        });
+      }
       return terminalEvent;
     },
+  };
+}
+
+function normalizeResearchClassification(classified) {
+  if (!classified || typeof classified !== "object") {
+    return { outcome: "success", outcomeKind: null, outcomeFlags: {} };
+  }
+  const outcome = classified.outcome === "failure" || classified.outcome === "blocked"
+    ? classified.outcome
+    : "success";
+  return {
+    outcome,
+    outcomeKind: typeof classified.outcomeKind === "string" ? classified.outcomeKind : null,
+    outcomeFlags: classified.outcomeFlags && typeof classified.outcomeFlags === "object"
+      ? classified.outcomeFlags
+      : {},
   };
 }
 
@@ -281,6 +321,7 @@ async function runProductResearchAction({
   editTarget = null,
   contextOverrides = null,
   busyMessage = null,
+  classifyResult = null,
   operation,
 }) {
   const capture = beginProductResearchCapture({
@@ -302,11 +343,21 @@ async function runProductResearchAction({
     await capture.start();
     try {
       const result = await operation();
-      await capture.terminal("success");
+      const classified = normalizeResearchClassification(
+        typeof classifyResult === "function" ? classifyResult(result) : null,
+      );
+      await capture.terminal(classified.outcome, {
+        outcomeKind: classified.outcomeKind,
+        outcomeFlags: classified.outcomeFlags,
+      });
       return result;
     } catch (error) {
+      const outcomeFlags = error?.outcomeFlags && typeof error.outcomeFlags === "object"
+        ? error.outcomeFlags
+        : {};
       await capture.terminal("failure", {
         outcomeKind: typeof error?.kind === "string" ? error.kind : "request-failed",
+        outcomeFlags,
       });
       throw error;
     } finally {
@@ -412,6 +463,10 @@ const researchDock = researchDockRoot
     executeDockCommand,
   })
   : null;
+
+export function getResearchDock() {
+  return researchDock;
+}
 
 syncResearchCommandTargets();
 
@@ -997,6 +1052,11 @@ async function generateFrame(frameId, button, index) {
     ? displayIndex + 1
     : (Number.isInteger(index) ? index + 1 : null);
   const frameForContext = source || { id: frameId };
+  const initiationPanels = Array.isArray(source?.panels)
+    ? source.panels.map((panel) => ({
+      assetId: typeof panel?.assetId === "string" ? panel.assetId : null,
+    }))
+    : [];
   const frameTarget = createEmptyCommandTarget("frame", {
     displayFrameNumber,
     displayFrameId: typeof frameId === "string" ? frameId : null,
@@ -1009,6 +1069,24 @@ async function generateFrame(frameId, button, index) {
     commandTarget: frameTarget,
     contextOverrides: frameActionContextOverrides(frameForContext, displayFrameNumber),
     busyMessage: progress,
+    classifyResult(next) {
+      const failures = Array.isArray(next?.generationFailures) ? next.generationFailures : [];
+      if (!failures.length) return { outcome: "success" };
+      const kinds = failures
+        .map((entry) => (typeof entry?.kind === "string" ? entry.kind : null))
+        .filter(Boolean);
+      const outcomeKind = kinds.length === 1 ? kinds[0] : (kinds[0] || "generation-failed");
+      const retainedLastGoodImage = failures.some((entry) => {
+        const panelIndex = entry?.panelIndex;
+        return Number.isInteger(panelIndex)
+          && typeof initiationPanels[panelIndex]?.assetId === "string";
+      });
+      return {
+        outcome: "failure",
+        outcomeKind,
+        outcomeFlags: retainedLastGoodImage ? { retainedLastGoodImage: true } : {},
+      };
+    },
     async operation() {
       const previous = button?.textContent;
       if (button) button.textContent = panelCount > 1 ? `Создаю ${panelCount} панели…` : "Создаю…";
@@ -1083,6 +1161,7 @@ function renderPanelControls(frame) {
         structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
         panelIndex,
       });
+      const priorAssetId = typeof panel.assetId === "string" ? panel.assetId : null;
       await runProductResearchAction({
         semanticAction: "panel_generate",
         submittedText: panelInstruction,
@@ -1110,6 +1189,9 @@ function renderPanelControls(frame) {
               frameId: frame.id,
               panelIndex,
             });
+            if (priorAssetId) {
+              error.outcomeFlags = { retainedLastGoodImage: true };
+            }
             throw error;
           }
         },

@@ -1442,3 +1442,162 @@ test("valid storyboard default and explicit panel selection stay stable across a
   assert.equal(dock.isCommandTargetUnsupported(), false);
   assert.equal(select.value, panelOptionValue(select, (option) => option.value.includes("d2")));
 });
+
+test("T028 Notes protected-content failure keeps exact text, no history, one request, no secret echo", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  const secret = "Bearer t028-notes-protected-token";
+  let notePosts = 0;
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/notes" && init.method === "POST") {
+        notePosts += 1;
+        return jsonResponse(400, { status: "failed", kind: "protected-content" });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  const draft = document.querySelector("#research-notes-draft");
+  draft.value = secret;
+  document.querySelector("#research-notes-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(draft.value, secret);
+  assert.equal(notePosts, 1);
+  assert.equal(document.querySelector("#research-notes-history").children.length, 0);
+  const status = document.querySelector("#research-notes-status");
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /не удалось|ошибк|защищ/i);
+  assert.equal(status.textContent.includes(secret), false);
+  assert.equal(status.textContent.includes("t028-notes-protected-token"), false);
+});
+
+test("T028 Commands product success with terminal research failure shows local evidence gap once", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext, projectOperations } = await import("../public/research-dock.mjs");
+  let eventPosts = 0;
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext({ workflowPhase: "structure" }),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/events") {
+        eventPosts += 1;
+        const body = JSON.parse(init.body);
+        if (body.eventKind === "action_start") {
+          return jsonResponse(201, {
+            event: { ...body, seq: 1, occurredAt: "2026-10-13T14:00:00.000Z" },
+          });
+        }
+        return jsonResponse(500, { status: "failed", kind: "database" });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  const draft = document.querySelector("#research-commands-draft");
+  draft.value = "команда при сбое terminal";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(draft.value, "");
+  assert.equal(eventPosts, 2);
+  const status = document.querySelector("#research-commands-status");
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /исследован|не сохран/i);
+  assert.equal(/успех/i.test(status.textContent), false);
+  const projection = dock.getOperationsProjection();
+  assert.equal(projection.some((item) => item.status === "success"), false);
+  assert.equal(projection.some((item) => item.localOnly === true), true);
+  assert.match(
+    projection.find((item) => item.localOnly)?.label || "",
+    /продукт.*выполн|исследован.*не сохран/i,
+  );
+  assert.equal(typeof projectOperations, "function");
+});
+
+test("T028 incomplete evidence terminal projects flags, null duration, never running or replay", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext, projectOperations } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    fetchImpl: async (url) => {
+      const path = new URL(url, "http://127.0.0.1").pathname + new URL(url, "http://127.0.0.1").search;
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  dock.reportEvidenceSaveFailure?.({
+    correlationId: "00000000-0000-4000-8000-000000000001",
+    semanticAction: "structure_edit",
+    phase: "start",
+  });
+  dock.recordTerminalEvent({
+    eventKind: "action_terminal",
+    correlationId: "00000000-0000-4000-8000-000000000001",
+    semanticAction: "structure_edit",
+    surface: "product_control",
+    outcome: "success",
+    outcomeKind: null,
+    outcomeFlags: { evidenceIncomplete: true },
+    durationMs: null,
+    occurredAt: "2026-10-13T14:01:00.000Z",
+    seq: 9,
+  });
+  const projection = dock.getOperationsProjection();
+  assert.equal(projection.some((item) => item.status === "running"), false);
+  const incomplete = projection.find((item) => item.outcomeFlags?.evidenceIncomplete === true);
+  assert.ok(incomplete);
+  assert.equal(incomplete.durationMs, null);
+  assert.equal(incomplete.status, "success");
+  assert.equal(incomplete.historical, false);
+  assert.equal(incomplete.localOnly, false);
+  const localOnly = projection.filter((item) => item.localOnly === true);
+  assert.equal(localOnly.length, 0);
+  const source = readFileSync(new URL("../public/research-dock.mjs", import.meta.url), "utf8");
+  assert.equal(/setInterval|setTimeout\([^)]*retry|resume|replay|poll/i.test(source), false);
+  assert.equal(typeof projectOperations, "function");
+});
+
+test("T028 Operations projection exposes retainedLastGoodImage on failure terminals", async () => {
+  const { projectOperations } = await import("../public/research-dock.mjs");
+  const items = projectOperations({
+    live: null,
+    events: [{
+      eventKind: "action_terminal",
+      correlationId: "00000000-0000-4000-8000-000000000002",
+      semanticAction: "panel_generate",
+      surface: "product_control",
+      outcome: "failure",
+      outcomeKind: "provider",
+      outcomeFlags: { retainedLastGoodImage: true },
+      durationMs: 12,
+      occurredAt: "2026-10-13T14:02:00.000Z",
+    }],
+  });
+  assert.equal(items.length, 1);
+  assert.equal(items[0].status, "failure");
+  assert.equal(items[0].outcomeFlags.retainedLastGoodImage, true);
+  assert.match(items[0].label, /ошибк|failure|панел|panel_generate/i);
+  assert.equal(/успех/i.test(items[0].label), false);
+});

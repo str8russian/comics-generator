@@ -538,3 +538,148 @@ test("T023 baseline: HTTP terminal derive-from-start, duplicate rejection, unmat
     assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
   });
 });
+
+test("T027 protected-content canaries reject notes and action starts without echo or row growth", async () => {
+  const canaries = [
+    {
+      label: "bearer",
+      text: "Bearer eyJhbGciOiJIUzI1NiJ9.t027-secret-payload.signature",
+      substring: "t027-secret-payload",
+    },
+    {
+      label: "authorization",
+      text: "Authorization: Bearer t027-auth-token-value",
+      substring: "t027-auth-token-value",
+    },
+    {
+      label: "dsn",
+      text: "postgres://comics:t027-db-password@127.0.0.1:5432/comics",
+      substring: "t027-db-password",
+    },
+    {
+      label: "sensitive-query",
+      text: "https://example.test/callback?access_token=t027-query-leak&ok=1",
+      substring: "t027-query-leak",
+    },
+    {
+      label: "data-base64",
+      text: "data:image/png;base64,t027IMAGEBYTESAAAA",
+      substring: "t027IMAGEBYTESAAAA",
+    },
+  ];
+
+  for (const canary of canaries) {
+    for (const route of ["notes", "events"]) {
+      const logs = [];
+      await withServer(async ({ port }) => {
+        const before = await send(port, { path: "/api/research/trace" });
+        assert.equal(before.status, 200);
+        const beforeCount = JSON.parse(before.body).events.length;
+
+        const body = route === "notes"
+          ? { submittedText: canary.text, context: nullContext() }
+          : {
+            eventKind: "action_start",
+            semanticAction: "structure_edit",
+            correlationId: randomUUID(),
+            surface: "product_control",
+            submittedText: canary.text,
+            commandTarget: { kind: "storyboard" },
+            editTarget: null,
+            context: nullContext({ workflowPhase: "structure" }),
+          };
+        const response = await send(port, {
+          method: "POST",
+          path: route === "notes" ? "/api/research/notes" : "/api/research/events",
+          headers: { "content-type": "application/json" },
+          body: json(body),
+        });
+        assert.equal(response.status, 400, `${canary.label}/${route}`);
+        assert.deepEqual(
+          JSON.parse(response.body),
+          { status: "failed", kind: "protected-content" },
+          `${canary.label}/${route}`,
+        );
+        const captured = [...logs, response.body].join("\n");
+        assert.equal(captured.includes(canary.text), false, `${canary.label}/${route} full`);
+        assert.equal(captured.includes(canary.substring), false, `${canary.label}/${route} substring`);
+
+        const after = await send(port, { path: "/api/research/trace" });
+        assert.equal(after.status, 200);
+        assert.equal(JSON.parse(after.body).events.length, beforeCount, `${canary.label}/${route} rows`);
+      }, { logger: { log(line) { logs.push(String(line)); } } });
+    }
+  }
+});
+
+test("T027 nested forbidden keys are rejected at depth without persistence", async () => {
+  const nestedKeys = [
+    { imageBytes: "not-allowed" },
+    { providerResponse: { raw: "x" } },
+    { wrapper: { requestBody: { instruction: "x" } } },
+    { wrapper: { authorization: "Bearer nested-secret" } },
+    { wrapper: { performanceImageDataUrl: "data:image/png;base64,AAA" } },
+  ];
+  for (const nested of nestedKeys) {
+    await withServer(async ({ port }) => {
+      const before = await send(port, { path: "/api/research/trace" });
+      const beforeCount = JSON.parse(before.body).events.length;
+      const response = await send(port, {
+        method: "POST",
+        path: "/api/research/notes",
+        headers: { "content-type": "application/json" },
+        body: json({
+          submittedText: "обычная заметка",
+          context: nullContext(),
+          ...nested,
+        }),
+      });
+      assert.equal(response.status, 400, JSON.stringify(nested));
+      assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "invalid-request" });
+      const after = await send(port, { path: "/api/research/trace" });
+      assert.equal(JSON.parse(after.body).events.length, beforeCount);
+    });
+  }
+});
+
+test("T027 ordinary owner prose persists byte-for-byte on notes and starts", async () => {
+  const prose = "Обычная заметка владельца: кадр 2 слабее структуры.\nВторая строка.";
+  await withServer(async ({ port }) => {
+    const note = await send(port, {
+      method: "POST",
+      path: "/api/research/notes",
+      headers: { "content-type": "application/json" },
+      body: json({ submittedText: prose, context: nullContext({ workflowPhase: "structure" }) }),
+    });
+    assert.equal(note.status, 201);
+    assert.equal(JSON.parse(note.body).event.submittedText, prose);
+
+    const correlationId = randomUUID();
+    const start = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "structure_edit",
+        correlationId,
+        surface: "product_control",
+        submittedText: prose,
+        commandTarget: { kind: "storyboard" },
+        editTarget: null,
+        context: nullContext({ workflowPhase: "structure" }),
+      }),
+    });
+    assert.equal(start.status, 201);
+    assert.equal(JSON.parse(start.body).event.submittedText, prose);
+
+    const trace = await send(port, { path: "/api/research/trace" });
+    const events = JSON.parse(trace.body).events;
+    assert.ok(events.some((event) => event.eventKind === "note" && event.submittedText === prose));
+    assert.ok(events.some((event) => (
+      event.eventKind === "action_start"
+      && event.correlationId === correlationId
+      && event.submittedText === prose
+    )));
+  });
+});
