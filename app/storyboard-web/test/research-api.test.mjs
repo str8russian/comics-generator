@@ -417,3 +417,124 @@ test("operational logLine never includes research submittedText", async () => {
     assert.match(captured, /event=research-note/);
   }, { logger: { log(line) { logs.push(String(line)); } } });
 });
+
+test("T023 baseline: HTTP terminal derive-from-start, duplicate rejection, unmatched start extractable", async () => {
+  await withServer(async ({ port }) => {
+    const correlationId = randomUUID();
+    const startContext = nullContext({
+      workflowPhase: "structure",
+      displayFrameNumber: 1,
+      displayFrameId: "d1",
+      structureFrameId: "s1",
+      structureSegmentIndex: 0,
+    });
+    const start = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "structure_edit",
+        correlationId,
+        surface: "product_control",
+        submittedText: "исходная правка",
+        commandTarget: { kind: "storyboard" },
+        editTarget: null,
+        context: startContext,
+      }),
+    });
+    assert.equal(start.status, 201);
+    assert.equal(validateResearchEvent(JSON.parse(start.body).event), true);
+
+    const unmatchedId = randomUUID();
+    const unmatched = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "visual_approve",
+        correlationId: unmatchedId,
+        surface: "product_control",
+        submittedText: null,
+        commandTarget: { kind: "storyboard" },
+        editTarget: null,
+        context: nullContext({ workflowPhase: "visual" }),
+      }),
+    });
+    assert.equal(unmatched.status, 201);
+
+    const terminal = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_terminal",
+        correlationId,
+        semanticAction: "panel_generate",
+        surface: "dock_commands",
+        submittedText: "rewrite after navigation",
+        commandTarget: { kind: "panel" },
+        context: nullContext({ displayFrameId: "later" }),
+        outcome: "success",
+        outcomeFlags: {},
+      }),
+    });
+    assert.equal(terminal.status, 201);
+    const terminalEvent = JSON.parse(terminal.body).event;
+    assert.equal(validateResearchEvent(terminalEvent), true);
+    assert.equal(terminalEvent.semanticAction, "structure_edit");
+    assert.equal(terminalEvent.surface, "product_control");
+    assert.equal(terminalEvent.submittedText, "исходная правка");
+    assert.equal(terminalEvent.commandTarget.kind, "storyboard");
+    assert.deepEqual(terminalEvent.context, startContext);
+    assert.equal(typeof terminalEvent.durationMs, "number");
+
+    const dupStart = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_start",
+        semanticAction: "structure_edit",
+        correlationId,
+        surface: "product_control",
+        submittedText: "dup",
+        commandTarget: { kind: "storyboard" },
+        editTarget: null,
+        context: startContext,
+      }),
+    });
+    assert.equal(dupStart.status, 400);
+
+    const dupTerminal = await send(port, {
+      method: "POST",
+      path: "/api/research/events",
+      headers: { "content-type": "application/json" },
+      body: json({
+        eventKind: "action_terminal",
+        correlationId,
+        outcome: "failure",
+        outcomeFlags: {},
+      }),
+    });
+    assert.equal(dupTerminal.status, 400);
+
+    const trace = await send(port, { path: "/api/research/trace" });
+    assert.equal(trace.status, 200);
+    const events = JSON.parse(trace.body).events;
+    for (const event of events) {
+      assert.equal(validateResearchEvent(event), true, JSON.stringify(validateResearchEvent.errors));
+      assert.equal(Object.hasOwn(event, "imageDataUrl"), false);
+      assert.equal(Object.hasOwn(event, "performanceImageDataUrl"), false);
+    }
+    assert.ok(events.some((event) => (
+      event.eventKind === "action_start" && event.correlationId === unmatchedId
+    )));
+    assert.equal(events.some((event) => (
+      event.eventKind === "action_terminal" && event.correlationId === unmatchedId
+    )), false);
+    const seqs = events.map((event) => event.seq);
+    assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+  });
+});

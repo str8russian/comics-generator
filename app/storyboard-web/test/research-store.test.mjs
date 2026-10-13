@@ -481,3 +481,100 @@ test("valid cast_edit on product_control is accepted", async () => {
   assert.equal(terminal.event.surface, "product_control");
   assert.equal(terminal.event.semanticAction, "cast_edit");
 });
+
+test("T023 baseline: navigation rewrite on terminal is ignored; unmatched start remains extractable non-running evidence", async () => {
+  const research = store();
+  const correlationId = randomUUID();
+  const startContext = nullContext({
+    workflowPhase: "structure",
+    displayFrameNumber: 1,
+    displayFrameId: "display-1",
+    structureFrameId: "structure-1",
+    structureSegmentIndex: 0,
+  });
+  const start = await research.appendEvent({
+    eventKind: "action_start",
+    semanticAction: "panel_generate",
+    correlationId,
+    surface: "product_control",
+    submittedText: "frozen panel instruction",
+    commandTarget: {
+      kind: "panel",
+      displayFrameNumber: 1,
+      displayFrameId: "display-1",
+      structureFrameId: "structure-1",
+      structureSegmentIndex: 0,
+      panelIndex: 0,
+      zoom: null,
+      positionX: null,
+      positionY: null,
+      characterName: null,
+      anchorVersionId: null,
+    },
+    editTarget: null,
+    context: startContext,
+  });
+  assert.equal(start.ok, true);
+
+  const unmatchedId = randomUUID();
+  assert.equal((await research.appendEvent({
+    eventKind: "action_start",
+    semanticAction: "frame_generate",
+    correlationId: unmatchedId,
+    surface: "product_control",
+    submittedText: null,
+    commandTarget: {
+      kind: "frame",
+      displayFrameNumber: 2,
+      displayFrameId: "display-2",
+      structureFrameId: "structure-2",
+      structureSegmentIndex: 1,
+      panelIndex: null,
+      zoom: null,
+      positionX: null,
+      positionY: null,
+      characterName: null,
+      anchorVersionId: null,
+    },
+    editTarget: null,
+    context: nullContext({ displayFrameId: "display-2", structureFrameId: "structure-2" }),
+  })).ok, true);
+
+  const terminal = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId,
+    semanticAction: "structure_edit",
+    surface: "dock_commands",
+    submittedText: "rewritten",
+    commandTarget: { kind: "storyboard" },
+    editTarget: null,
+    context: nullContext({ displayFrameId: "navigated", structureFrameId: "navigated-s" }),
+    outcome: "success",
+    outcomeFlags: {},
+  });
+  assert.equal(terminal.ok, true);
+  assert.equal(terminal.event.semanticAction, "panel_generate");
+  assert.equal(terminal.event.surface, "product_control");
+  assert.equal(terminal.event.submittedText, "frozen panel instruction");
+  assert.equal(terminal.event.commandTarget.kind, "panel");
+  assert.equal(terminal.event.commandTarget.structureSegmentIndex, 0);
+  assert.deepEqual(terminal.event.context, startContext);
+  assert.equal(typeof terminal.event.durationMs, "number");
+
+  const listed = await research.listTrace();
+  assert.equal(listed.ok, true);
+  const unmatched = listed.events.find((event) => (
+    event.eventKind === "action_start" && event.correlationId === unmatchedId
+  ));
+  assert.ok(unmatched);
+  assert.equal(listed.events.some((event) => (
+    event.eventKind === "action_terminal" && event.correlationId === unmatchedId
+  )), false);
+
+  const { projectOperations } = await import("../public/research-dock.mjs");
+  const projection = projectOperations({ live: null, events: listed.events });
+  assert.equal(projection.some((item) => item.status === "running"), false);
+  assert.equal(projection.some((item) => (
+    item.correlationId === unmatchedId && (item.historical === true || item.status === "interrupted")
+  )), true);
+});

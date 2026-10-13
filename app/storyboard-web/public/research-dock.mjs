@@ -44,6 +44,19 @@ export function createEmptyCommandTarget(kind = "storyboard", overrides = {}) {
   return target;
 }
 
+export function createEmptyEditTarget(editKind, castPhase, overrides = {}) {
+  return {
+    editKind,
+    castPhase,
+    characterName: Object.hasOwn(overrides, "characterName") ? overrides.characterName : null,
+    previousCharacterName: Object.hasOwn(overrides, "previousCharacterName")
+      ? overrides.previousCharacterName
+      : null,
+    surfaceForm: Object.hasOwn(overrides, "surfaceForm") ? overrides.surfaceForm : null,
+    sourceItemId: Object.hasOwn(overrides, "sourceItemId") ? overrides.sourceItemId : null,
+  };
+}
+
 export function projectOperations({ live = null, events = [] } = {}) {
   const items = [];
   if (live) {

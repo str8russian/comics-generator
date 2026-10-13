@@ -151,6 +151,64 @@ test("research_event migration, restart durability, uniqueness, and long reading
     const defs = indexes.rows.map((row) => row.indexdef).join("\n");
     assert.match(defs, /UNIQUE.*correlation_id.*action_start/i);
     assert.match(defs, /UNIQUE.*correlation_id.*action_terminal/i);
+
+    // T026: unmatched start survives fresh pool and remains ordered extractable evidence.
+    const unmatchedId = randomUUID();
+    assert.equal((await storeB.appendEvent({
+      eventKind: "action_start",
+      semanticAction: "frame_generate",
+      correlationId: unmatchedId,
+      surface: "product_control",
+      submittedText: null,
+      commandTarget: {
+        kind: "frame",
+        displayFrameNumber: 1,
+        displayFrameId: "display-1",
+        structureFrameId: "structure-1",
+        structureSegmentIndex: 0,
+        panelIndex: null,
+        zoom: null,
+        positionX: null,
+        positionY: null,
+        characterName: null,
+        anchorVersionId: null,
+      },
+      editTarget: null,
+      context: nullContext({
+        displayFrameId: "display-1",
+        structureFrameId: "structure-1",
+        structureSegmentIndex: 0,
+      }),
+    })).ok, true);
+
+    await poolB.end();
+    poolB = null;
+    const poolC = createPool(databaseUrl);
+    try {
+      const storeC = createResearchStore(poolC);
+      const afterRestart = await storeC.listTrace();
+      assert.equal(afterRestart.ok, true);
+      const seqs = afterRestart.events.map((event) => event.seq);
+      assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+      const unmatched = afterRestart.events.find((event) => (
+        event.eventKind === "action_start" && event.correlationId === unmatchedId
+      ));
+      assert.ok(unmatched);
+      assert.equal(unmatched.semanticAction, "frame_generate");
+      assert.equal(unmatched.commandTarget.structureSegmentIndex, 0);
+      assert.equal(afterRestart.events.some((event) => (
+        event.eventKind === "action_terminal" && event.correlationId === unmatchedId
+      )), false);
+      assert.equal(afterRestart.events.some((event) => Object.hasOwn(event, "imageDataUrl")), false);
+      const { projectOperations } = await import("../../public/research-dock.mjs");
+      const projection = projectOperations({ live: null, events: afterRestart.events });
+      assert.equal(projection.some((item) => item.status === "running"), false);
+      assert.equal(projection.some((item) => (
+        item.correlationId === unmatchedId && (item.historical === true || item.status === "interrupted")
+      )), true);
+    } finally {
+      await poolC.end().catch(() => {});
+    }
   } finally {
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
     guard.release();

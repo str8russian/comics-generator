@@ -5,6 +5,7 @@ import {
   bindResearchDock,
   createEmptyCommandTarget,
   createEmptyContext,
+  createEmptyEditTarget,
 } from "/research-dock.mjs";
 import { presentVisualFrame } from "/visual-anchors.mjs";
 
@@ -55,10 +56,67 @@ let castChain = Promise.resolve();
 let visual = null;
 let detailIndex = -1;
 let busy = false;
+let pendingCastEdit = null;
 
 export function setResearchDetailState(frames, index = -1) {
   readyFrames = Array.isArray(frames) ? frames.slice() : [];
   detailIndex = Number.isInteger(index) ? index : -1;
+}
+
+export function setResearchVisualState(next, index = -1) {
+  if (!next || next.status !== "ready") {
+    visual = null;
+    readyFrames = [];
+    detailIndex = -1;
+    if (structureTools) structureTools.hidden = true;
+    if (charactersWorkspace) charactersWorkspace.hidden = true;
+    if (characterCards) characterCards.replaceChildren();
+    if (detailPanelControls) detailPanelControls.replaceChildren();
+    syncResearchCommandTargets();
+    return;
+  }
+  visual = next;
+  readyFrames = withVisualReady(next.frames || []);
+  detailIndex = Number.isInteger(index) ? index : -1;
+  if (structureTools) structureTools.hidden = false;
+  if (undoStructure) undoStructure.hidden = !next.canUndo;
+  if (charactersWorkspace) charactersWorkspace.hidden = false;
+  if (visualHeading) visualHeading.hidden = !next.allAnchorsApproved;
+  if (visualApproval) visualApproval.hidden = !next.complete;
+  if (approveVisual) approveVisual.hidden = Boolean(next.readyForVideo);
+  if (readyForVideo) readyForVideo.hidden = !next.readyForVideo;
+  if (openLast) openLast.hidden = readyFrames.length === 0;
+  renderCharacterCards();
+  if (grid) {
+    grid.replaceChildren();
+    readyFrames.forEach((frame, frameIndex) => {
+      const card = document.createElement("article");
+      card.className = "story-card";
+      const generate = document.createElement("button");
+      generate.type = "button";
+      generate.className = "generate-frame";
+      generate.textContent = "Создать кадр";
+      generate.addEventListener("click", async () => {
+        await generateFrame(frame.id, generate, frameIndex);
+      });
+      card.append(generate);
+      grid.append(card);
+    });
+  }
+  if (detailIndex >= 0 && readyFrames[detailIndex]) {
+    renderPanelControls(readyFrames[detailIndex]);
+  } else if (detailPanelControls) {
+    detailPanelControls.replaceChildren();
+  }
+  syncResearchCommandTargets();
+}
+
+export function setResearchReviewState(documentState, mode) {
+  showMaterial(documentState, mode);
+}
+
+export async function captureTestGenerateFrame(frameId, index = 0) {
+  await generateFrame(frameId, { textContent: "" }, index);
 }
 
 export function captureResearchContext() {
@@ -122,6 +180,106 @@ async function postResearchEvent(body) {
     if (!response.ok) return null;
     const payload = await response.json();
     return payload?.event ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function beginProductResearchCapture({
+  semanticAction,
+  submittedText = null,
+  commandTarget = null,
+  editTarget = null,
+}) {
+  const correlationId = crypto.randomUUID();
+  const context = captureResearchContext();
+  const startSnapshot = {
+    semanticAction,
+    surface: "product_control",
+    submittedText,
+    commandTarget,
+    editTarget,
+    context,
+  };
+  let startSaved = false;
+  let finished = false;
+
+  return {
+    correlationId,
+    startSnapshot,
+    async start() {
+      try {
+        const startEvent = await postResearchEvent({
+          eventKind: "action_start",
+          correlationId,
+          ...startSnapshot,
+        });
+        startSaved = Boolean(startEvent);
+        if (startEvent) researchDock?.recordTerminalEvent(startEvent);
+      } catch {
+        startSaved = false;
+      }
+      return startSaved;
+    },
+    async terminal(outcome, { outcomeKind = null, outcomeFlags = {} } = {}) {
+      if (finished) return null;
+      finished = true;
+      const terminalBody = {
+        eventKind: "action_terminal",
+        correlationId,
+        outcome,
+        outcomeKind,
+        outcomeFlags,
+      };
+      if (!startSaved) terminalBody.startSnapshot = startSnapshot;
+      const terminalEvent = await postResearchEvent(terminalBody);
+      if (terminalEvent) researchDock?.recordTerminalEvent(terminalEvent);
+      return terminalEvent;
+    },
+  };
+}
+
+async function runProductResearchAction({
+  semanticAction,
+  submittedText = null,
+  commandTarget = null,
+  editTarget = null,
+  busyMessage = null,
+  operation,
+}) {
+  const capture = beginProductResearchCapture({
+    semanticAction,
+    submittedText,
+    commandTarget,
+    editTarget,
+  });
+
+  const execute = async () => {
+    if (busyMessage) {
+      researchDock?.setLiveOperation({
+        correlationId: capture.correlationId,
+        semanticAction,
+        surface: "product_control",
+      });
+    }
+    await capture.start();
+    try {
+      const result = await operation();
+      await capture.terminal("success");
+      return result;
+    } catch (error) {
+      await capture.terminal("failure", {
+        outcomeKind: typeof error?.kind === "string" ? error.kind : "request-failed",
+      });
+      throw error;
+    } finally {
+      if (busyMessage) researchDock?.clearLiveOperation();
+    }
+  };
+
+  if (busyMessage) return runBusy(busyMessage, execute);
+  try {
+    return await execute();
   } catch {
     return null;
   }
@@ -662,15 +820,23 @@ function renderCharacterCards() {
         showActionNotice(actionMessage(fileKind), "error");
         return;
       }
-      await runBusy(`Сохраняю фотографию для ${character.name}…`, async () => {
-        const imageDataUrl = await fileAsDataUrl(file);
-        const next = await fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/identity`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ imageDataUrl, comment: comment.value }),
-        });
-        applyVisual(next);
-        showActionNotice(`Фотография для ${character.name} сохранена.`);
+      const identityComment = comment.value;
+      await runProductResearchAction({
+        semanticAction: "identity_save",
+        submittedText: identityComment,
+        commandTarget: createEmptyCommandTarget("character", { characterName: character.name }),
+        busyMessage: `Сохраняю фотографию для ${character.name}…`,
+        async operation() {
+          const imageDataUrl = await fileAsDataUrl(file);
+          const next = await fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/identity`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ imageDataUrl, comment: identityComment }),
+          });
+          applyVisual(next);
+          showActionNotice(`Фотография для ${character.name} сохранена.`);
+          return next;
+        },
       });
     });
 
@@ -683,14 +849,22 @@ function renderCharacterCards() {
     generate.disabled = !character.identity;
     generate.textContent = character.candidate?.assetUrl ? "Создать новый вариант" : "Создать base anchor";
     generate.addEventListener("click", async () => {
-      await runBusy(`Создаю базовый образ для ${character.name}. Это может занять около минуты…`, async () => {
-        const next = await fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/anchor`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ instruction: instruction.value }),
-        });
-        applyVisual(next);
-        showActionNotice(`Новый вариант для ${character.name} готов.`);
+      const anchorInstruction = instruction.value;
+      await runProductResearchAction({
+        semanticAction: "anchor_generate",
+        submittedText: anchorInstruction,
+        commandTarget: createEmptyCommandTarget("character", { characterName: character.name }),
+        busyMessage: `Создаю базовый образ для ${character.name}. Это может занять около минуты…`,
+        async operation() {
+          const next = await fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/anchor`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ instruction: anchorInstruction }),
+          });
+          applyVisual(next);
+          showActionNotice(`Новый вариант для ${character.name} готов.`);
+          return next;
+        },
       });
     });
 
@@ -703,13 +877,24 @@ function renderCharacterCards() {
       approve.className = "primary-soft";
       approve.textContent = "Утвердить этот образ";
       approve.addEventListener("click", async () => {
-        await runBusy(`Утверждаю образ ${character.name}…`, async () => {
-          const next = await fetchJson(
-            `/api/visual/characters/${encodeURIComponent(character.name)}/anchors/${character.candidate.id}/approve`,
-            { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
-          );
-          applyVisual(next);
-          showActionNotice(`Образ ${character.name} утверждён.`);
+        const anchorVersionId = character.candidate.id;
+        await runProductResearchAction({
+          semanticAction: "anchor_approve",
+          submittedText: null,
+          commandTarget: createEmptyCommandTarget("character", {
+            characterName: character.name,
+            anchorVersionId,
+          }),
+          busyMessage: `Утверждаю образ ${character.name}…`,
+          async operation() {
+            const next = await fetchJson(
+              `/api/visual/characters/${encodeURIComponent(character.name)}/anchors/${encodeURIComponent(anchorVersionId)}/approve`,
+              { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+            );
+            applyVisual(next);
+            showActionNotice(`Образ ${character.name} утверждён.`);
+            return next;
+          },
         });
       });
       actions.append(approve);
@@ -753,37 +938,52 @@ async function refreshVisual() {
 }
 
 async function generateFrame(frameId, button, index) {
-  const source = (visual?.frames || []).find((frame) => frame.id === frameId);
+  const source = (visual?.frames || []).find((frame) => frame.id === frameId)
+    || readyFrames.find((frame) => frame.id === frameId);
   const panelCount = source?.panels?.length || 1;
   const progress = panelCount > 1
     ? `Создаю изображения этого кадра: ${panelCount} панели…`
     : "Создаю изображение этого кадра…";
-  await runBusy(progress, async () => {
-    const previous = button.textContent;
-    button.textContent = panelCount > 1 ? `Создаю ${panelCount} панели…` : "Создаю…";
-    try {
-      const next = await fetchJson(`/api/visual/frames/${encodeURIComponent(frameId)}/generate`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
-      applyVisual(next);
-      const fittedIndex = readyFrames.findIndex((frame) => frame.id === frameId);
-      const openIndex = fittedIndex >= 0 ? fittedIndex : index;
-      if (Number.isInteger(openIndex) && readyFrames[openIndex]) {
-        openDetail(openIndex);
+  const displayIndex = readyFrames.findIndex((frame) => frame.id === frameId);
+  const frameTarget = createEmptyCommandTarget("frame", {
+    displayFrameNumber: displayIndex >= 0 ? displayIndex + 1 : (Number.isInteger(index) ? index + 1 : null),
+    displayFrameId: typeof frameId === "string" ? frameId : null,
+    structureFrameId: typeof source?.structureFrameId === "string" ? source.structureFrameId : null,
+    structureSegmentIndex: Number.isInteger(source?.structureSegmentIndex) ? source.structureSegmentIndex : null,
+  });
+  await runProductResearchAction({
+    semanticAction: "frame_generate",
+    submittedText: null,
+    commandTarget: frameTarget,
+    busyMessage: progress,
+    async operation() {
+      const previous = button?.textContent;
+      if (button) button.textContent = panelCount > 1 ? `Создаю ${panelCount} панели…` : "Создаю…";
+      try {
+        const next = await fetchJson(`/api/visual/frames/${encodeURIComponent(frameId)}/generate`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        applyVisual(next);
+        const fittedIndex = readyFrames.findIndex((frame) => frame.id === frameId);
+        const openIndex = fittedIndex >= 0 ? fittedIndex : index;
+        if (Number.isInteger(openIndex) && readyFrames[openIndex]) {
+          openDetail(openIndex);
+        }
+        const attempt = frameAttemptNotice({
+          generationFailures: next.generationFailures || [],
+          visualReady: Boolean(next.frames?.find((frame) => frame.id === frameId)?.visualReady),
+        });
+        showActionNotice(attempt.text, attempt.kind);
+        return next;
+      } catch (error) {
+        console.error("[visual] frame generation failed", { kind: error?.kind || "request-failed", frameId });
+        throw error;
+      } finally {
+        if (button && previous != null) button.textContent = previous;
       }
-      const attempt = frameAttemptNotice({
-        generationFailures: next.generationFailures || [],
-        visualReady: Boolean(next.frames?.find((frame) => frame.id === frameId)?.visualReady),
-      });
-      showActionNotice(attempt.text, attempt.kind);
-    } catch (error) {
-      console.error("[visual] frame generation failed", { kind: error?.kind || "request-failed", frameId });
-      throw error;
-    } finally {
-      button.textContent = previous;
-    }
+    },
   });
 }
 
@@ -821,28 +1021,43 @@ function renderPanelControls(frame) {
     regenerate.type = "button";
     regenerate.textContent = panel.assetId ? "Переделать эту панель" : "Создать эту панель";
     regenerate.addEventListener("click", async () => {
-      await runBusy(`Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`, async () => {
-        const file = performance.files?.[0];
-        const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
-        try {
-          const next = await fetchJson(
-            `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ instruction: instruction.value, performanceImageDataUrl }),
-            },
-          );
-          applyVisual(next);
-          showActionNotice(`Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`);
-        } catch (error) {
-          console.error("[visual] panel generation failed", {
-            kind: error?.kind || "request-failed",
-            frameId: frame.id,
-            panelIndex,
-          });
-          throw error;
-        }
+      const panelInstruction = instruction.value;
+      const panelTarget = createEmptyCommandTarget("panel", {
+        displayFrameNumber: detailIndex >= 0 ? detailIndex + 1 : null,
+        displayFrameId: typeof frame.id === "string" ? frame.id : null,
+        structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
+        structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
+        panelIndex,
+      });
+      await runProductResearchAction({
+        semanticAction: "panel_generate",
+        submittedText: panelInstruction,
+        commandTarget: panelTarget,
+        busyMessage: `Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`,
+        async operation() {
+          const file = performance.files?.[0];
+          const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
+          try {
+            const next = await fetchJson(
+              `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ instruction: panelInstruction, performanceImageDataUrl }),
+              },
+            );
+            applyVisual(next);
+            showActionNotice(`Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`);
+            return next;
+          } catch (error) {
+            console.error("[visual] panel generation failed", {
+              kind: error?.kind || "request-failed",
+              frameId: frame.id,
+              panelIndex,
+            });
+            throw error;
+          }
+        },
       });
     });
     section.append(title, description);
@@ -865,17 +1080,36 @@ function renderPanelControls(frame) {
         mountFrame(detailHost, readyFrames[detailIndex], 0.5);
       });
       zoom.addEventListener("change", async () => {
-        await runBusy("Сохраняю приближение…", async () => {
-          const next = await fetchJson(
-            `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/placement`,
-            {
-              method: "PATCH",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ zoom: Number(zoom.value), positionX: 50, positionY: 30 }),
-            },
-          );
-          applyVisual(next);
-          showActionNotice("Приближение сохранено без новой генерации.");
+        const committedZoom = Number(zoom.value);
+        const positionX = 50;
+        const positionY = 30;
+        await runProductResearchAction({
+          semanticAction: "placement_commit",
+          submittedText: null,
+          commandTarget: createEmptyCommandTarget("panel", {
+            displayFrameNumber: detailIndex >= 0 ? detailIndex + 1 : null,
+            displayFrameId: typeof frame.id === "string" ? frame.id : null,
+            structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
+            structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
+            panelIndex,
+            zoom: committedZoom,
+            positionX,
+            positionY,
+          }),
+          busyMessage: "Сохраняю приближение…",
+          async operation() {
+            const next = await fetchJson(
+              `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/placement`,
+              {
+                method: "PATCH",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ zoom: committedZoom, positionX, positionY }),
+              },
+            );
+            applyVisual(next);
+            showActionNotice("Приближение сохранено без новой генерации.");
+            return next;
+          },
         });
       });
       zoomLabel.append(zoomCopy, zoom);
@@ -889,86 +1123,53 @@ structureEditForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const instruction = structureInstruction.value.trim();
   if (!instruction) return;
-  const correlationId = crypto.randomUUID();
-  const context = captureResearchContext();
-  const commandTarget = createEmptyCommandTarget("storyboard");
-  const startSnapshot = {
+  await runProductResearchAction({
     semanticAction: "structure_edit",
-    surface: "product_control",
     submittedText: instruction,
-    commandTarget,
-    editTarget: null,
-    context,
-  };
-  await runBusy("Применяю структурную правку к раскадровке…", async () => {
-    researchDock?.setLiveOperation({
-      correlationId,
-      semanticAction: "structure_edit",
-      surface: "product_control",
-    });
-    let startSaved = false;
-    try {
-      const startEvent = await postResearchEvent({
-        eventKind: "action_start",
-        correlationId,
-        ...startSnapshot,
-      });
-      startSaved = Boolean(startEvent);
-    } catch {
-      startSaved = false;
-    }
-
-    try {
-      await runStructureEditProduct(instruction, { clearProductForm: true });
-      const terminalBody = {
-        eventKind: "action_terminal",
-        correlationId,
-        outcome: "success",
-        outcomeFlags: {},
-      };
-      if (!startSaved) terminalBody.startSnapshot = startSnapshot;
-      const terminalEvent = await postResearchEvent(terminalBody);
-      if (terminalEvent) researchDock?.recordTerminalEvent(terminalEvent);
-    } catch (error) {
-      const terminalBody = {
-        eventKind: "action_terminal",
-        correlationId,
-        outcome: "failure",
-        outcomeKind: typeof error?.kind === "string" ? error.kind : "request-failed",
-        outcomeFlags: {},
-      };
-      if (!startSaved) terminalBody.startSnapshot = startSnapshot;
-      const terminalEvent = await postResearchEvent(terminalBody);
-      if (terminalEvent) researchDock?.recordTerminalEvent(terminalEvent);
-      throw error;
-    } finally {
-      researchDock?.clearLiveOperation();
-    }
+    commandTarget: createEmptyCommandTarget("storyboard"),
+    busyMessage: "Применяю структурную правку к раскадровке…",
+    async operation() {
+      return runStructureEditProduct(instruction, { clearProductForm: true });
+    },
   });
 });
 
 undoStructure?.addEventListener("click", async () => {
-  await runBusy("Возвращаю предыдущую структуру…", async () => {
-    const next = await fetchJson("/api/visual/storyboard/undo", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
-    applyVisual(next);
-    structureResult.hidden = false;
-    structureResult.textContent = "Предыдущая структура восстановлена.";
+  await runProductResearchAction({
+    semanticAction: "structure_undo",
+    submittedText: null,
+    commandTarget: createEmptyCommandTarget("storyboard"),
+    busyMessage: "Возвращаю предыдущую структуру…",
+    async operation() {
+      const next = await fetchJson("/api/visual/storyboard/undo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      applyVisual(next);
+      structureResult.hidden = false;
+      structureResult.textContent = "Предыдущая структура восстановлена.";
+      return next;
+    },
   });
 });
 
 approveVisual?.addEventListener("click", async () => {
-  await runBusy("Утверждаю текущую визуальную раскадровку…", async () => {
-    const next = await fetchJson("/api/visual/approve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    });
-    applyVisual(next);
-    showActionNotice("Визуальная раскадровка утверждена.");
+  await runProductResearchAction({
+    semanticAction: "visual_approve",
+    submittedText: null,
+    commandTarget: createEmptyCommandTarget("storyboard"),
+    busyMessage: "Утверждаю текущую визуальную раскадровку…",
+    async operation() {
+      const next = await fetchJson("/api/visual/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      applyVisual(next);
+      showActionNotice("Визуальная раскадровка утверждена.");
+      return next;
+    },
   });
 });
 
@@ -1043,6 +1244,10 @@ function scheduleCastSave() {
   castChain = castChain.then(() => saveCast()).catch(() => {});
 }
 
+function castPhaseForReview() {
+  return review?.mode === "reading" ? "pending_reading" : "material_state";
+}
+
 async function saveCast() {
   if (!review) return { ok: false };
   const cast = collectCast();
@@ -1051,6 +1256,23 @@ async function saveCast() {
     ? `/api/readings/${review.id}/cast`
     : "/api/material-states";
   const method = review.mode === "reading" ? "PUT" : "POST";
+  const pending = pendingCastEdit;
+  pendingCastEdit = null;
+  let capture = null;
+  if (pending) {
+    capture = beginProductResearchCapture({
+      semanticAction: "cast_edit",
+      submittedText: pending.submittedText,
+      commandTarget: null,
+      editTarget: createEmptyEditTarget(pending.editKind, castPhaseForReview(), {
+        characterName: pending.characterName,
+        previousCharacterName: pending.previousCharacterName ?? null,
+        surfaceForm: pending.surfaceForm ?? null,
+        sourceItemId: pending.sourceItemId ?? null,
+      }),
+    });
+    await capture.start();
+  }
   let response;
   try {
     response = await fetch(path, {
@@ -1059,6 +1281,7 @@ async function saveCast() {
       body: JSON.stringify(cast),
     });
   } catch {
+    if (capture) await capture.terminal("failure", { outcomeKind: "request-failed" });
     return { ok: false };
   }
   let payload = null;
@@ -1069,13 +1292,18 @@ async function saveCast() {
   }
   if (response.status === 409) {
     refreshConfirmation();
+    if (capture) await capture.terminal("failure", { outcomeKind: "stale-cast" });
     return { ok: false, stale: true };
   }
-  if (!response.ok) return { ok: false };
+  if (!response.ok) {
+    if (capture) await capture.terminal("failure", { outcomeKind: "request-failed" });
+    return { ok: false };
+  }
   review.cast = cast;
   if (review.mode === "material" && payload?.materialStateId) review.id = payload.materialStateId;
   renderSources();
   renderFindings();
+  if (capture) await capture.terminal("success");
   return { ok: true };
 }
 
@@ -1127,8 +1355,18 @@ function renderReview() {
     row.className = "material-row";
     const input = document.createElement("input");
     input.value = character.name;
+    input.dataset.previousName = character.name;
     input.addEventListener("input", () => syncSelects());
-    input.addEventListener("blur", () => scheduleCastSave());
+    input.addEventListener("blur", () => {
+      pendingCastEdit = {
+        editKind: "character_rename",
+        submittedText: input.value,
+        characterName: input.value,
+        previousCharacterName: input.dataset.previousName || null,
+      };
+      input.dataset.previousName = input.value;
+      scheduleCastSave();
+    });
     row.append(input);
     materialCharacters.append(row);
   }
@@ -1154,7 +1392,15 @@ function renderReview() {
     select.dataset.surface = surface;
     const current = (review.cast?.aliases || []).find((alias) => alias.surface === surface);
     fillSelect(select, current?.characterName || "");
-    select.addEventListener("change", () => scheduleCastSave());
+    select.addEventListener("change", () => {
+      pendingCastEdit = {
+        editKind: "alias_assignment",
+        submittedText: select.value,
+        characterName: select.value,
+        surfaceForm: surface,
+      };
+      scheduleCastSave();
+    });
     row.append(label, select);
     materialAliases.append(row);
   }
@@ -1168,7 +1414,15 @@ function renderReview() {
     select.dataset.sourceId = item.id;
     const current = (review.cast?.speakers || []).find((speaker) => speaker.sourceItemId === item.id);
     fillSelect(select, current?.characterName || "");
-    select.addEventListener("change", () => scheduleCastSave());
+    select.addEventListener("change", () => {
+      pendingCastEdit = {
+        editKind: "speaker_assignment",
+        submittedText: select.value,
+        characterName: select.value,
+        sourceItemId: item.id,
+      };
+      scheduleCastSave();
+    });
     row.append(label, select);
     materialSpeakers.append(row);
   }
@@ -1211,35 +1465,49 @@ confirmMaterial?.addEventListener("click", async () => {
   if (!synced || !textsMatch(review.text)) return;
   const saved = await saveCast();
   if (!saved.ok) return;
-  let response;
-  try {
-    response = await fetch("/api/confirmations", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ readingId: review.id }),
-    });
-  } catch {
-    showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
-    return;
-  }
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
-  }
-  if (response.status === 409) {
-    refreshConfirmation();
-    return;
-  }
-  if (!response.ok || !payload?.materialStateId) {
-    showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
-    return;
-  }
-  review.mode = "material";
-  review.id = payload.materialStateId;
-  renderFindings();
-  refreshConfirmation();
+  await runProductResearchAction({
+    semanticAction: "confirm_material",
+    submittedText: null,
+    commandTarget: createEmptyCommandTarget("none"),
+    async operation() {
+      let response;
+      try {
+        response = await fetch("/api/confirmations", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ readingId: review.id }),
+        });
+      } catch (error) {
+        showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
+        const err = error instanceof Error ? error : new Error("provider");
+        err.kind = "provider";
+        throw err;
+      }
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      if (response.status === 409) {
+        refreshConfirmation();
+        const err = new Error("stale");
+        err.kind = "stale-reading";
+        throw err;
+      }
+      if (!response.ok || !payload?.materialStateId) {
+        showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
+        const err = new Error("invalid-request");
+        err.kind = "invalid-request";
+        throw err;
+      }
+      review.mode = "material";
+      review.id = payload.materialStateId;
+      renderFindings();
+      refreshConfirmation();
+      return payload;
+    },
+  });
 });
 
 function restoreStoryboard(project) {
@@ -1259,34 +1527,52 @@ stageMaterial?.addEventListener("click", async () => {
   if (!review || review.mode !== "material") return;
   showLoading();
   loading.textContent = "Сборка раскадровки…";
-  let response;
-  try {
-    response = await fetch("/api/storyboard-results", { method: "POST" });
-  } catch {
-    showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
-    return;
-  }
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
-    return;
-  }
-  if (!response.ok || !payload || payload.status === "failed") {
-    showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
-    return;
-  }
-  if (payload.status === "blocked") {
-    showTerminal(pageState({ http: payload }));
-    return;
-  }
-  if (payload.status !== "checked") {
-    showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
-    return;
-  }
-  await presentCheckedStoryboard(payload);
-  await refreshVisual();
+  await runProductResearchAction({
+    semanticAction: "stage_storyboard",
+    submittedText: null,
+    commandTarget: createEmptyCommandTarget("storyboard"),
+    async operation() {
+      let response;
+      try {
+        response = await fetch("/api/storyboard-results", { method: "POST" });
+      } catch (error) {
+        showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
+        const err = error instanceof Error ? error : new Error("provider");
+        err.kind = "provider";
+        throw err;
+      }
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
+        const err = new Error("invalid-request");
+        err.kind = "invalid-request";
+        throw err;
+      }
+      if (!response.ok || !payload || payload.status === "failed") {
+        showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
+        const err = new Error("failed");
+        err.kind = payload?.kind || "request-failed";
+        throw err;
+      }
+      if (payload.status === "blocked") {
+        showTerminal(pageState({ http: payload }));
+        const err = new Error("blocked");
+        err.kind = "blocked";
+        throw err;
+      }
+      if (payload.status !== "checked") {
+        showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
+        const err = new Error("invalid-request");
+        err.kind = "invalid-request";
+        throw err;
+      }
+      await presentCheckedStoryboard(payload);
+      await refreshVisual();
+      return payload;
+    },
+  });
 });
 
 draftAutosave.ready.then(async () => {
@@ -1304,35 +1590,52 @@ draftAutosave.ready.then(async () => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const submittedDraft = draftField.value;
   const synced = await draftAutosave.flush();
   if (!synced) return;
   showLoading();
   loading.textContent = "Разбор черновика…";
-  let response;
-  try {
-    response = await fetch("/api/readings", { method: "POST" });
-  } catch {
-    showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
-    return;
-  }
-  let payload = null;
-  try {
-    payload = await response.json();
-  } catch {
-    showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
-    return;
-  }
-  loading.hidden = true;
-  if (response.status === 409 || payload?.kind === "stale-reading") {
-    materialMismatch.hidden = false;
-    return;
-  }
-  if (!payload || payload.status !== "ready") {
-    hideReview();
-    showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
-    return;
-  }
-  hideFailure();
-  notice.hidden = true;
-  showMaterial(payload, "reading");
+  await runProductResearchAction({
+    semanticAction: "reading",
+    submittedText: submittedDraft,
+    commandTarget: createEmptyCommandTarget("none"),
+    async operation() {
+      let response;
+      try {
+        response = await fetch("/api/readings", { method: "POST" });
+      } catch (error) {
+        showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
+        const err = error instanceof Error ? error : new Error("provider");
+        err.kind = "provider";
+        throw err;
+      }
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
+        const err = new Error("invalid-request");
+        err.kind = "invalid-request";
+        throw err;
+      }
+      loading.hidden = true;
+      if (response.status === 409 || payload?.kind === "stale-reading") {
+        materialMismatch.hidden = false;
+        const err = new Error("stale-reading");
+        err.kind = "stale-reading";
+        throw err;
+      }
+      if (!payload || payload.status !== "ready") {
+        hideReview();
+        showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
+        const err = new Error("invalid-request");
+        err.kind = payload?.kind || "invalid-request";
+        throw err;
+      }
+      hideFailure();
+      notice.hidden = true;
+      showMaterial(payload, "reading");
+      return payload;
+    },
+  });
 });
