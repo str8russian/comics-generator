@@ -176,10 +176,15 @@ function characterActionContextOverrides(character, {
   };
 }
 
+function isResearchDetailOpen() {
+  return Boolean(detail?.open);
+}
+
 function collectResearchCommandTargets() {
   const storyboardAvailable = Boolean(visual) && structureTools && !structureTools.hidden;
   const panels = [];
-  const frame = detailIndex >= 0 ? readyFrames[detailIndex] : null;
+  // Panel actions belong only to an actually open #detail, not a retained detailIndex.
+  const frame = isResearchDetailOpen() && detailIndex >= 0 ? readyFrames[detailIndex] : null;
   if (frame && Array.isArray(frame.panels)) {
     frame.panels.forEach((panel, panelIndex) => {
       panels.push({
@@ -674,13 +679,21 @@ function openDetail(index) {
   if (following) {
     nextFrame.textContent = following.visualReady ? "Открыть следующий кадр" : "Создать следующий кадр";
   }
-  syncResearchCommandTargets();
   researchDock?.enterDetail();
   if (!detail.open) detail.showModal();
+  // Sync after the modal is open so panel options depend on actual open state.
+  syncResearchCommandTargets();
+}
+
+export function openResearchDetail(index) {
+  openDetail(index);
 }
 
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
 closeDetail.addEventListener("click", () => detail.close());
+detail.addEventListener("close", () => {
+  syncResearchCommandTargets();
+});
 nextFrame.addEventListener("click", async () => {
   const index = detailIndex + 1;
   const frame = readyFrames[index];

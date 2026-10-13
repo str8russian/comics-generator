@@ -1392,3 +1392,133 @@ test("product_control terminal evidence save failure after product success keeps
     fetchImpl = original;
   }
 });
+
+function commandSelectOptions() {
+  const select = document.querySelector("#research-commands-target");
+  return [...(select?.children || [])].map((child) => ({
+    value: child.value,
+    text: child.textContent,
+  }));
+}
+
+function panelCommandOptions() {
+  return commandSelectOptions().filter((option) => String(option.value || "").startsWith("panel:"));
+}
+
+async function openReadyDetailViaUi(page, frameIndex = 0) {
+  page.setResearchVisualState(readyVisual({
+    frames: readyVisual().frames.map((frame, index) => ({
+      ...frame,
+      id: `display-${index + 1}`,
+      visualReady: true,
+    })),
+  }), -1);
+  // Prefer explicit open seam when present; otherwise use open-last for sole frame.
+  if (typeof page.openResearchDetail === "function") {
+    page.openResearchDetail(frameIndex);
+  } else {
+    document.querySelector("#open-last").hidden = false;
+    document.querySelector("#open-last").dispatchEvent({ type: "click" });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(document.querySelector("#detail").open, true);
+}
+
+test("detail close clears last-open-frame panel options and selected panel target", async () => {
+  const page = await ensurePage();
+  await openReadyDetailViaUi(page, 0);
+  const dock = page.getResearchDock();
+  assert.ok(panelCommandOptions().length >= 1, "open detail should expose panel options");
+
+  const panel = panelCommandOptions()[0];
+  document.querySelector("#research-commands-target").value = panel.value;
+  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
+  assert.equal(dock.getCommandTarget()?.kind, "panel");
+  document.querySelector("#research-commands-draft").value = "черновик команды остаётся";
+
+  document.querySelector("#close-detail").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(document.querySelector("#detail").open, false);
+  assert.equal(panelCommandOptions().length, 0);
+  assert.equal(document.querySelector("#research-commands-target").value, "");
+  assert.equal(dock.getCommandTarget(), null);
+  assert.match(document.querySelector("#research-commands-target-label").textContent, /не выбрано|Выберите/i);
+  assert.equal(document.querySelector("#research-commands-draft").value, "черновик команды остаётся");
+  assert.ok(commandSelectOptions().some((option) => option.value === "storyboard"));
+});
+
+test("closed-detail panel send makes zero product and research calls", async () => {
+  const page = await ensurePage();
+  await openReadyDetailViaUi(page, 0);
+  const panel = panelCommandOptions()[0];
+  document.querySelector("#research-commands-target").value = panel.value;
+  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
+  document.querySelector("#research-commands-draft").value = "после закрытия не вызывать";
+
+  document.querySelector("#close-detail").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  researchPosts.length = 0;
+  productPosts.length = 0;
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(productPosts.filter((post) => /\/panels\/\d+\/generate$/.test(post.path)).length, 0);
+  assert.equal(researchPosts.filter((event) => event.eventKind === "action_start" || event.eventKind === "action_terminal").length, 0);
+  assert.equal(document.querySelector("#research-commands-draft").value, "после закрытия не вызывать");
+  assert.match(document.querySelector("#research-commands-status")?.textContent || "", /Выберите действие|не выполнены/i);
+});
+
+test("closed detail stays panel-empty across visual refresh", async () => {
+  const page = await ensurePage();
+  await openReadyDetailViaUi(page, 0);
+  assert.ok(panelCommandOptions().length >= 1);
+  document.querySelector("#close-detail").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(panelCommandOptions().length, 0);
+
+  // Retain navigation index while dialog stays closed, then refresh visual state.
+  page.setResearchVisualState(readyVisual(), 0);
+  assert.equal(document.querySelector("#detail").open, false);
+  assert.equal(panelCommandOptions().length, 0);
+});
+
+test("reopening detail repopulates current-frame panels without auto-selecting prior panel", async () => {
+  const page = await ensurePage();
+  await openReadyDetailViaUi(page, 0);
+  const firstPanel = panelCommandOptions()[0];
+  document.querySelector("#research-commands-target").value = firstPanel.value;
+  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
+  assert.equal(page.getResearchDock().getCommandTarget()?.kind, "panel");
+
+  document.querySelector("#close-detail").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(page.getResearchDock().getCommandTarget(), null);
+
+  await openReadyDetailViaUi(page, 0);
+  assert.ok(panelCommandOptions().length >= 1);
+  assert.ok(panelCommandOptions().some((option) => /панель/i.test(option.text)));
+  assert.equal(document.querySelector("#research-commands-target").value, "");
+  assert.equal(page.getResearchDock().getCommandTarget(), null);
+  assert.match(document.querySelector("#research-commands-target-label").textContent, /не выбрано|Выберите/i);
+});
+
+test("storyboard selection remains sticky across detail close and reopen", async () => {
+  const page = await ensurePage();
+  await openReadyDetailViaUi(page, 0);
+  document.querySelector("#research-commands-target").value = "storyboard";
+  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
+  assert.equal(page.getResearchDock().getCommandTarget()?.kind, "storyboard");
+
+  document.querySelector("#close-detail").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(page.getResearchDock().getCommandTarget()?.kind, "storyboard");
+  assert.equal(document.querySelector("#research-commands-target").value, "storyboard");
+  assert.equal(panelCommandOptions().length, 0);
+
+  await openReadyDetailViaUi(page, 0);
+  assert.equal(page.getResearchDock().getCommandTarget()?.kind, "storyboard");
+  assert.equal(document.querySelector("#research-commands-target").value, "storyboard");
+  assert.ok(panelCommandOptions().length >= 1);
+});
