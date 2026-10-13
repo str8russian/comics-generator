@@ -168,7 +168,7 @@
 
 **Purpose**: Exact quickstart commands, real-browser top-layer check, regressions, clean tree.
 
-- [ ] T030 Run focused offline research suites from `app/storyboard-web/`:
+- [X] T030 Run focused offline research suites from `app/storyboard-web/`:
 
   ```bash
   node --test \
@@ -186,7 +186,7 @@
 
   Fix only in-scope regressions. **SC-001–SC-007, FR-036**. **Done when**: all green. **Proof**: terminal summary.
 
-- [ ] T031 Run broader offline suite from `app/storyboard-web/`: `node --test test/**/*.test.mjs` (PG files skip if URL unset). **FR-036**. **Done when**: green or only expected PG skips. **Proof**: terminal summary.
+- [X] T031 Run broader offline suite from `app/storyboard-web/`: `node --test test/**/*.test.mjs` (PG files skip if URL unset). **FR-036**. **Done when**: green or only expected PG skips. **Proof**: terminal summary.
 
 - [ ] T032 With `STORYBOARD_TEST_DATABASE_URL` pointing at local Compose `comics_test` (same local role as `docker-compose.yml` `db` service; do not commit secrets), run from repo root: `node app/storyboard-web/test/postgres/verify.mjs` (fail-closed). **FR-024–FR-026**. **Done when**: exit 0. **Proof**: verifier exit code.
 

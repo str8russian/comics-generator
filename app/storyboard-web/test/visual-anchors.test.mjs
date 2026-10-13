@@ -61,6 +61,7 @@ function createElement(tag) {
     src: "",
     children: [],
     parentElement: null,
+    parentNode: null,
     clientWidth: 800,
     clientHeight: 400,
     scrollWidth: 80,
@@ -74,20 +75,32 @@ function createElement(tag) {
       for (const listener of listeners.get(event.type) ?? []) listener(event);
     },
     replaceChildren(...nodes) {
-      for (const child of this.children) child.parentElement = null;
+      for (const child of this.children) {
+        child.parentElement = null;
+        child.parentNode = null;
+      }
       this.children = [];
       for (const node of nodes) this.append(node);
     },
     append(...nodes) {
       for (const node of nodes) {
+        if (node.parentNode?.children) {
+          node.parentNode.children = node.parentNode.children.filter((child) => child !== node);
+        }
         node.parentElement = this;
+        node.parentNode = this;
         this.children.push(node);
       }
+    },
+    appendChild(node) {
+      this.append(node);
+      return node;
     },
     remove() {
       if (!this.parentElement) return;
       this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
       this.parentElement = null;
+      this.parentNode = null;
     },
     querySelector(selector) {
       const wanted = selector.startsWith(".") ? selector.slice(1) : null;
@@ -460,7 +473,11 @@ test("the last stored frame still opens, with structure fallback for an unknown 
     const detailCells = byClass(document.querySelector("#detail-frame"), "dialogue-cell");
     assert.equal(byClass(detailCells[1], "dialogue-text")[0].textContent, durovLine);
     assert.equal(byClass(document.querySelector("#detail-frame"), "frame-canvas")[0].style.width, "1920px");
-    assert.equal(requests.every((path) => path === "/api/project" || path === "/api/visual"), true);
+    assert.equal(requests.every((path) => (
+      path === "/api/project"
+      || path === "/api/visual"
+      || path.startsWith("/api/research/")
+    )), true);
     assert.equal(requests.some((path) => path.includes("/generate")), false);
     assert.equal(requests.filter((path) => path === "/api/project").length >= 1, true);
   } finally {
