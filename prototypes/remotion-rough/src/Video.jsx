@@ -15,12 +15,40 @@ const fontSizeFor = (text, split) => {
   return 58;
 };
 
+const imageSource = (asset) => {
+  if (!asset) return null;
+  if (asset.startsWith('http://') || asset.startsWith('https://') || asset.startsWith('data:')) return asset;
+  return staticFile(asset);
+};
+
 const FrameView = ({frame, spec}) => {
   const localFrame = useCurrentFrame();
   const {theme} = spec;
-  const split = frame.panels.length > 1;
-  const hasDialogue = frame.dialogue.trim().length > 0;
-  const characters = Array.from(frame.dialogue);
+  if (frame.kind === 'text') {
+    return (
+      <AbsoluteFill style={{backgroundColor: theme.backgroundColor, color: theme.textColor, fontFamily: theme.fontFamily}}>
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '80px 96px',
+          textAlign: 'center',
+          whiteSpace: 'pre-wrap',
+          fontSize: 72,
+          fontWeight: 600,
+          lineHeight: 1.2,
+        }}>
+          {frame.textCard}
+        </div>
+      </AbsoluteFill>
+    );
+  }
+  const split = (frame.panels || []).length > 1;
+  const dialogue = typeof frame.dialogue === 'string' ? frame.dialogue : '';
+  const hasDialogue = dialogue.trim().length > 0;
+  const characters = Array.from(dialogue);
   const typedFrames = Math.max(0, localFrame - frame.preRollFrames);
   const visibleCount = Math.min(
     characters.length,
@@ -34,7 +62,7 @@ const FrameView = ({frame, spec}) => {
   return (
     <AbsoluteFill style={{backgroundColor: theme.backgroundColor, color: theme.textColor, fontFamily: theme.fontFamily}}>
       <div style={{position: 'absolute', inset: `0 0 ${visualBottom}px 0`, display: 'flex'}}>
-        {frame.panels.map((panel, index) => (
+        {(frame.panels || []).map((panel, index) => (
           <div
             key={`${frame.id}-panel-${index}`}
             style={{
@@ -48,20 +76,22 @@ const FrameView = ({frame, spec}) => {
               backgroundColor: '#082b31',
             }}
           >
-            <Img
-              src={staticFile(panel.asset)}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                width: '100%',
-                height: '100%',
-                display: 'block',
-                objectFit: 'cover',
-                objectPosition: panel.position,
-                transformOrigin: panel.align,
-                transform: `scale(${panel.zoom})`,
-              }}
-            />
+            {imageSource(panel.asset) ? (
+              <Img
+                src={imageSource(panel.asset)}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  display: 'block',
+                  objectFit: 'cover',
+                  objectPosition: panel.position,
+                  transformOrigin: panel.align,
+                  transform: `${panel.mirrored ? 'scaleX(-1) ' : ''}scale(${panel.zoom})`,
+                }}
+              />
+            ) : null}
           </div>
         ))}
       </div>
@@ -76,11 +106,10 @@ const FrameView = ({frame, spec}) => {
             height: theme.dialogueBarHeightPx,
             display: 'flex',
             boxSizing: 'border-box',
-            borderTop: `2px solid ${theme.dialogueBarBorderColor}`,
             background: theme.dialogueBarColor,
           }}
         >
-          {frame.panels.map((panel, index) => (
+          {(frame.panels || []).map((panel, index) => (
             <div
               key={`${frame.id}-dialogue-${index}`}
               style={{

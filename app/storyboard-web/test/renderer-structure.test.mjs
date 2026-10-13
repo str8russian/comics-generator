@@ -259,3 +259,26 @@ test("removes the horizontal hairline and keeps the 48px split divider", () => {
   assert.equal(byClass(single, "panel-asset")[0].style.transform, "scale(1)");
   assert.equal(byClass(single, "dialogue-bar").length, 1);
 });
+
+test("text cards render owner text without a dialogue bar", () => {
+  installDocument();
+  const card = render({
+    frameKind: "text",
+    textCard: "Пояснение",
+    dialogue: "",
+    layout: "single",
+    panels: [],
+  }, { mode: "visual" });
+  assert.equal(card.dataset.kind, "text");
+  assert.equal(byClass(card, "text-card")[0].textContent, "Пояснение");
+  assert.equal(byClass(card, "dialogue-bar").length, 0);
+});
+
+test("remotion frame drops the horizontal hairline and keeps mirror plus the gutter", () => {
+  const source = readFileSync(new URL("../../../prototypes/remotion-rough/src/Video.jsx", import.meta.url), "utf8");
+  assert.equal(source.includes("borderTop"), false);
+  assert.equal(source.includes("2px solid"), false);
+  assert.match(source, /panel\.mirrored \? 'scaleX\(-1\) '/);
+  assert.match(source, /theme\.panelGutterPx/);
+  assert.match(source, /frame\.kind === 'text'/);
+});

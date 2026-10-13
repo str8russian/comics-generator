@@ -264,6 +264,21 @@ body:not(.show-metadata) .diagnostic { display: none; }
   color: #f6f4ed;
 }
 
+.text-card {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 96px;
+  color: #f6f4ed;
+  font-size: 72px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
 .dialogue-cell {
   display: flex;
   min-width: 0;

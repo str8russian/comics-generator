@@ -97,13 +97,21 @@ function selectedFontSize(dialogue, split, requested) {
 export function render(frame, options) {
   const mode = options && options.mode === "structure" ? "structure" : "visual";
   const ownerDocument = (options && options.document) || document;
-  const panels = frame.panels;
+  const panels = Array.isArray(frame.panels) ? frame.panels : [];
   const split = panels.length > 1;
   const canvas = el("div", "frame-canvas mode-" + mode, ownerDocument);
-  canvas.dataset.layout = frame.layout;
+  canvas.dataset.layout = frame.layout || "single";
   canvas.dataset.mode = mode;
   canvas.style.width = FRAME_GEOMETRY.width + "px";
   canvas.style.height = FRAME_GEOMETRY.height + "px";
+  if (frame.frameKind === "text") {
+    canvas.dataset.kind = "text";
+    canvas.style.background = FRAME_BG;
+    const card = el("div", "text-card", ownerDocument);
+    card.textContent = frame.textCard || "";
+    canvas.append(card);
+    return canvas;
+  }
 
   const strip = el("div", "panel-strip", ownerDocument);
   const dialogue = typeof frame.dialogue === "string" && frame.dialogue.trim() ? frame.dialogue : "";
