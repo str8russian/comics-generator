@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { inspectImage } from "./image-info.mjs";
+import { applyOperation, ensurePanelIds, persistenceMode, preservePanelIdentity } from "./assembly.mjs";
+import { inspectImage, parseIdentityImage } from "./image-info.mjs";
+import { presentFrameTiming } from "./timing.mjs";
 import {
   expandStoryboardFrames,
   placement,
@@ -87,6 +89,60 @@ async function ensureVersion(client) {
   return { result, version: { id, parent_storyboard_version_id: null, frames, instruction: null } };
 }
 
+async function persistPanelIds(client, context) {
+  const identified = ensurePanelIds(context.version.frames);
+  if (!identified.changed) return context;
+  await client.query(
+    `UPDATE storyboard_version SET frames = $2::jsonb WHERE id = $1`,
+    [context.version.id, JSON.stringify(identified.frames)],
+  );
+  context.version.frames = identified.frames;
+  return context;
+}
+
+async function backfillPanelIds(client, versionId, frames) {
+  for (const frame of expandStoryboardFrames(frames)) {
+    for (let index = 0; index < (frame.panels || []).length; index += 1) {
+      const panelId = frame.panels[index]?.id;
+      if (!panelId) continue;
+      await client.query(`
+        UPDATE panel_visual_state
+        SET panel_id = $4
+        WHERE storyboard_version_id = $1 AND frame_id = $2 AND panel_index = $3 AND panel_id IS NULL
+      `, [versionId, frame.id, index, panelId]);
+    }
+  }
+}
+
+async function copyPanelState(client, fromVersionId, toVersionId, frames) {
+  for (const frame of expandStoryboardFrames(frames)) {
+    for (let index = 0; index < (frame.panels || []).length; index += 1) {
+      const panelId = frame.panels[index]?.id;
+      if (!panelId) continue;
+      await client.query(`
+        INSERT INTO panel_visual_state (
+          id, storyboard_version_id, frame_id, panel_index, panel_id, subject,
+          performance_asset_id, current_generation_id, zoom, position_x, position_y, mirrored,
+          assigned_asset_id, assignment_origin
+        )
+        SELECT $1, $2, $3, $4, panel_id, subject,
+               performance_asset_id, current_generation_id, zoom, position_x, position_y, mirrored,
+               assigned_asset_id, assignment_origin
+        FROM panel_visual_state
+        WHERE storyboard_version_id = $5 AND panel_id = $6
+        ON CONFLICT DO NOTHING
+      `, [randomUUID(), toVersionId, frame.id, index, fromVersionId, panelId]);
+    }
+  }
+}
+
+async function lockHead(client, resultId) {
+  await client.query(
+    `SELECT active_storyboard_version_id FROM storyboard_head WHERE storyboard_result_id = $1 FOR UPDATE`,
+    [resultId],
+  );
+}
+
 async function ensurePanelRows(client, context, cast) {
   const frames = expandStoryboardFrames(context.version.frames);
   for (const frame of frames) {
@@ -94,11 +150,14 @@ async function ensurePanelRows(client, context, cast) {
       const panel = frame.panels[panelIndex];
       const subject = resolvePanelSubject(panel.description, cast.characters, cast.aliases);
       await client.query(`
-        INSERT INTO panel_visual_state (id, storyboard_version_id, frame_id, panel_index, subject)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO panel_visual_state (
+          id, storyboard_version_id, frame_id, panel_index, panel_id, subject
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (storyboard_version_id, frame_id, panel_index)
-        DO UPDATE SET subject = EXCLUDED.subject
-      `, [randomUUID(), context.version.id, frame.id, panelIndex, subject]);
+        DO UPDATE SET subject = EXCLUDED.subject,
+                      panel_id = COALESCE(panel_visual_state.panel_id, EXCLUDED.panel_id)
+      `, [randomUUID(), context.version.id, frame.id, panelIndex, panel.id ?? null, subject]);
     }
   }
 }
@@ -262,6 +321,8 @@ async function loadVisualWithClient(client) {
       await client.query("COMMIT");
       return { ok: true, status: "unavailable" };
     }
+    await persistPanelIds(client, context);
+    await backfillPanelIds(client, context.version.id, context.version.frames);
     const cast = await castFor(client, context.result.material_state_id);
     await ensurePanelRows(client, context, cast);
     await client.query("COMMIT");
@@ -328,7 +389,9 @@ async function loadVisualWithClient(client) {
         const anchorCurrent = !state?.subject || (
           state.anchor_version_id && approvedByName.get(state.subject) === state.anchor_version_id
         );
-        const outputAssetId = state?.generation_status === "ready" && anchorCurrent ? state.output_asset_id : null;
+        const assignedId = state?.assigned_asset_id ?? null;
+        const generatedId = state?.generation_status === "ready" && anchorCurrent ? state.output_asset_id : null;
+        const outputAssetId = assignedId || generatedId;
         const placed = placement({
           zoom: state?.zoom ?? 1,
           positionX: state?.position_x ?? 50,
@@ -344,6 +407,8 @@ async function loadVisualWithClient(client) {
           stateId: state?.id ?? null,
           assetId: outputAssetId,
           asset: assetUrl(outputAssetId),
+          assignmentOrigin: assignedId ? (state?.assignment_origin ?? null) : null,
+          ownerDescription: typeof panel.ownerDescription === "string" ? panel.ownerDescription : "",
           performanceAssetId: state?.performance_asset_id ?? null,
           performanceAssetUrl: assetUrl(state?.performance_asset_id),
           generationStatus: latestGeneration?.status ?? null,
@@ -352,7 +417,11 @@ async function loadVisualWithClient(client) {
           ...placed,
         };
       });
-      return { ...frame, panels, visualReady: panels.length > 0 && panels.every((panel) => panel.assetId) };
+      const timing = presentFrameTiming(frame);
+      const visualReady = frame.frameKind === "text"
+        ? Boolean(String(frame.textCard || "").trim())
+        : panels.length > 0 && panels.every((panel) => panel.assetId);
+      return { ...frame, panels, ...timing, visualReady };
     });
     const complete = frames.length > 0 && frames.every((frame) => frame.visualReady);
     const snapshot = currentSnapshot(frames);
@@ -366,6 +435,24 @@ async function loadVisualWithClient(client) {
     const approved = approval.rowCount === 1
       && JSON.stringify(normalizeApprovalSnapshot(approval.rows[0].snapshot)) === JSON.stringify(normalizeApprovalSnapshot(snapshot));
     const styleSeed = await backfillStyleSeed(client, context.result.material_state_id);
+    const reusable = await client.query(`
+      SELECT DISTINCT a.id, a.kind, a.mime, a.width, a.height
+      FROM visual_asset a
+      WHERE a.kind IN ('uploaded-image', 'panel-image')
+        AND a.id IN (
+          SELECT pvs.assigned_asset_id
+          FROM panel_visual_state pvs
+          JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
+          WHERE sv.storyboard_result_id = $1 AND pvs.assigned_asset_id IS NOT NULL
+          UNION
+          SELECT pg.output_asset_id
+          FROM panel_generation pg
+          JOIN panel_visual_state pvs ON pvs.id = pg.panel_visual_state_id
+          JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
+          WHERE sv.storyboard_result_id = $1 AND pg.status = 'ready' AND pg.output_asset_id IS NOT NULL
+        )
+      ORDER BY a.id
+    `, [context.result.id]);
     return {
       ok: true,
       status: "ready",
@@ -379,6 +466,14 @@ async function loadVisualWithClient(client) {
       characters: anchors,
       allAnchorsApproved: anchors.length > 0 && anchors.every((anchor) => anchor.approvedAnchorId),
       frames,
+      reusableAssets: reusable.rows.map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        mime: row.mime,
+        width: row.width,
+        height: row.height,
+        url: assetUrl(row.id),
+      })),
       complete,
       approved,
       readyForVideo: complete && approved,
@@ -705,36 +800,23 @@ export async function saveStoryboardEdit(pool, { instruction, frames }) {
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
-      const current = await ensureVersion(client);
+      let current = await ensureVersion(client);
       if (!current) {
         await client.query("ROLLBACK");
         return failed("not-found", 404);
       }
+      await lockHead(client, current.result.id);
+      current = await ensureVersion(client);
+      await persistPanelIds(client, current);
+      await backfillPanelIds(client, current.version.id, current.version.frames);
       const id = randomUUID();
+      const nextFrames = preservePanelIdentity(current.version.frames, frames);
       await client.query(`
         INSERT INTO storyboard_version (
           id, storyboard_result_id, parent_storyboard_version_id, instruction, frames
         ) VALUES ($1, $2, $3, $4, $5::jsonb)
-      `, [id, current.result.id, current.version.id, String(instruction).trim(), JSON.stringify(frames)]);
-      const oldFrames = new Map(expandStoryboardFrames(current.version.frames).map((frame) => [frame.id, frame]));
-      for (const frame of expandStoryboardFrames(frames)) {
-        const old = oldFrames.get(frame.id);
-        if (!old || old.layout !== frame.layout || old.panels.length !== frame.panels.length) continue;
-        for (let index = 0; index < frame.panels.length; index += 1) {
-          if (old.panels[index]?.description !== frame.panels[index]?.description) continue;
-          await client.query(`
-            INSERT INTO panel_visual_state (
-              id, storyboard_version_id, frame_id, panel_index, subject,
-              performance_asset_id, current_generation_id, zoom, position_x, position_y, mirrored
-            )
-            SELECT $1, $2, frame_id, panel_index, subject,
-                   performance_asset_id, current_generation_id, zoom, position_x, position_y, mirrored
-            FROM panel_visual_state
-            WHERE storyboard_version_id = $3 AND frame_id = $4 AND panel_index = $5
-            ON CONFLICT DO NOTHING
-          `, [randomUUID(), id, current.version.id, frame.id, index]);
-        }
-      }
+      `, [id, current.result.id, current.version.id, String(instruction).trim(), JSON.stringify(nextFrames)]);
+      await copyPanelState(client, current.version.id, id, nextFrames);
       await client.query(
         `UPDATE storyboard_head SET active_storyboard_version_id = $2 WHERE storyboard_result_id = $1`,
         [current.result.id, id],
@@ -806,6 +888,153 @@ export async function loadStoryboardStructure(pool) {
   }
 }
 
+async function assetIsReusable(client, storyboardResultId, assetId) {
+  if (typeof assetId !== "string" || !assetId) return false;
+  const result = await client.query(`
+    SELECT 1
+    FROM visual_asset a
+    WHERE a.id = $1
+      AND a.kind IN ('uploaded-image', 'panel-image')
+      AND (
+        EXISTS (
+          SELECT 1
+          FROM panel_visual_state pvs
+          JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
+          WHERE sv.storyboard_result_id = $2 AND pvs.assigned_asset_id = a.id
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM panel_generation pg
+          JOIN panel_visual_state pvs ON pvs.id = pg.panel_visual_state_id
+          JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
+          WHERE sv.storyboard_result_id = $2
+            AND pg.status = 'ready'
+            AND pg.output_asset_id = a.id
+        )
+      )
+  `, [assetId, storyboardResultId]);
+  return result.rowCount > 0;
+}
+
+async function applyAssignment(client, current, operation) {
+  const targets = Array.isArray(operation.targets) ? operation.targets : [];
+  const panelIds = targets.map((target) => target?.panelId).filter((id) => typeof id === "string" && id);
+  if (!panelIds.length || panelIds.length !== targets.length) return failed("panel-not-found");
+  let assetId = operation.assetId;
+  let origin = "reuse";
+  if (operation.op === "uploadAsset") {
+    const image = parseIdentityImage(operation.imageDataUrl);
+    if (!image.ok) return failed(image.kind);
+    const existing = await client.query(`
+      SELECT id FROM visual_asset
+      WHERE sha256 = $1 AND kind IN ('uploaded-image', 'panel-image')
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `, [image.sha256]);
+    if (existing.rowCount === 1) {
+      assetId = existing.rows[0].id;
+      origin = "reuse";
+    } else {
+      const inserted = await insertAsset(client, "uploaded-image", image);
+      assetId = inserted.id;
+      origin = "upload";
+    }
+  } else if (!(await assetIsReusable(client, current.result.id, assetId))) {
+    return failed("asset-not-reusable");
+  }
+  const rows = await client.query(`
+    SELECT panel_id FROM panel_visual_state
+    WHERE storyboard_version_id = $1 AND panel_id = ANY($2::text[])
+  `, [current.version.id, panelIds]);
+  if (rows.rowCount !== new Set(panelIds).size) return failed("panel-not-found");
+  for (const panelId of new Set(panelIds)) {
+    await client.query(`
+      UPDATE panel_visual_state
+      SET assigned_asset_id = $3, assignment_origin = $4, updated_at = clock_timestamp()
+      WHERE storyboard_version_id = $1 AND panel_id = $2
+    `, [current.version.id, panelId, assetId, origin]);
+  }
+  return { ok: true, context: current, assetId };
+}
+
+async function applyLockedOperation(client, current, operation) {
+  if (operation.op === "uploadAsset" || operation.op === "assignAsset") {
+    return applyAssignment(client, current, operation);
+  }
+  const applied = applyOperation(current.version.frames, operation);
+  if (!applied.ok) return failed(applied.kind);
+  if (persistenceMode(operation.op) === "current") {
+    await client.query(
+      `UPDATE storyboard_version SET frames = $2::jsonb WHERE id = $1`,
+      [current.version.id, JSON.stringify(applied.frames)],
+    );
+    current.version.frames = applied.frames;
+    return { ok: true, context: current };
+  }
+  const versionId = randomUUID();
+  await client.query(`
+    INSERT INTO storyboard_version (
+      id, storyboard_result_id, parent_storyboard_version_id, instruction, frames
+    ) VALUES ($1, $2, $3, $4, $5::jsonb)
+  `, [versionId, current.result.id, current.version.id, operation.op, JSON.stringify(applied.frames)]);
+  await copyPanelState(client, current.version.id, versionId, applied.frames);
+  await client.query(
+    `UPDATE storyboard_head SET active_storyboard_version_id = $2 WHERE storyboard_result_id = $1`,
+    [current.result.id, versionId],
+  );
+  const cast = await castFor(client, current.result.material_state_id);
+  const next = {
+    result: current.result,
+    version: {
+      id: versionId,
+      parent_storyboard_version_id: current.version.id,
+      frames: applied.frames,
+      instruction: operation.op,
+    },
+  };
+  await ensurePanelRows(client, next, cast);
+  return { ok: true, context: next };
+}
+
+export async function applyProductOperation(pool, input) {
+  const operations = input?.op === "batch" ? input.operations : [input];
+  if (!Array.isArray(operations) || operations.length === 0 || operations.length > 40) {
+    return failed("invalid-operation");
+  }
+  if (operations.some((operation) => !operation || typeof operation.op !== "string" || operation.op === "batch")) {
+    return failed("invalid-operation");
+  }
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      let current = await ensureVersion(client);
+      if (!current) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      await lockHead(client, current.result.id);
+      current = await ensureVersion(client);
+      await persistPanelIds(client, current);
+      await backfillPanelIds(client, current.version.id, current.version.frames);
+      const cast = await castFor(client, current.result.material_state_id);
+      await ensurePanelRows(client, current, cast);
+      for (const operation of operations) {
+        const result = await applyLockedOperation(client, current, operation);
+        if (!result.ok) {
+          await client.query("ROLLBACK");
+          return result;
+        }
+        if (result.context) current = result.context;
+      }
+      await client.query("COMMIT");
+      return { ok: true, storyboardVersionId: current.version.id };
+    });
+  } catch (error) {
+    if (error?.kind === "invalid-image") return failed("invalid-image");
+    return failed("database", 503);
+  }
+}
+
 export function createVisualStore(pool) {
   return {
     load: () => loadVisual(pool),
@@ -819,6 +1048,7 @@ export function createVisualStore(pool) {
     saveStoryboardEdit: (input) => saveStoryboardEdit(pool, input),
     undoStoryboardEdit: () => undoStoryboardEdit(pool),
     approveVisual: () => approveVisual(pool),
+    applyOperation: (input) => applyProductOperation(pool, input),
     readAsset: (id) => readAsset(pool, id),
     loadStructure: () => loadStoryboardStructure(pool),
   };

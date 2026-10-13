@@ -272,3 +272,151 @@ test("placement zoom, pan, and mirror persist across reload and copy-forward wit
     await pool.end();
   }
 });
+
+test("manual assembly keeps panel identity and reuses an upload without a generation attempt", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const split = [{
+    id: "frame-split",
+    layout: "split2",
+    origin: "source",
+    panels: [
+      { description: "Левая панель" },
+      { description: "Правая панель" },
+    ],
+    dialogue: "Привет",
+    speakerPanel: 0,
+    sourceItemId: "item-1",
+    sourceRole: "utterance",
+  }];
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-14T12:00:00Z", split);
+    const store = createVisualStore(pool);
+    const initial = await store.load();
+    const leftId = initial.frames[0].panels[0].id;
+    const rightId = initial.frames[0].panels[1].id;
+    assert.equal(typeof leftId, "string");
+    assert.notEqual(leftId, rightId);
+    const placed = await store.updatePlacement({
+      frameId: "frame-split",
+      panelIndex: 0,
+      zoom: 1.5,
+      positionX: 20,
+      positionY: 40,
+      mirrored: true,
+    });
+    assert.equal(placed.ok, true);
+    const moved = await store.applyOperation({
+      op: "reorderPanels",
+      structureFrameId: "frame-split",
+      panelIds: [rightId, leftId],
+    });
+    assert.equal(moved.ok, true);
+    const after = await store.load();
+    assert.equal(after.frames[0].dialogue, "Привет");
+    assert.equal(after.frames[0].sourceItemId, "item-1");
+    assert.equal(after.frames[0].speakerPanel, 1);
+    assert.equal(after.frames[0].panels[1].id, leftId);
+    assert.equal(after.frames[0].panels[1].description, "Левая панель");
+    assert.equal(after.frames[0].panels[1].zoom, 1.5);
+    assert.equal(after.frames[0].panels[1].positionX, 20);
+    assert.equal(after.frames[0].panels[1].mirrored, true);
+    assert.equal(after.frames[0].panels[0].id, rightId);
+    assert.equal(after.frames[0].panels[0].zoom, 1);
+
+    const beforeAssets = await pool.query("SELECT count(*)::int AS count FROM visual_asset");
+    const beforeGenerations = await pool.query("SELECT count(*)::int AS count FROM panel_generation");
+    const uploaded = await store.applyOperation({
+      op: "uploadAsset",
+      imageDataUrl: `data:image/png;base64,${png.toString("base64")}`,
+      targets: [{ panelId: leftId }],
+    });
+    assert.equal(uploaded.ok, true);
+    const withImage = await store.load();
+    const uploadedPanel = withImage.frames[0].panels.find((panel) => panel.id === leftId);
+    assert.equal(uploadedPanel.assignmentOrigin, "upload");
+    assert.equal(typeof uploadedPanel.assetId, "string");
+    const noted = await store.applyOperation({
+      op: "setOwnerDescription",
+      panelId: leftId,
+      ownerDescription: "заметка владельца",
+    });
+    assert.equal(noted.ok, true);
+    const reused = await store.applyOperation({
+      op: "assignAsset",
+      assetId: uploadedPanel.assetId,
+      targets: [{ panelId: rightId }],
+    });
+    assert.equal(reused.ok, true);
+    const shared = await store.load();
+    const rightPanel = shared.frames[0].panels.find((panel) => panel.id === rightId);
+    const leftPanel = shared.frames[0].panels.find((panel) => panel.id === leftId);
+    assert.equal(rightPanel.assetId, uploadedPanel.assetId);
+    assert.equal(rightPanel.assignmentOrigin, "reuse");
+    assert.equal(rightPanel.description, "Правая панель");
+    assert.equal(rightPanel.ownerDescription || "", "");
+    assert.equal(leftPanel.ownerDescription, "заметка владельца");
+    assert.equal(leftPanel.description, "Левая панель");
+    const afterAssets = await pool.query("SELECT count(*)::int AS count FROM visual_asset");
+    const afterGenerations = await pool.query("SELECT count(*)::int AS count FROM panel_generation");
+    assert.equal(afterAssets.rows[0].count, beforeAssets.rows[0].count + 1);
+    assert.equal(afterGenerations.rows[0].count, beforeGenerations.rows[0].count);
+
+    const duplicate = await store.applyOperation({
+      op: "uploadAsset",
+      imageDataUrl: `data:image/png;base64,${png.toString("base64")}`,
+      targets: [{ panelId: rightId }],
+    });
+    assert.equal(duplicate.ok, true);
+    const deduped = await pool.query("SELECT count(*)::int AS count FROM visual_asset");
+    assert.equal(deduped.rows[0].count, afterAssets.rows[0].count);
+
+    const head = shared.storyboardVersionId;
+    const rejected = await store.applyOperation({
+      op: "batch",
+      operations: [
+        { op: "insertFrame", index: 1, kind: "text" },
+        { op: "setDuration", structureFrameId: "frame-split", durationFrames: 1 },
+      ],
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.kind, "duration-truncates-dialogue");
+    const unchanged = await store.load();
+    assert.equal(unchanged.storyboardVersionId, head);
+    assert.equal(unchanged.frames.length, 1);
+    assert.equal(unchanged.frames[0].dialogue, "Привет");
+
+    await store.applyOperation({ op: "insertFrame", index: 1, kind: "image" });
+    await store.applyOperation({ op: "insertFrame", index: 2, kind: "text" });
+    const assembled = await store.load();
+    const image = assembled.frames.find((frame) => frame.frameKind === "image");
+    const card = assembled.frames.find((frame) => frame.frameKind === "text");
+    assert.equal(image.durationFrames, 36);
+    assert.equal(image.durationSeconds, 1.2);
+    const written = await store.applyOperation({
+      op: "setTextCard",
+      structureFrameId: card.structureFrameId,
+      text: "Пояснение",
+    });
+    assert.equal(written.ok, true);
+    const finished = await store.load();
+    assert.equal(finished.frames.find((frame) => frame.frameKind === "text").textCard, "Пояснение");
+    assert.equal(finished.frames.find((frame) => frame.frameKind === "text").dialogue, "");
+    assert.equal(finished.frames[0].dialogue, "Привет");
+    const generations = await pool.query("SELECT count(*)::int AS count FROM panel_generation");
+    assert.equal(generations.rows[0].count, 0);
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});

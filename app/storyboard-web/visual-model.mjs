@@ -448,6 +448,9 @@ export function expandStoryboardFrames(frames) {
           displayBlock: { sourceItemId: frame.sourceItemId, start, end },
           structureFrameId: frame.id,
           structureSegmentIndex: index,
+          frameKind: segment.frameKind ?? frame.frameKind ?? null,
+          textCard: segment.textCard ?? null,
+          durationFrames: Number.isInteger(segment.durationFrames) ? segment.durationFrames : null,
         });
         cursor = end;
       });

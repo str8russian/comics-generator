@@ -72,7 +72,7 @@ function frameVisualReady(panels) {
 
 function piece(frame, text, composition, offset, fontSize) {
   const panels = (composition.panels || []).map(copyPanel);
-  return {
+  const pieceFrame = {
     layout: composition.layout,
     origin: "source",
     panels,
@@ -88,6 +88,15 @@ function piece(frame, text, composition, offset, fontSize) {
     fontSize,
     visualReady: frameVisualReady(panels),
   };
+  if (text === frame.dialogue) {
+    if (frame.frameKind) pieceFrame.frameKind = frame.frameKind;
+    if (typeof frame.textCard === "string") pieceFrame.textCard = frame.textCard;
+    if (Number.isInteger(frame.durationFrames)) pieceFrame.durationFrames = frame.durationFrames;
+    if (frame.durationSource) pieceFrame.durationSource = frame.durationSource;
+    if (typeof frame.durationSeconds === "number") pieceFrame.durationSeconds = frame.durationSeconds;
+    if (Number.isInteger(frame.minimumDurationFrames)) pieceFrame.minimumDurationFrames = frame.minimumDurationFrames;
+  }
+  return pieceFrame;
 }
 
 function compileQuote(frame, text, composition, offset, measure) {
