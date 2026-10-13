@@ -1601,3 +1601,158 @@ test("T028 Operations projection exposes retainedLastGoodImage on failure termin
   assert.match(items[0].label, /ошибк|failure|панел|panel_generate/i);
   assert.equal(/успех/i.test(items[0].label), false);
 });
+
+test("projectOperations distinguishes start vs terminal evidence-save failure labels", async () => {
+  const { projectOperations } = await import("../public/research-dock.mjs");
+  const items = projectOperations({
+    live: {
+      correlationId: "00000000-0000-4000-8000-000000000010",
+      semanticAction: "structure_edit",
+      surface: "dock_commands",
+    },
+    events: [],
+    localEvidenceFailures: [
+      {
+        correlationId: "00000000-0000-4000-8000-000000000010",
+        semanticAction: "structure_edit",
+        surface: "dock_commands",
+        phase: "start",
+      },
+      {
+        correlationId: "00000000-0000-4000-8000-000000000011",
+        semanticAction: "structure_edit",
+        surface: "product_control",
+        phase: "terminal",
+      },
+    ],
+  });
+  const startFail = items.find((item) => item.localOnly && item.phase === "start");
+  const terminalFail = items.find((item) => item.localOnly && item.phase === "terminal");
+  assert.ok(startFail);
+  assert.ok(terminalFail);
+  assert.equal(items.some((item) => item.status === "running"), true);
+  assert.match(startFail.label, /не удалось сохранить начало|начало исследования|продолжается/i);
+  assert.equal(/выполнен|успех/i.test(startFail.label), false);
+  assert.match(terminalFail.label, /продукт.*выполн|исследован.*не сохран/i);
+  assert.equal(/начало|продолжается/i.test(terminalFail.label), false);
+});
+
+test("Commands start evidence save failure while product pending uses start wording then clears on incomplete terminal", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  let resolveProduct;
+  const productPending = new Promise((resolve) => {
+    resolveProduct = resolve;
+  });
+  let startPosts = 0;
+  let terminalPosts = 0;
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext({ workflowPhase: "structure" }),
+    isProductBusy: () => false,
+    executeDockCommand: async () => productPending,
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/events") {
+        const body = JSON.parse(init.body);
+        if (body.eventKind === "action_start") {
+          startPosts += 1;
+          return jsonResponse(500, { status: "failed", kind: "database" });
+        }
+        terminalPosts += 1;
+        return jsonResponse(201, {
+          event: {
+            ...body,
+            ...body.startSnapshot,
+            seq: 2,
+            occurredAt: "2026-10-13T14:20:00.000Z",
+            durationMs: null,
+            outcomeFlags: { ...(body.outcomeFlags || {}), evidenceIncomplete: true },
+          },
+        });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  document.querySelector("#research-commands-draft").value = "команда при сбое start";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const pending = dock.getOperationsProjection();
+  assert.equal(pending.some((item) => item.status === "running"), true);
+  const startFail = pending.find((item) => item.localOnly === true);
+  assert.ok(startFail);
+  assert.equal(startFail.phase, "start");
+  assert.match(startFail.label, /не удалось сохранить начало|начало исследования|продолжается/i);
+  assert.equal(/выполнен|успех/i.test(startFail.label), false);
+  assert.equal(startPosts, 1);
+  assert.equal(terminalPosts, 0);
+
+  resolveProduct({ ok: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const finished = dock.getOperationsProjection();
+  assert.equal(finished.some((item) => item.status === "running"), false);
+  assert.equal(finished.some((item) => item.localOnly === true), false);
+  const incomplete = finished.find((item) => item.outcomeFlags?.evidenceIncomplete === true);
+  assert.ok(incomplete);
+  assert.equal(incomplete.durationMs, null);
+  assert.equal(incomplete.status, "success");
+  assert.equal(startPosts, 1);
+  assert.equal(terminalPosts, 1);
+});
+
+test("Commands terminal evidence save failure after product success keeps completion wording", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  let startPosts = 0;
+  let terminalPosts = 0;
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext({ workflowPhase: "structure" }),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/events") {
+        const body = JSON.parse(init.body);
+        if (body.eventKind === "action_start") {
+          startPosts += 1;
+          return jsonResponse(201, {
+            event: { ...body, seq: 1, occurredAt: "2026-10-13T14:21:00.000Z" },
+          });
+        }
+        terminalPosts += 1;
+        return jsonResponse(500, { status: "failed", kind: "database" });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  document.querySelector("#research-commands-draft").value = "команда при сбое terminal";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const projection = dock.getOperationsProjection();
+  const terminalFail = projection.find((item) => item.localOnly === true);
+  assert.ok(terminalFail);
+  assert.equal(terminalFail.phase, "terminal");
+  assert.match(terminalFail.label, /продукт.*выполн|исследован.*не сохран/i);
+  assert.equal(/начало|продолжается/i.test(terminalFail.label), false);
+  assert.equal(projection.some((item) => item.status === "running"), false);
+  assert.equal(startPosts, 1);
+  assert.equal(terminalPosts, 1);
+});

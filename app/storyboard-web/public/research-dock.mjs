@@ -58,6 +58,17 @@ export function createEmptyEditTarget(editKind, castPhase, overrides = {}) {
 }
 
 const EVIDENCE_SAVE_FAILURE_LABEL = "Действие продукта выполнено, результат исследования не сохранён.";
+const EVIDENCE_SAVE_FAILURE_LABEL_START = "Не удалось сохранить начало исследования; действие продукта продолжается.";
+
+function evidenceSaveFailurePhase(phase) {
+  return phase === "start" ? "start" : "terminal";
+}
+
+function evidenceSaveFailureLabel(phase) {
+  return evidenceSaveFailurePhase(phase) === "start"
+    ? EVIDENCE_SAVE_FAILURE_LABEL_START
+    : EVIDENCE_SAVE_FAILURE_LABEL;
+}
 
 export function projectOperations({ live = null, events = [], localEvidenceFailures = [] } = {}) {
   const items = [];
@@ -144,6 +155,7 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
 
   for (const failure of localEvidenceFailures || []) {
     if (!failure || typeof failure !== "object") continue;
+    const phase = evidenceSaveFailurePhase(failure.phase);
     items.push({
       status: "evidence-save-failure",
       correlationId: failure.correlationId ?? null,
@@ -155,7 +167,8 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
       durationMs: null,
       localOnly: true,
       historical: false,
-      label: EVIDENCE_SAVE_FAILURE_LABEL,
+      phase,
+      label: evidenceSaveFailureLabel(phase),
     });
   }
 

@@ -1249,3 +1249,146 @@ test("T028 incomplete startSnapshot terminal carries evidenceIncomplete and null
     fetchImpl = original;
   }
 });
+
+test("product_control start evidence save failure while product pending uses start wording then clears on incomplete terminal", async () => {
+  await ensurePage();
+  page.setResearchVisualState(readyVisual(), -1);
+  researchPosts.length = 0;
+  productPosts.length = 0;
+  const original = fetchImpl;
+  let resolveEdit;
+  const editPending = new Promise((resolve) => {
+    resolveEdit = resolve;
+  });
+  let startPosts = 0;
+  let terminalPosts = 0;
+  try {
+    fetchImpl = async (url, init = {}) => {
+      const path = new URL(url, "http://127.0.0.1").pathname;
+      if (path === "/api/research/events") {
+        const body = JSON.parse(init.body);
+        if (body.eventKind === "action_start") {
+          startPosts += 1;
+          return jsonResponse(500, { status: "failed", kind: "database" });
+        }
+        terminalPosts += 1;
+        researchPosts.push(body);
+        return jsonResponse(201, {
+          event: {
+            ...body,
+            ...body.startSnapshot,
+            seq: 2,
+            occurredAt: "2026-10-13T15:20:00.000Z",
+            durationMs: null,
+            outcomeFlags: { ...(body.outcomeFlags || {}), evidenceIncomplete: true },
+          },
+        });
+      }
+      if (path === "/api/visual/storyboard/edit") {
+        productPosts.push({ path, method: init.method ?? "POST", body: init.body ? JSON.parse(init.body) : null });
+        await editPending;
+        return jsonResponse(200, readyVisual({ canUndo: true }));
+      }
+      return original(url, init);
+    };
+    document.querySelector("#structure-instruction").value = "правка при сбое start";
+    document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+
+    let pending = null;
+    let running = null;
+    let startFail = null;
+    for (let i = 0; i < 40; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const bound = page.getResearchDock();
+      pending = bound?.getOperationsProjection?.() || [];
+      running = pending.find((item) => item.status === "running");
+      startFail = running?.correlationId
+        ? pending.find((item) => item.localOnly === true && item.correlationId === running.correlationId)
+        : null;
+      if (running && startFail) break;
+    }
+    assert.ok(running?.correlationId);
+    assert.ok(startFail);
+    assert.equal(startFail.phase, "start");
+    assert.match(startFail.label, /не удалось сохранить начало|начало исследования|продолжается/i);
+    assert.equal(/выполнен|успех/i.test(startFail.label), false);
+    assert.equal(startPosts, 1);
+    assert.equal(terminalPosts, 0);
+    assert.ok(productPosts.some((entry) => entry.path === "/api/visual/storyboard/edit"));
+
+    resolveEdit();
+    for (let i = 0; i < 40; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (terminalPosts === 1) break;
+    }
+    const finished = page.getResearchDock().getOperationsProjection();
+    assert.equal(finished.some((item) => item.status === "running"), false);
+    assert.equal(finished.some((item) => (
+      item.localOnly === true && item.correlationId === running.correlationId
+    )), false);
+    const incomplete = finished.find((item) => (
+      item.outcomeFlags?.evidenceIncomplete === true
+      && item.correlationId === running.correlationId
+    ));
+    assert.ok(incomplete);
+    assert.equal(incomplete.durationMs, null);
+    assert.equal(incomplete.status, "success");
+    assert.equal(startPosts, 1);
+    assert.equal(terminalPosts, 1);
+  } finally {
+    resolveEdit?.();
+    for (let i = 0; i < 40 && terminalPosts === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fetchImpl = original;
+  }
+});
+
+test("product_control terminal evidence save failure after product success keeps completion wording", async () => {
+  await ensurePage();
+  page.setResearchVisualState(readyVisual(), -1);
+  researchPosts.length = 0;
+  productPosts.length = 0;
+  const original = fetchImpl;
+  let startPosts = 0;
+  let terminalPosts = 0;
+  let correlationId = null;
+  try {
+    fetchImpl = async (url, init = {}) => {
+      const path = new URL(url, "http://127.0.0.1").pathname;
+      if (path === "/api/research/events") {
+        const body = JSON.parse(init.body);
+        if (body.eventKind === "action_start") {
+          startPosts += 1;
+          correlationId = body.correlationId;
+          researchPosts.push(body);
+          return jsonResponse(201, {
+            event: { ...body, seq: startPosts, occurredAt: "2026-10-13T15:21:00.000Z" },
+          });
+        }
+        terminalPosts += 1;
+        return jsonResponse(500, { status: "failed", kind: "database" });
+      }
+      return original(url, init);
+    };
+    document.querySelector("#structure-instruction").value = "правка при сбое terminal";
+    document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(productPosts.some((entry) => entry.path === "/api/visual/storyboard/edit"));
+    assert.equal(startPosts, 1);
+    assert.equal(terminalPosts, 1);
+    assert.ok(correlationId);
+    const items = page.getResearchDock().getOperationsProjection();
+    const terminalFail = items.find((item) => (
+      item.localOnly === true && item.correlationId === correlationId
+    ));
+    assert.ok(terminalFail);
+    assert.equal(terminalFail.phase, "terminal");
+    assert.match(terminalFail.label, /продукт.*выполн|исследован.*не сохран/i);
+    assert.equal(/начало|продолжается/i.test(terminalFail.label), false);
+    assert.equal(items.some((item) => item.status === "running"), false);
+  } finally {
+    fetchImpl = original;
+  }
+});
