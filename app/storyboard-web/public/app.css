@@ -382,6 +382,21 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   width: 100%;
 }
 
+.placement-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.panel-pannable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.panel-pannable.is-panning {
+  cursor: grabbing;
+}
+
 .approval-panel {
   grid-template-columns: 1fr auto;
   align-items: center;

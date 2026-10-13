@@ -14,6 +14,60 @@ export const FONT_LADDER = {
 
 const FRAME_BG = "#02090b";
 
+export const PLACEMENT_DEFAULTS = Object.freeze({
+  zoom: 1,
+  positionX: 50,
+  positionY: 30,
+  mirrored: false,
+});
+
+export function renditionTransform({ zoom = 1, mirrored = false } = {}) {
+  const scale = "scale(" + Number(zoom) + ")";
+  return mirrored ? "scaleX(-1) " + scale : scale;
+}
+
+export function panelContentSize(panelCount, hasDialogue) {
+  const count = Math.max(1, Number(panelCount) || 1);
+  const gutter = Math.max(0, count - 1) * FRAME_GEOMETRY.panelGutter;
+  return {
+    width: (FRAME_GEOMETRY.width - gutter) / count,
+    height: FRAME_GEOMETRY.height - (hasDialogue ? FRAME_GEOMETRY.dialogueBarHeight : 0),
+  };
+}
+
+function clampPercent(value) {
+  const clamped = Math.min(100, Math.max(0, value));
+  return Math.round(clamped * 1000) / 1000;
+}
+
+export function panByPointer({
+  positionX,
+  positionY,
+  deltaX,
+  deltaY,
+  frameScale,
+  panelWidth,
+  panelHeight,
+  mirrored = false,
+} = {}) {
+  const scale = Number(frameScale);
+  const width = Number(panelWidth);
+  const height = Number(panelHeight);
+  const dx = Number(deltaX);
+  const dy = Number(deltaY);
+  const x = Number(positionX);
+  const y = Number(positionY);
+  if (![scale, width, height, dx, dy, x, y].every((value) => Number.isFinite(value))) return null;
+  if (!(scale > 0) || !(width > 0) || !(height > 0)) return null;
+  const localX = dx / scale;
+  const localY = dy / scale;
+  const xSign = mirrored ? 1 : -1;
+  return {
+    positionX: clampPercent(x + xSign * (localX / width) * 100),
+    positionY: clampPercent(y - (localY / height) * 100),
+  };
+}
+
 function el(tag, className, ownerDocument) {
   const node = ownerDocument.createElement(tag);
   if (className) node.className = className;
@@ -65,11 +119,15 @@ export function render(frame, options) {
       column.append(description);
     } else {
       const image = el("img", "panel-asset", ownerDocument);
+      image.draggable = false;
       image.src = panel.asset;
       image.alt = panel.subject + ". " + panel.role + ". " + panel.description;
       image.style.objectPosition = panel.position;
       image.style.transformOrigin = panel.align;
-      image.style.transform = "scale(" + panel.zoom + ")";
+      image.style.transform = renditionTransform({
+        zoom: panel.zoom,
+        mirrored: panel.mirrored === true,
+      });
       column.append(image);
     }
     strip.append(column);
@@ -146,5 +204,9 @@ if (typeof window !== "undefined") {
     render,
     measureDialogue,
     fontSizeFor,
+    PLACEMENT_DEFAULTS,
+    renditionTransform,
+    panelContentSize,
+    panByPointer,
   };
 }

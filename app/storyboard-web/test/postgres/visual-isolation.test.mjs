@@ -88,11 +88,11 @@ async function seedMaterial(pool) {
   `, [ids.source, ids.material]);
 }
 
-async function insertResult(pool, id, createdAt) {
+async function insertResult(pool, id, createdAt, payloadFrames = frames()) {
   await pool.query(`
     INSERT INTO storyboard_result (id, material_state_id, status, stage_payload, created_at)
     VALUES ($1, $2, 'checked', $3::jsonb, $4::timestamptz)
-  `, [id, ids.material, JSON.stringify({ frames: frames() }), createdAt]);
+  `, [id, ids.material, JSON.stringify({ frames: payloadFrames }), createdAt]);
 }
 
 test("panel assignments stay isolated between storyboard results with the same frame and panel keys", {
@@ -170,6 +170,101 @@ test("panel assignments stay isolated between storyboard results with the same f
     assert.equal(initialB.frames[0].panels[0].assetId, null);
     assert.equal(initialB.frames[0].panels[0].instruction, "");
     assert.equal(initialB.allAnchorsApproved, true, "identity anchors belong to the material, not one storyboard result");
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+test("placement zoom, pan, and mirror persist across reload and copy-forward without a new asset", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const split = [{
+    id: "frame-split",
+    layout: "split2",
+    origin: "source",
+    panels: [
+      { description: "Левая панель" },
+      { description: "Правая панель" },
+    ],
+    dialogue: "Привет",
+    speakerPanel: 0,
+    sourceItemId: "item-1",
+    sourceRole: "utterance",
+  }];
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-14T10:00:00Z", split);
+    const store = createVisualStore(pool);
+    const beforeAssets = await pool.query("SELECT count(*)::int AS count FROM visual_asset");
+    const beforeGenerations = await pool.query("SELECT count(*)::int AS count FROM panel_generation");
+    const initial = await store.load();
+    assert.equal(initial.frames[0].panels[0].zoom, 1);
+    assert.equal(initial.frames[0].panels[0].positionX, 50);
+    assert.equal(initial.frames[0].panels[0].positionY, 30);
+    assert.equal(initial.frames[0].panels[0].mirrored, false);
+
+    const updated = await store.updatePlacement({
+      frameId: "frame-split",
+      panelIndex: 0,
+      zoom: 1.4,
+      positionX: 41,
+      positionY: 22,
+      mirrored: true,
+    });
+    assert.equal(updated.ok, true);
+    assert.deepEqual(updated.placement, {
+      zoom: 1.4,
+      positionX: 41,
+      positionY: 22,
+      mirrored: true,
+    });
+    const loaded = await store.load();
+    assert.equal(loaded.frames[0].panels[0].zoom, 1.4);
+    assert.equal(loaded.frames[0].panels[0].position, "41% 22%");
+    assert.equal(loaded.frames[0].panels[0].mirrored, true);
+    assert.equal(loaded.frames[0].panels[0].assetId, null);
+    assert.equal(loaded.frames[0].panels[1].zoom, 1);
+    assert.equal(loaded.frames[0].panels[1].positionX, 50);
+    assert.equal(loaded.frames[0].panels[1].mirrored, false);
+
+    const invalid = await store.updatePlacement({
+      frameId: "frame-split",
+      panelIndex: 1,
+      zoom: 9,
+    });
+    assert.equal(invalid.ok, false);
+    const still = await store.load();
+    assert.equal(still.frames[0].panels[1].zoom, 1);
+    assert.equal(still.frames[0].panels[0].mirrored, true);
+
+    const edited = await store.saveStoryboardEdit({
+      instruction: "оставить панели и перенести кадрирование",
+      frames: split,
+    });
+    assert.equal(edited.ok, true);
+    const copied = await store.load();
+    assert.notEqual(copied.storyboardVersionId, loaded.storyboardVersionId);
+    assert.equal(copied.frames[0].panels[0].zoom, 1.4);
+    assert.equal(copied.frames[0].panels[0].positionX, 41);
+    assert.equal(copied.frames[0].panels[0].positionY, 22);
+    assert.equal(copied.frames[0].panels[0].mirrored, true);
+    assert.equal(copied.frames[0].panels[1].mirrored, false);
+    assert.equal(copied.frames[0].panels[0].assetId, null);
+
+    const afterAssets = await pool.query("SELECT count(*)::int AS count FROM visual_asset");
+    const afterGenerations = await pool.query("SELECT count(*)::int AS count FROM panel_generation");
+    assert.equal(afterAssets.rows[0].count, beforeAssets.rows[0].count);
+    assert.equal(afterGenerations.rows[0].count, beforeGenerations.rows[0].count);
   } finally {
     await reset(pool).catch(() => {});
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});

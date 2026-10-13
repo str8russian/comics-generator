@@ -32,6 +32,7 @@ const COMMAND_TARGET_KEYS = [
   "zoom",
   "positionX",
   "positionY",
+  "mirrored",
   "characterName",
   "anchorVersionId",
 ];

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { FONT_LADDER, FRAME_GEOMETRY, fontSizeFor, render } from "../../../prototypes/storyboard-viewer/frame-renderer.mjs";
+import {
+  FONT_LADDER,
+  FRAME_GEOMETRY,
+  fontSizeFor,
+  panByPointer,
+  panelContentSize,
+  render,
+} from "../../../prototypes/storyboard-viewer/frame-renderer.mjs";
 
 function createElement(tag) {
   return {
@@ -102,12 +109,82 @@ test("omits the dialogue bar when dialogue is empty", () => {
   assert.equal(byClass(canvas, "dialogue-text").length, 0);
 });
 
+test("pan follows the pointer at the rendered frame scale and stays on one panel", () => {
+  const size = panelContentSize(2, true);
+  assert.equal(size.width, (FRAME_GEOMETRY.width - FRAME_GEOMETRY.panelGutter) / 2);
+  assert.equal(size.height, FRAME_GEOMETRY.height - FRAME_GEOMETRY.dialogueBarHeight);
+  const scaled = panByPointer({
+    positionX: 50,
+    positionY: 30,
+    deltaX: 46.8,
+    deltaY: 39,
+    frameScale: 0.5,
+    panelWidth: size.width,
+    panelHeight: size.height,
+    mirrored: false,
+  });
+  const unscaled = panByPointer({
+    positionX: 50,
+    positionY: 30,
+    deltaX: 93.6,
+    deltaY: 78,
+    frameScale: 1,
+    panelWidth: size.width,
+    panelHeight: size.height,
+    mirrored: false,
+  });
+  assert.equal(scaled.positionX, 40);
+  assert.equal(scaled.positionY, 20);
+  assert.deepEqual(scaled, unscaled);
+  const mirrored = panByPointer({
+    positionX: 50,
+    positionY: 30,
+    deltaX: 46.8,
+    deltaY: 0,
+    frameScale: 0.5,
+    panelWidth: size.width,
+    panelHeight: size.height,
+    mirrored: true,
+  });
+  assert.equal(mirrored.positionX, 60);
+  assert.equal(mirrored.positionY, 30);
+  const other = panByPointer({
+    positionX: 10,
+    positionY: 80,
+    deltaX: 0,
+    deltaY: 0,
+    frameScale: 0.5,
+    panelWidth: size.width,
+    panelHeight: size.height,
+  });
+  assert.deepEqual(other, { positionX: 10, positionY: 80 });
+  assert.equal(panByPointer({
+    positionX: 50,
+    positionY: 30,
+    deltaX: Number.NaN,
+    deltaY: 0,
+    frameScale: 0.5,
+    panelWidth: size.width,
+    panelHeight: size.height,
+  }), null);
+  const clamped = panByPointer({
+    positionX: 1,
+    positionY: 99,
+    deltaX: 10000,
+    deltaY: -10000,
+    frameScale: 0.5,
+    panelWidth: size.width,
+    panelHeight: size.height,
+  });
+  assert.equal(clamped.positionX, 0);
+  assert.equal(clamped.positionY, 100);
+});
+
 test("keeps the viewer.css declarations measurement depends on", () => {
   const css = readFileSync(new URL("../../../prototypes/storyboard-viewer/viewer.css", import.meta.url), "utf8");
   for (const declaration of [
     "Arial, Helvetica, sans-serif",
     "border-box",
-    "border-top: 2px solid #536064",
     "font-weight: 500",
     "letter-spacing: .1px",
     "line-height: 1.18",
@@ -115,4 +192,70 @@ test("keeps the viewer.css declarations measurement depends on", () => {
   ]) {
     assert.equal(css.includes(declaration), true, declaration);
   }
+});
+
+test("removes the horizontal hairline and keeps the 48px split divider", () => {
+  const css = readFileSync(new URL("../../../prototypes/storyboard-viewer/viewer.css", import.meta.url), "utf8");
+  const dialogueBar = css.match(/\.dialogue-bar\s*\{([^}]*)\}/)?.[1] ?? "";
+  assert.equal(/border-top\s*:/.test(dialogueBar), false);
+  assert.equal(css.includes("border-top: 2px solid #536064"), false);
+  installDocument();
+  const split = render({
+    layout: "split2",
+    speakerPanel: 0,
+    dialogue: "Привет",
+    panels: [
+      {
+        description: "Левая",
+        asset: "/left.png",
+        subject: "Левая",
+        role: "Говорит",
+        position: "40% 20%",
+        align: "40% 20%",
+        zoom: 1.4,
+        mirrored: true,
+      },
+      {
+        description: "Правая",
+        asset: "/right.png",
+        subject: "Правая",
+        role: "Слушает",
+        position: "70% 55%",
+        align: "70% 55%",
+        zoom: 1.1,
+        mirrored: false,
+      },
+    ],
+  }, { mode: "visual" });
+  const panels = byClass(split, "panel");
+  const cells = byClass(split, "dialogue-cell");
+  const images = byClass(split, "panel-asset");
+  assert.equal(panels[0].style.borderLeft, undefined);
+  assert.equal(panels[1].style.borderLeft, `${FRAME_GEOMETRY.panelGutter}px solid #02090b`);
+  assert.equal(cells[0].style.borderLeft, undefined);
+  assert.equal(cells[1].style.borderLeft, `${FRAME_GEOMETRY.panelGutter}px solid #02090b`);
+  assert.equal(images[0].style.objectPosition, "40% 20%");
+  assert.equal(images[0].style.transform, "scaleX(-1) scale(1.4)");
+  assert.equal(images[1].style.objectPosition, "70% 55%");
+  assert.equal(images[1].style.transform, "scale(1.1)");
+  assert.equal(images[0].draggable, false);
+
+  const single = render({
+    layout: "single",
+    speakerPanel: 0,
+    dialogue: "Одна",
+    panels: [{
+      description: "Одна",
+      asset: "/one.png",
+      subject: "Одна",
+      role: "Говорит",
+      position: "50% 30%",
+      align: "50% 30%",
+      zoom: 1,
+    }],
+  }, { mode: "visual" });
+  assert.equal(byClass(single, "panel")[0].style.borderLeft, undefined);
+  assert.equal(byClass(single, "dialogue-cell")[0].style.borderLeft, undefined);
+  assert.equal(byClass(single, "panel-asset")[0].style.transform, "scale(1)");
+  assert.equal(byClass(single, "dialogue-bar").length, 1);
 });

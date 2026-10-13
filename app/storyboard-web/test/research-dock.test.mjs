@@ -2340,6 +2340,7 @@ test("createEmptyCommandTarget omits panelSubject even when override supplies it
     "displayFrameId",
     "displayFrameNumber",
     "kind",
+    "mirrored",
     "panelIndex",
     "positionX",
     "positionY",

@@ -1,3 +1,5 @@
+import { PLACEMENT_DEFAULTS } from "../../prototypes/storyboard-viewer/frame-renderer.mjs";
+
 const STYLE_LANGUAGE = `
 Rendering language:
 - clearly illustrated rather than photorealistic
@@ -542,11 +544,58 @@ export function aspectRatioForFrame(frame) {
   return frame?.layout === "split2" || (frame?.panels?.length ?? 0) > 1 ? "5:4" : "21:9";
 }
 
-export function placement({ zoom = 1, positionX = 50, positionY = 30 } = {}) {
+export { PLACEMENT_DEFAULTS };
+
+function roundPlacement(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+function finiteIn(value, min, max) {
+  return Number.isFinite(value) && value >= min && value <= max;
+}
+
+export function placement({
+  zoom = PLACEMENT_DEFAULTS.zoom,
+  positionX = PLACEMENT_DEFAULTS.positionX,
+  positionY = PLACEMENT_DEFAULTS.positionY,
+  mirrored = PLACEMENT_DEFAULTS.mirrored,
+} = {}) {
+  const x = Number(positionX);
+  const y = Number(positionY);
   return {
     zoom: Number(zoom),
-    position: `${Number(positionX)}% ${Number(positionY)}%`,
-    align: `${Number(positionX)}% ${Number(positionY)}%`,
+    positionX: x,
+    positionY: y,
+    mirrored: mirrored === true,
+    position: `${x}% ${y}%`,
+    align: `${x}% ${y}%`,
+  };
+}
+
+export function resolvePlacementUpdate(current = {}, patch = {}) {
+  if (patch?.reset === true) return { ...PLACEMENT_DEFAULTS };
+  if (patch?.reset != null && patch.reset !== false) return null;
+  const next = {
+    zoom: Number(current.zoom ?? PLACEMENT_DEFAULTS.zoom),
+    positionX: Number(current.positionX ?? current.position_x ?? PLACEMENT_DEFAULTS.positionX),
+    positionY: Number(current.positionY ?? current.position_y ?? PLACEMENT_DEFAULTS.positionY),
+    mirrored: current.mirrored === true,
+  };
+  if (Object.hasOwn(patch, "zoom")) next.zoom = Number(patch.zoom);
+  if (Object.hasOwn(patch, "positionX")) next.positionX = Number(patch.positionX);
+  if (Object.hasOwn(patch, "positionY")) next.positionY = Number(patch.positionY);
+  if (Object.hasOwn(patch, "mirrored")) {
+    if (typeof patch.mirrored !== "boolean") return null;
+    next.mirrored = patch.mirrored;
+  }
+  if (!finiteIn(next.zoom, 1, 3) || !finiteIn(next.positionX, 0, 100) || !finiteIn(next.positionY, 0, 100)) {
+    return null;
+  }
+  return {
+    zoom: roundPlacement(next.zoom),
+    positionX: roundPlacement(next.positionX),
+    positionY: roundPlacement(next.positionY),
+    mirrored: next.mirrored,
   };
 }
 

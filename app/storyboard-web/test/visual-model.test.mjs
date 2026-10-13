@@ -12,6 +12,7 @@ import {
   isEligiblePanelReadyDialogueFrame,
   panelPrompt,
   resolvePanelSubject,
+  resolvePlacementUpdate,
 } from "../visual-model.mjs";
 
 const characters = [{ name: "Путин" }, { name: "Дуров" }, { name: "Песков" }];
@@ -72,6 +73,53 @@ const COMPOSITE_DESCRIPTION = [
   "calm facial expression.",
   `Unrecognized scenery prose ${COMPOSITE_CANARY} at a meeting with a partner.`,
 ].join(" ");
+
+test("placement update keeps omitted values, resets defaults, and rejects non-finite input", () => {
+  const current = { zoom: 1.25, position_x: 41, position_y: 22, mirrored: true };
+  assert.deepEqual(resolvePlacementUpdate(current, { zoom: 1.8 }), {
+    zoom: 1.8,
+    positionX: 41,
+    positionY: 22,
+    mirrored: true,
+  });
+  assert.deepEqual(resolvePlacementUpdate(current, { positionX: 12, positionY: 70 }), {
+    zoom: 1.25,
+    positionX: 12,
+    positionY: 70,
+    mirrored: true,
+  });
+  assert.deepEqual(resolvePlacementUpdate(current, { mirrored: false }), {
+    zoom: 1.25,
+    positionX: 41,
+    positionY: 22,
+    mirrored: false,
+  });
+  assert.deepEqual(resolvePlacementUpdate(current, { reset: true, zoom: 9, mirrored: true }), {
+    zoom: 1,
+    positionX: 50,
+    positionY: 30,
+    mirrored: false,
+  });
+  for (const patch of [
+    { zoom: Number.NaN },
+    { zoom: Number.POSITIVE_INFINITY },
+    { zoom: 0.5 },
+    { zoom: 3.1 },
+    { positionX: -1 },
+    { positionY: 101 },
+    { mirrored: "yes" },
+  ]) {
+    assert.equal(resolvePlacementUpdate(current, patch), null, JSON.stringify(patch));
+  }
+  const other = { zoom: 1, position_x: 50, position_y: 30, mirrored: false };
+  assert.deepEqual(resolvePlacementUpdate(other, {}), {
+    zoom: 1,
+    positionX: 50,
+    positionY: 30,
+    mirrored: false,
+  });
+  assert.notEqual(resolvePlacementUpdate(current, { positionX: 1 }), resolvePlacementUpdate(other, {}));
+});
 
 test("panel subject follows the earliest character surface and understands an alias", () => {
   assert.equal(resolvePanelSubject("Путин смотрит на Дурова", characters, aliases), "Путин");

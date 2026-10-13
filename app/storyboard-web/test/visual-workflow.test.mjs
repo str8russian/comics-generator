@@ -1886,3 +1886,149 @@ test("structural edit applies the Putin full-frame command and maps conflicts to
     await close(server);
   }
 });
+
+test("pan, zoom, reset, and mirror update one panel and never call the image provider", async () => {
+  const calls = [];
+  const counters = { placement: 0, beginPanel: 0, finishPanel: 0 };
+  const state = {
+    ok: true,
+    status: "ready",
+    allAnchorsApproved: true,
+    complete: false,
+    approved: false,
+    readyForVideo: false,
+    characters: [],
+    frames: [{
+      id: "f1",
+      layout: "split2",
+      dialogue: "Привет",
+      speakerPanel: 0,
+      visualReady: true,
+      panels: [
+        {
+          description: "слева",
+          subject: "Путин",
+          assetId: "asset-left",
+          zoom: 1.4,
+          positionX: 41,
+          positionY: 22,
+          mirrored: false,
+          position: "41% 22%",
+          align: "41% 22%",
+        },
+        {
+          description: "справа",
+          subject: "Дуров",
+          assetId: "asset-right",
+          zoom: 1.1,
+          positionX: 70,
+          positionY: 55,
+          mirrored: true,
+          position: "70% 55%",
+          align: "70% 55%",
+        },
+      ],
+    }],
+  };
+  const server = createServer({
+    migrate: false,
+    projectStore: {},
+    visualStore: {
+      load: async () => state,
+      beginPanelGeneration: async () => {
+        counters.beginPanel += 1;
+        return { ok: false, kind: "invalid-request", httpStatus: 400 };
+      },
+      finishPanelGeneration: async () => {
+        counters.finishPanel += 1;
+        return { ok: false, kind: "invalid-request", httpStatus: 400 };
+      },
+      updatePlacement: async (patch) => {
+        counters.placement += 1;
+        const { resolvePlacementUpdate } = await import("../visual-model.mjs");
+        const panel = state.frames[0].panels[patch.panelIndex];
+        const resolved = resolvePlacementUpdate({
+          zoom: panel.zoom,
+          position_x: panel.positionX,
+          position_y: panel.positionY,
+          mirrored: panel.mirrored,
+        }, patch);
+        if (!resolved) return { ok: false, kind: "invalid-request", httpStatus: 400 };
+        panel.zoom = resolved.zoom;
+        panel.positionX = resolved.positionX;
+        panel.positionY = resolved.positionY;
+        panel.mirrored = resolved.mirrored;
+        panel.position = `${resolved.positionX}% ${resolved.positionY}%`;
+        panel.align = panel.position;
+        return { ok: true, placement: resolved };
+      },
+    },
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: png }, metadata: {} };
+    },
+  });
+  const port = await listen(server);
+  try {
+    const pan = await request(port, {
+      method: "PATCH",
+      path: "/api/visual/frames/f1/panels/0/placement",
+      body: { positionX: 12, positionY: 70 },
+    });
+    assert.equal(pan.status, 200);
+    assert.equal(pan.body.frames[0].panels[0].zoom, 1.4);
+    assert.equal(pan.body.frames[0].panels[0].positionX, 12);
+    assert.equal(pan.body.frames[0].panels[0].positionY, 70);
+    assert.equal(pan.body.frames[0].panels[0].mirrored, false);
+    assert.equal(pan.body.frames[0].panels[1].zoom, 1.1);
+    assert.equal(pan.body.frames[0].panels[1].mirrored, true);
+
+    const zoom = await request(port, {
+      method: "PATCH",
+      path: "/api/visual/frames/f1/panels/0/placement",
+      body: { zoom: 2 },
+    });
+    assert.equal(zoom.status, 200);
+    assert.equal(zoom.body.frames[0].panels[0].zoom, 2);
+    assert.equal(zoom.body.frames[0].panels[0].positionX, 12);
+    assert.equal(zoom.body.frames[0].panels[0].positionY, 70);
+
+    const mirror = await request(port, {
+      method: "PATCH",
+      path: "/api/visual/frames/f1/panels/0/placement",
+      body: { mirrored: true },
+    });
+    assert.equal(mirror.status, 200);
+    assert.equal(mirror.body.frames[0].panels[0].mirrored, true);
+    assert.equal(mirror.body.frames[0].panels[0].zoom, 2);
+    assert.equal(mirror.body.frames[0].panels[0].position, "12% 70%");
+    assert.equal(mirror.body.frames[0].panels[1].positionX, 70);
+
+    const reset = await request(port, {
+      method: "PATCH",
+      path: "/api/visual/frames/f1/panels/0/placement",
+      body: { reset: true },
+    });
+    assert.equal(reset.status, 200);
+    assert.equal(reset.body.frames[0].panels[0].zoom, 1);
+    assert.equal(reset.body.frames[0].panels[0].positionX, 50);
+    assert.equal(reset.body.frames[0].panels[0].positionY, 30);
+    assert.equal(reset.body.frames[0].panels[0].mirrored, false);
+    assert.equal(reset.body.frames[0].panels[1].zoom, 1.1);
+
+    const invalid = await request(port, {
+      method: "PATCH",
+      path: "/api/visual/frames/f1/panels/1/placement",
+      body: { zoom: 9 },
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(state.frames[0].panels[1].zoom, 1.1);
+
+    assert.equal(calls.length, 0);
+    assert.equal(counters.beginPanel, 0);
+    assert.equal(counters.finishPanel, 0);
+    assert.equal(counters.placement, 5);
+  } finally {
+    await close(server);
+  }
+});

@@ -62,6 +62,7 @@ const COMMAND_TARGET_KEYS = [
   "zoom",
   "positionX",
   "positionY",
+  "mirrored",
   "characterName",
   "anchorVersionId",
 ];
@@ -157,6 +158,8 @@ function normalizeCommandTarget(value) {
       if (!nullableIntegerMin(present, 0)) return undefined;
     } else if (key === "zoom" || key === "positionX" || key === "positionY") {
       if (!nullableNumber(present)) return undefined;
+    } else if (key === "mirrored") {
+      if (!(present === null || typeof present === "boolean")) return undefined;
     } else if (!nullableString(present)) {
       return undefined;
     }

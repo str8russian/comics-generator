@@ -585,6 +585,7 @@ function mountFrame(host, frame, scale, mode) {
   stage.style.width = `${FrameRenderer.FRAME_GEOMETRY.width * scale}px`;
   stage.style.height = `${FrameRenderer.FRAME_GEOMETRY.height * scale}px`;
   stage.style.setProperty("--frame-scale", String(scale));
+  stage.dataset.frameScale = String(scale);
   const presented = presentFrameForMount(frame, mode);
   stage.append(FrameRenderer.render(presented.frame, { mode: presented.mode }));
   host.append(stage);
@@ -1132,6 +1133,246 @@ async function generateFrame(frameId, button, index) {
   });
 }
 
+function placementOf(panel) {
+  const defaults = FrameRenderer.PLACEMENT_DEFAULTS;
+  const parsed = typeof panel?.position === "string"
+    ? panel.position.match(/(-?\d+(?:\.\d+)?)%\s+(-?\d+(?:\.\d+)?)%/)
+    : null;
+  return {
+    zoom: Number.isFinite(Number(panel?.zoom)) ? Number(panel.zoom) : defaults.zoom,
+    positionX: Number.isFinite(Number(panel?.positionX))
+      ? Number(panel.positionX)
+      : (parsed ? Number(parsed[1]) : defaults.positionX),
+    positionY: Number.isFinite(Number(panel?.positionY))
+      ? Number(panel.positionY)
+      : (parsed ? Number(parsed[2]) : defaults.positionY),
+    mirrored: panel?.mirrored === true,
+  };
+}
+
+function rememberPlacement(panel, placementValue) {
+  panel.zoom = placementValue.zoom;
+  panel.positionX = placementValue.positionX;
+  panel.positionY = placementValue.positionY;
+  panel.mirrored = placementValue.mirrored === true;
+  panel.position = `${placementValue.positionX}% ${placementValue.positionY}%`;
+  panel.align = panel.position;
+}
+
+function applyRendition(image, placementValue) {
+  if (!image?.style) return;
+  const position = `${placementValue.positionX}% ${placementValue.positionY}%`;
+  image.style.objectPosition = position;
+  image.style.transformOrigin = position;
+  image.style.transform = FrameRenderer.renditionTransform(placementValue);
+}
+
+function detailPanels() {
+  if (!detailHost || typeof detailHost.querySelectorAll !== "function") return [];
+  return [...detailHost.querySelectorAll(".panel")];
+}
+
+function panelColumn(panelIndex) {
+  return detailPanels().find((node) => Number(node.dataset?.panelIndex) === panelIndex) ?? null;
+}
+
+function panelImage(panelIndex) {
+  const column = panelColumn(panelIndex);
+  if (!column || typeof column.querySelector !== "function") return null;
+  return column.querySelector(".panel-asset");
+}
+
+function placementReadout(panelIndex) {
+  const section = detailPanelControls?.children?.[panelIndex];
+  if (!section) return null;
+  if (typeof section.querySelector === "function") {
+    const found = section.querySelector("[data-placement-readout]");
+    if (found) return found;
+  }
+  const stack = [...(section.children || [])];
+  while (stack.length) {
+    const node = stack.shift();
+    if (node?.dataset?.placementReadout != null) return node;
+    if (node?.children?.length) stack.push(...node.children);
+  }
+  return null;
+}
+
+function placementCopy(placementValue) {
+  return `Приближение без генерации · ${Number(placementValue.zoom).toFixed(2)}× · ${placementValue.positionX} / ${placementValue.positionY}`;
+}
+
+function updatePlacementCopy(panelIndex, placementValue) {
+  const copy = placementReadout(panelIndex);
+  if (copy) copy.textContent = placementCopy(placementValue);
+  const section = detailPanelControls?.children?.[panelIndex];
+  const mirror = [...(section?.querySelectorAll?.("button") || section?.children || [])]
+    .find((node) => node?.dataset?.placementAction === "mirror");
+  if (mirror) {
+    const on = placementValue.mirrored === true;
+    mirror.textContent = on ? "Отражено по горизонтали" : "Отразить по горизонтали";
+    if (typeof mirror.setAttribute === "function") mirror.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+}
+
+function frameScaleOf(node) {
+  let current = node;
+  while (current) {
+    const scale = Number(current.dataset?.frameScale);
+    if (Number.isFinite(scale) && scale > 0) return scale;
+    current = current.parentNode;
+  }
+  return 1;
+}
+
+function restorePlacement(panel, panelIndex, placementValue) {
+  rememberPlacement(panel, placementValue);
+  applyRendition(panelImage(panelIndex), placementValue);
+  const section = detailPanelControls?.children?.[panelIndex];
+  const zoom = [...(section?.querySelectorAll?.("input") || [])].find((input) => input.type === "range");
+  if (zoom) zoom.value = String(placementValue.zoom);
+  updatePlacementCopy(panelIndex, placementValue);
+}
+
+async function commitPlacement(frame, panel, panelIndex, patch, messages) {
+  const saved = panel.authoritativePlacement
+    ? { ...panel.authoritativePlacement }
+    : placementOf(panel);
+  const intended = patch.reset === true
+    ? { ...FrameRenderer.PLACEMENT_DEFAULTS }
+    : {
+      zoom: patch.zoom ?? saved.zoom,
+      positionX: patch.positionX ?? saved.positionX,
+      positionY: patch.positionY ?? saved.positionY,
+      mirrored: patch.mirrored ?? saved.mirrored,
+    };
+  const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
+  await runProductResearchAction({
+    semanticAction: "placement_commit",
+    submittedText: null,
+    commandTarget: createEmptyCommandTarget("panel", {
+      displayFrameNumber,
+      displayFrameId: typeof frame.id === "string" ? frame.id : null,
+      structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
+      structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
+      panelIndex,
+      zoom: intended.zoom,
+      positionX: intended.positionX,
+      positionY: intended.positionY,
+      mirrored: intended.mirrored,
+    }),
+    contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
+    busyMessage: messages.busy,
+    async operation() {
+      const body = patch.reset === true
+        ? { reset: true }
+        : {
+          zoom: intended.zoom,
+          positionX: intended.positionX,
+          positionY: intended.positionY,
+          mirrored: intended.mirrored,
+        };
+      try {
+        const next = await fetchJson(
+          `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/placement`,
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+        applyVisual(next);
+        showActionNotice(messages.success);
+        return next;
+      } catch (error) {
+        restorePlacement(panel, panelIndex, saved);
+        throw error;
+      }
+    },
+  });
+}
+
+function bindDetailPan(frame) {
+  for (const column of detailPanels()) {
+    const panelIndex = Number(column.dataset?.panelIndex);
+    const panel = frame.panels?.[panelIndex];
+    if (!panel?.assetId) continue;
+    const image = typeof column.querySelector === "function" ? column.querySelector(".panel-asset") : null;
+    if (!image) continue;
+    if (!String(column.className || "").split(/\s+/).includes("panel-pannable")) {
+      column.className = `${column.className || ""} panel-pannable`.trim();
+    }
+    let drag = null;
+    const stop = (event, cancelled) => {
+      if (!drag) return;
+      const samePointer = event?.pointerId == null
+        || drag.pointerId == null
+        || event.pointerId === drag.pointerId;
+      if (!samePointer && event?.type === "pointermove") return;
+      if (!samePointer && event?.type !== "pointerup" && event?.type !== "pointercancel") return;
+      const moved = drag.moved;
+      drag = null;
+      column.className = String(column.className || "").replace(/\bis-panning\b/g, "").replace(/\s+/g, " ").trim();
+      column.releasePointerCapture?.(event?.pointerId);
+      if (!moved || cancelled) return;
+      const current = placementOf(panel);
+      commitPlacement(frame, panel, panelIndex, current, {
+        busy: "Сохраняю кадрирование…",
+        success: "Кадрирование сохранено без новой генерации.",
+      });
+    };
+    column.addEventListener("pointerdown", (event) => {
+      if (event.button != null && event.button !== 0) return;
+      if (typeof event.preventDefault === "function") event.preventDefault();
+      drag = {
+        pointerId: event.pointerId,
+        lastX: Number(event.clientX) || 0,
+        lastY: Number(event.clientY) || 0,
+        moved: false,
+      };
+      if (!String(column.className || "").split(/\s+/).includes("is-panning")) {
+        column.className = `${column.className || ""} is-panning`.trim();
+      }
+      column.setPointerCapture?.(event.pointerId);
+    });
+    column.addEventListener("pointermove", (event) => {
+      if (!drag || (event.pointerId != null && drag.pointerId != null && event.pointerId !== drag.pointerId)) return;
+      const clientX = Number(event.clientX);
+      const clientY = Number(event.clientY);
+      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+      const deltaX = clientX - drag.lastX;
+      const deltaY = clientY - drag.lastY;
+      if (deltaX === 0 && deltaY === 0) return;
+      const current = placementOf(panel);
+      const hasDialogue = typeof frame.dialogue === "string" && frame.dialogue.trim().length > 0;
+      const size = FrameRenderer.panelContentSize(frame.panels.length, hasDialogue);
+      const nextPan = FrameRenderer.panByPointer({
+        positionX: current.positionX,
+        positionY: current.positionY,
+        deltaX,
+        deltaY,
+        frameScale: frameScaleOf(column),
+        panelWidth: size.width,
+        panelHeight: size.height,
+        mirrored: current.mirrored,
+      });
+      if (!nextPan) return;
+      drag.lastX = clientX;
+      drag.lastY = clientY;
+      drag.moved = true;
+      const next = { ...current, ...nextPan };
+      rememberPlacement(panel, next);
+      applyRendition(image, next);
+      updatePlacementCopy(panelIndex, next);
+    });
+    column.addEventListener("pointerup", (event) => stop(event, false));
+    column.addEventListener("pointercancel", (event) => {
+      if (drag) restorePlacement(panel, panelIndex, panel.authoritativePlacement || placementOf(panel));
+      stop(event, true);
+    });
+  }
+}
+
 function renderPanelControls(frame) {
   detailPanelControls.replaceChildren();
   frame.panels.forEach((panel, panelIndex) => {
@@ -1215,61 +1456,78 @@ function renderPanelControls(frame) {
     if (failure) section.append(failure);
     section.append(instruction, performanceLabel, regenerate);
     if (panel.assetId) {
+      const initial = placementOf(panel);
+      rememberPlacement(panel, initial);
+      panel.authoritativePlacement = { ...initial };
       const zoomLabel = document.createElement("label");
       zoomLabel.className = "zoom-control";
       const zoomCopy = document.createElement("span");
-      zoomCopy.textContent = `Приближение без генерации · ${Number(panel.zoom).toFixed(2)}×`;
+      zoomCopy.dataset.placementReadout = "true";
+      zoomCopy.textContent = placementCopy(initial);
       const zoom = document.createElement("input");
       zoom.type = "range";
       zoom.min = "1";
       zoom.max = "3";
       zoom.step = "0.05";
-      zoom.value = String(panel.zoom);
+      zoom.value = String(initial.zoom);
       zoom.addEventListener("input", () => {
-        zoomCopy.textContent = `Приближение без генерации · ${Number(zoom.value).toFixed(2)}×`;
-        readyFrames[detailIndex].panels[panelIndex].zoom = Number(zoom.value);
-        mountFrame(detailHost, readyFrames[detailIndex], 0.5);
+        const next = { ...placementOf(panel), zoom: Number(zoom.value) };
+        rememberPlacement(panel, next);
+        updatePlacementCopy(panelIndex, next);
+        applyRendition(panelImage(panelIndex), next);
       });
-      zoom.addEventListener("change", async () => {
-        const committedZoom = Number(zoom.value);
-        const positionX = 50;
-        const positionY = 30;
-        const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
-        await runProductResearchAction({
-          semanticAction: "placement_commit",
-          submittedText: null,
-          commandTarget: createEmptyCommandTarget("panel", {
-            displayFrameNumber,
-            displayFrameId: typeof frame.id === "string" ? frame.id : null,
-            structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
-            structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
-            panelIndex,
-            zoom: committedZoom,
-            positionX,
-            positionY,
-          }),
-          contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
-          busyMessage: "Сохраняю приближение…",
-          async operation() {
-            const next = await fetchJson(
-              `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/placement`,
-              {
-                method: "PATCH",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ zoom: committedZoom, positionX, positionY }),
-              },
-            );
-            applyVisual(next);
-            showActionNotice("Приближение сохранено без новой генерации.");
-            return next;
-          },
+      zoom.addEventListener("change", () => {
+        const next = { ...placementOf(panel), zoom: Number(zoom.value) };
+        rememberPlacement(panel, next);
+        commitPlacement(frame, panel, panelIndex, next, {
+          busy: "Сохраняю приближение…",
+          success: "Приближение сохранено без новой генерации.",
         });
       });
+      const actions = document.createElement("div");
+      actions.className = "placement-actions";
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.dataset.placementAction = "reset";
+      reset.dataset.panelIndex = String(panelIndex);
+      reset.textContent = "Сбросить кадрирование";
+      reset.addEventListener("click", () => {
+        const defaults = { ...FrameRenderer.PLACEMENT_DEFAULTS };
+        rememberPlacement(panel, defaults);
+        applyRendition(panelImage(panelIndex), defaults);
+        zoom.value = String(defaults.zoom);
+        updatePlacementCopy(panelIndex, defaults);
+        commitPlacement(frame, panel, panelIndex, { reset: true }, {
+          busy: "Сбрасываю кадрирование…",
+          success: "Кадрирование сброшено.",
+        });
+      });
+      const mirror = document.createElement("button");
+      mirror.type = "button";
+      mirror.dataset.placementAction = "mirror";
+      mirror.dataset.panelIndex = String(panelIndex);
+      mirror.textContent = initial.mirrored ? "Отражено по горизонтали" : "Отразить по горизонтали";
+      if (typeof mirror.setAttribute === "function") {
+        mirror.setAttribute("aria-pressed", initial.mirrored ? "true" : "false");
+      }
+      mirror.addEventListener("click", () => {
+        const current = placementOf(panel);
+        const next = { ...current, mirrored: !current.mirrored };
+        rememberPlacement(panel, next);
+        applyRendition(panelImage(panelIndex), next);
+        updatePlacementCopy(panelIndex, next);
+        commitPlacement(frame, panel, panelIndex, next, {
+          busy: "Сохраняю отражение…",
+          success: "Отражение сохранено без новой генерации.",
+        });
+      });
+      actions.append(reset, mirror);
       zoomLabel.append(zoomCopy, zoom);
-      section.append(zoomLabel);
+      section.append(zoomLabel, actions);
     }
     detailPanelControls.append(section);
   });
+  bindDetailPan(frame);
 }
 
 structureEditForm?.addEventListener("submit", async (event) => {

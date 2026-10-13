@@ -1165,13 +1165,15 @@ async function handleVisualGeneration(req, res, {
     }
     const body = await readVisualBody(req, res);
     if (body.done) return;
-    const result = body.invalid ? failedVisual("invalid-request", 400) : await runtime.visualStore.updatePlacement({
+    const payload = body.payload && typeof body.payload === "object" ? body.payload : {};
+    const patch = {
       frameId: target.frameId,
       panelIndex: target.panelIndex,
-      zoom: body.payload?.zoom,
-      positionX: body.payload?.positionX,
-      positionY: body.payload?.positionY,
-    });
+    };
+    for (const key of ["zoom", "positionX", "positionY", "mirrored", "reset"]) {
+      if (Object.hasOwn(payload, key)) patch[key] = payload[key];
+    }
+    const result = body.invalid ? failedVisual("invalid-request", 400) : await runtime.visualStore.updatePlacement(patch);
     logVisual(logger, request, "visual-placement", {
       status: result.ok ? "ok" : "failed",
       kind: result.ok ? undefined : safeKind(result.kind),

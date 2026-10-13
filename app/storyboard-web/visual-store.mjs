@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { inspectImage } from "./image-info.mjs";
-import { expandStoryboardFrames, placement, resolvePanelSubject } from "./visual-model.mjs";
+import {
+  expandStoryboardFrames,
+  placement,
+  resolvePanelSubject,
+  resolvePlacementUpdate,
+} from "./visual-model.mjs";
 
 function failed(kind, httpStatus = 400) {
   return { ok: false, status: "failed", kind, httpStatus };
@@ -220,15 +225,33 @@ async function projectStyleAsset(client, materialStateId) {
   return assetRow(client, seed.style_asset_id);
 }
 
-function currentSnapshot(frames) {
+function placementSnapshot(frames) {
   return frames.map((frame) => ({
     id: frame.id,
     panels: frame.panels.map((panel) => ({
       assetId: panel.assetId ?? null,
       zoom: panel.zoom,
       position: panel.position,
+      mirrored: panel.mirrored === true,
     })),
   }));
+}
+
+function normalizeApprovalSnapshot(snapshot) {
+  if (!Array.isArray(snapshot)) return [];
+  return snapshot.map((frame) => ({
+    id: frame?.id,
+    panels: Array.isArray(frame?.panels) ? frame.panels.map((panel) => ({
+      assetId: panel?.assetId ?? null,
+      zoom: panel?.zoom,
+      position: panel?.position,
+      mirrored: panel?.mirrored === true,
+    })) : [],
+  }));
+}
+
+function currentSnapshot(frames) {
+  return placementSnapshot(frames);
 }
 
 async function loadVisualWithClient(client) {
@@ -310,6 +333,7 @@ async function loadVisualWithClient(client) {
           zoom: state?.zoom ?? 1,
           positionX: state?.position_x ?? 50,
           positionY: state?.position_y ?? 30,
+          mirrored: state?.mirrored === true,
         });
         return {
           ...panel,
@@ -339,7 +363,8 @@ async function loadVisualWithClient(client) {
       ORDER BY approved_at DESC, id DESC
       LIMIT 1
     `, [context.version.id]);
-    const approved = approval.rowCount === 1 && JSON.stringify(approval.rows[0].snapshot) === JSON.stringify(snapshot);
+    const approved = approval.rowCount === 1
+      && JSON.stringify(normalizeApprovalSnapshot(approval.rows[0].snapshot)) === JSON.stringify(normalizeApprovalSnapshot(snapshot));
     const styleSeed = await backfillStyleSeed(client, context.result.material_state_id);
     return {
       ok: true,
@@ -643,23 +668,32 @@ export async function finishPanelGeneration(pool, { id, result }) {
   }
 }
 
-export async function updatePlacement(pool, { frameId, panelIndex, zoom, positionX, positionY }) {
-  const numbers = [zoom, positionX, positionY].map(Number);
-  if (!frameId || !Number.isInteger(panelIndex) || panelIndex < 0
-      || !numbers.every(Number.isFinite)
-      || numbers[0] < 1 || numbers[0] > 3
-      || numbers[1] < 0 || numbers[1] > 100
-      || numbers[2] < 0 || numbers[2] > 100) return failed("invalid-request");
+export async function updatePlacement(pool, input = {}) {
+  const { frameId, panelIndex } = input;
+  if (!frameId || !Number.isInteger(panelIndex) || panelIndex < 0) return failed("invalid-request");
+  if (input.reset != null && input.reset !== true && input.reset !== false) return failed("invalid-request");
   try {
     return await withClient(pool, async (client) => {
       const target = await panelContext(client, frameId, panelIndex);
       if (!target) return failed("not-found", 404);
-      await client.query(`
+      const resolved = resolvePlacementUpdate(target.state, input);
+      if (!resolved) return failed("invalid-request");
+      const updated = await client.query(`
         UPDATE panel_visual_state
-        SET zoom = $2, position_x = $3, position_y = $4, updated_at = clock_timestamp()
+        SET zoom = $2, position_x = $3, position_y = $4, mirrored = $5, updated_at = clock_timestamp()
         WHERE id = $1
-      `, [target.state.id, ...numbers]);
-      return { ok: true };
+        RETURNING zoom, position_x, position_y, mirrored
+      `, [target.state.id, resolved.zoom, resolved.positionX, resolved.positionY, resolved.mirrored]);
+      const row = updated.rows[0];
+      return {
+        ok: true,
+        placement: {
+          zoom: Number(row.zoom),
+          positionX: Number(row.position_x),
+          positionY: Number(row.position_y),
+          mirrored: row.mirrored === true,
+        },
+      };
     });
   } catch {
     return failed("database", 503);
@@ -691,10 +725,10 @@ export async function saveStoryboardEdit(pool, { instruction, frames }) {
           await client.query(`
             INSERT INTO panel_visual_state (
               id, storyboard_version_id, frame_id, panel_index, subject,
-              performance_asset_id, current_generation_id, zoom, position_x, position_y
+              performance_asset_id, current_generation_id, zoom, position_x, position_y, mirrored
             )
             SELECT $1, $2, frame_id, panel_index, subject,
-                   performance_asset_id, current_generation_id, zoom, position_x, position_y
+                   performance_asset_id, current_generation_id, zoom, position_x, position_y, mirrored
             FROM panel_visual_state
             WHERE storyboard_version_id = $3 AND frame_id = $4 AND panel_index = $5
             ON CONFLICT DO NOTHING

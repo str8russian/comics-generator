@@ -70,6 +70,7 @@
         "zoom": { "type": ["number", "null"] },
         "positionX": { "type": ["number", "null"] },
         "positionY": { "type": ["number", "null"] },
+        "mirrored": { "type": ["boolean", "null"] },
         "characterName": { "type": ["string", "null"] },
         "anchorVersionId": { "type": ["string", "null"] }
       }

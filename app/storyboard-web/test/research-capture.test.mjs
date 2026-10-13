@@ -610,7 +610,17 @@ test("frame_generate and panel_generate capture display/structure identity; pane
 
 test("placement_commit records zoom change only; input scrubbing is a non-event", async () => {
   await ensurePage();
-  page.setResearchVisualState(readyVisual(), 0);
+  const visual = readyVisual();
+  visual.frames[0].panels[0] = {
+    ...visual.frames[0].panels[0],
+    zoom: 1.2,
+    positionX: 41,
+    positionY: 22,
+    mirrored: false,
+    position: "41% 22%",
+    align: "41% 22%",
+  };
+  page.setResearchVisualState(visual, 0);
   const zoom = document.querySelector("#detail-panel-controls")
     .querySelectorAll("input")
     .find((input) => input.type === "range");
@@ -628,8 +638,9 @@ test("placement_commit records zoom change only; input scrubbing is a non-event"
   assert.equal(placement.start.submittedText, null);
   assert.equal(placement.start.commandTarget.kind, "panel");
   assert.equal(placement.start.commandTarget.zoom, 1.55);
-  assert.equal(placement.start.commandTarget.positionX, 50);
-  assert.equal(placement.start.commandTarget.positionY, 30);
+  assert.equal(placement.start.commandTarget.positionX, 41);
+  assert.equal(placement.start.commandTarget.positionY, 22);
+  assert.equal(placement.start.commandTarget.mirrored, false);
   assertFixedContextKeys(placement.start.context);
   assert.equal(placement.start.context.displayFrameId, "display-1");
   assert.equal(placement.start.context.structureFrameId, "structure-1");
@@ -1521,4 +1532,202 @@ test("storyboard selection remains sticky across detail close and reopen", async
   assert.equal(page.getResearchDock().getCommandTarget()?.kind, "storyboard");
   assert.equal(document.querySelector("#research-commands-target").value, "storyboard");
   assert.ok(panelCommandOptions().length >= 1);
+});
+
+function placementVisual() {
+  return readyVisual({
+    frames: [{
+      id: "display-1",
+      structureFrameId: "structure-1",
+      structureSegmentIndex: 0,
+      layout: "split2",
+      speakerPanel: 0,
+      dialogue: "Привет",
+      outsideFrameText: "",
+      visualReady: true,
+      panels: [{
+        description: "слева",
+        subject: "Путин",
+        assetId: "asset-1",
+        asset: "/api/visual/assets/asset-1",
+        zoom: 1.4,
+        positionX: 41,
+        positionY: 22,
+        mirrored: false,
+        position: "41% 22%",
+        align: "41% 22%",
+      }, {
+        description: "справа",
+        subject: "Дуров",
+        assetId: "asset-2",
+        asset: "/api/visual/assets/asset-2",
+        zoom: 1.1,
+        positionX: 70,
+        positionY: 55,
+        mirrored: false,
+        position: "70% 55%",
+        align: "70% 55%",
+      }],
+    }],
+  });
+}
+
+function placementButtons(panelIndex) {
+  const sections = [...document.querySelector("#detail-panel-controls").children];
+  const section = sections[panelIndex];
+  const buttons = [...section.querySelectorAll("button")];
+  return {
+    section,
+    reset: buttons.find((button) => button.dataset.placementAction === "reset"),
+    mirror: buttons.find((button) => button.dataset.placementAction === "mirror"),
+  };
+}
+
+function panelAsset(panelIndex) {
+  const panels = [...document.querySelector("#detail-frame").querySelectorAll(".panel")];
+  const column = panels.find((node) => Number(node.dataset.panelIndex) === panelIndex);
+  return column?.querySelector(".panel-asset") ?? null;
+}
+
+test("drag previews one panel and commits placement once at pointerup", async () => {
+  await ensurePage();
+  page.setResearchVisualState(placementVisual(), -1);
+  page.openResearchDetail(0);
+  const left = panelAsset(0);
+  const right = panelAsset(1);
+  assert.equal(left.style.objectPosition, "41% 22%");
+  assert.equal(right.style.objectPosition, "70% 55%");
+  const before = productPosts.length;
+  left.parentNode.dispatchEvent({ type: "pointerdown", clientX: 100, clientY: 80, button: 0, pointerId: 1, preventDefault() {} });
+  left.parentNode.dispatchEvent({ type: "pointermove", clientX: 146.8, clientY: 80, button: 0, pointerId: 1, preventDefault() {} });
+  left.parentNode.dispatchEvent({ type: "pointermove", clientX: 146.8, clientY: 119, button: 0, pointerId: 1, preventDefault() {} });
+  assert.equal(productPosts.length, before);
+  assert.equal(researchStarts("placement_commit").length, 0);
+  assert.notEqual(left.style.objectPosition, "41% 22%");
+  assert.equal(right.style.objectPosition, "70% 55%");
+  assert.equal(left.style.transform.includes("scale(1.4)"), true);
+  left.parentNode.dispatchEvent({ type: "pointerup", clientX: 146.8, clientY: 119, button: 0, pointerId: 1, preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const placementPosts = productPosts.slice(before).filter((entry) => /\/panels\/0\/placement$/.test(entry.path));
+  assert.equal(placementPosts.length, 1);
+  assert.equal(placementPosts[0].body.zoom, 1.4);
+  assert.equal(placementPosts[0].body.mirrored, false);
+  assert.notEqual(placementPosts[0].body.positionX, 41);
+  assert.equal(researchStarts("placement_commit").length, 1);
+  assert.equal(productPosts.slice(before).some((entry) => /\/panels\/1\/placement$/.test(entry.path)), false);
+});
+
+test("zoom after pan and pan after zoom retain both values", async () => {
+  await ensurePage();
+  const visual = placementVisual();
+  const original = fetchImpl;
+  fetchImpl = async (url, init = {}) => {
+    const path = new URL(url, "http://storyboard.local").pathname;
+    if (/\/panels\/0\/placement$/.test(path)) {
+      const body = JSON.parse(init.body);
+      const panel = visual.frames[0].panels[0];
+      if (body.zoom != null) panel.zoom = body.zoom;
+      if (body.positionX != null) panel.positionX = body.positionX;
+      if (body.positionY != null) panel.positionY = body.positionY;
+      if (body.mirrored != null) panel.mirrored = body.mirrored;
+      panel.position = `${panel.positionX}% ${panel.positionY}%`;
+      panel.align = panel.position;
+      productPosts.push({ path, method: init.method, body });
+      return jsonResponse(200, visual);
+    }
+    return original(url, init);
+  };
+  try {
+    page.setResearchVisualState(visual, -1);
+    page.openResearchDetail(0);
+    const zoom = document.querySelector("#detail-panel-controls").querySelectorAll("input").find((input) => input.type === "range");
+    zoom.value = "2";
+    zoom.dispatchEvent({ type: "change" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const zoomPost = productPosts.filter((entry) => /\/panels\/0\/placement$/.test(entry.path)).at(-1);
+    assert.equal(zoomPost.body.zoom, 2);
+    assert.equal(zoomPost.body.positionX, 41);
+    assert.equal(zoomPost.body.positionY, 22);
+    assert.equal(zoomPost.body.mirrored, false);
+
+    const left = panelAsset(0);
+    left.parentNode.dispatchEvent({ type: "pointerdown", clientX: 0, clientY: 0, button: 0, pointerId: 2, preventDefault() {} });
+    left.parentNode.dispatchEvent({ type: "pointermove", clientX: 46.8, clientY: 0, button: 0, pointerId: 2, preventDefault() {} });
+    left.parentNode.dispatchEvent({ type: "pointerup", clientX: 46.8, clientY: 0, button: 0, pointerId: 2, preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const panPost = productPosts.filter((entry) => /\/panels\/0\/placement$/.test(entry.path)).at(-1);
+    assert.equal(panPost.body.zoom, 2);
+    assert.notEqual(panPost.body.positionX, 41);
+    assert.equal(panPost.body.positionY, 22);
+    assert.equal(panPost.body.mirrored, false);
+
+    document.querySelector("#close-detail").dispatchEvent({ type: "click" });
+    page.setResearchVisualState(visual, -1);
+    page.openResearchDetail(0);
+    const reopened = document.querySelector("#detail-panel-controls").querySelectorAll("input").find((input) => input.type === "range");
+    assert.equal(reopened.value, "2");
+    assert.equal(panelAsset(0).style.transform, "scale(2)");
+    assert.equal(panelAsset(0).style.objectPosition, `${visual.frames[0].panels[0].positionX}% 22%`);
+    assert.equal(panelAsset(1).style.objectPosition, "70% 55%");
+    assert.equal(panelAsset(1).style.transform, "scale(1.1)");
+  } finally {
+    fetchImpl = original;
+  }
+});
+
+test("reset and mirror address only the selected panel", async () => {
+  await ensurePage();
+  page.setResearchVisualState(placementVisual(), -1);
+  page.openResearchDetail(0);
+  const left = placementButtons(0);
+  const right = placementButtons(1);
+  assert.ok(left.reset);
+  assert.ok(left.mirror);
+  left.mirror.dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const mirrorPost = productPosts.filter((entry) => /\/panels\/0\/placement$/.test(entry.path)).at(-1);
+  assert.equal(mirrorPost.body.mirrored, true);
+  assert.equal(mirrorPost.body.zoom, 1.4);
+  assert.equal(mirrorPost.body.positionX, 41);
+  assert.equal(mirrorPost.body.positionY, 22);
+  assert.equal(productPosts.some((entry) => /\/panels\/1\/placement$/.test(entry.path)), false);
+  assert.equal(right.mirror.getAttribute("aria-pressed"), "false");
+
+  left.reset.dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const resetPost = productPosts.filter((entry) => /\/panels\/0\/placement$/.test(entry.path)).at(-1);
+  assert.deepEqual(resetPost.body, { reset: true });
+  assert.equal(researchPair("placement_commit").start.commandTarget.zoom, 1);
+  assert.equal(researchPair("placement_commit").start.commandTarget.positionX, 50);
+  assert.equal(researchPair("placement_commit").start.commandTarget.positionY, 30);
+  assert.equal(researchPair("placement_commit").start.commandTarget.mirrored, false);
+  assert.equal(researchPair("placement_commit").start.commandTarget.panelIndex, 0);
+});
+
+test("failed placement save does not claim success and restores the prior rendition", async () => {
+  await ensurePage();
+  page.setResearchVisualState(placementVisual(), -1);
+  page.openResearchDetail(0);
+  const original = fetchImpl;
+  fetchImpl = async (url, init = {}) => {
+    const path = new URL(url, "http://storyboard.local").pathname;
+    if (/\/placement$/.test(path)) return jsonResponse(500, { status: "failed", kind: "database" });
+    return original(url, init);
+  };
+  try {
+    const left = panelAsset(0);
+    left.parentNode.dispatchEvent({ type: "pointerdown", clientX: 0, clientY: 0, button: 0, pointerId: 3, preventDefault() {} });
+    left.parentNode.dispatchEvent({ type: "pointermove", clientX: 80, clientY: 40, button: 0, pointerId: 3, preventDefault() {} });
+    assert.notEqual(left.style.objectPosition, "41% 22%");
+    left.parentNode.dispatchEvent({ type: "pointerup", clientX: 80, clientY: 40, button: 0, pointerId: 3, preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const notice = document.querySelector("#notice");
+    assert.equal(notice.dataset.kind, "error");
+    assert.equal(/Приближение сохранено|Кадрирование сохранено|Кадрирование сброшено|Отражение сохранено/.test(notice.textContent), false);
+    assert.equal(left.style.objectPosition, "41% 22%");
+    assert.equal(left.style.transform, "scale(1.4)");
+    assert.equal(panelAsset(1).style.objectPosition, "70% 55%");
+  } finally {
+    fetchImpl = original;
+  }
 });
