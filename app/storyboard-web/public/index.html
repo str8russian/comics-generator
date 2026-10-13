@@ -89,9 +89,12 @@
       <div id="research-dock-body" class="research-dock-body">
         <section id="research-commands" class="research-region" aria-labelledby="research-commands-title">
           <h2 id="research-commands-title">Commands</h2>
-          <p id="research-commands-target-label" class="research-helper">Цель: не выбрана</p>
-          <label class="research-label" for="research-commands-target">Цель команды</label>
+          <p id="research-commands-target-label" class="research-helper">Действие не выбрано</p>
+          <label class="research-label" for="research-commands-target">Действие (ограничивает выполнение)</label>
           <select id="research-commands-target" class="research-commands-target"></select>
+          <p id="research-commands-target-hint" class="research-helper">
+            Панели в списке относятся к открытому кадру.
+          </p>
           <form id="research-commands-form" class="research-commands-form">
             <label class="research-label" for="research-commands-draft">Команда</label>
             <textarea id="research-commands-draft" class="research-commands-draft" rows="3"></textarea>

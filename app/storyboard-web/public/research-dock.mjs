@@ -20,6 +20,7 @@ const COMMAND_TARGET_KEYS = [
   "structureFrameId",
   "structureSegmentIndex",
   "panelIndex",
+  "panelSubject",
   "zoom",
   "positionX",
   "positionY",
@@ -60,6 +61,38 @@ export function createEmptyEditTarget(editKind, castPhase, overrides = {}) {
 const EVIDENCE_SAVE_FAILURE_LABEL = "Действие продукта выполнено, результат исследования не сохранён.";
 const EVIDENCE_SAVE_FAILURE_LABEL_START = "Не удалось сохранить начало исследования; действие продукта продолжается.";
 
+const RU_MONTHS_GENITIVE = [
+  "января",
+  "февраля",
+  "марта",
+  "апреля",
+  "мая",
+  "июня",
+  "июля",
+  "августа",
+  "сентября",
+  "октября",
+  "ноября",
+  "декабря",
+];
+
+const UTC_PLUS_3_MS = 3 * 60 * 60 * 1000;
+
+/** Visible dock timestamps: Russian date + 24h clock in fixed UTC+3. Stored values unchanged. */
+export function formatResearchTimestamp(value) {
+  if (value == null || value === "") return "";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const moscow = new Date(date.getTime() + UTC_PLUS_3_MS);
+  const day = moscow.getUTCDate();
+  const month = RU_MONTHS_GENITIVE[moscow.getUTCMonth()];
+  const year = moscow.getUTCFullYear();
+  const hh = String(moscow.getUTCHours()).padStart(2, "0");
+  const mm = String(moscow.getUTCMinutes()).padStart(2, "0");
+  const ss = String(moscow.getUTCSeconds()).padStart(2, "0");
+  return `${day} ${month} ${year}, ${hh}:${mm}:${ss} (UTC+3)`;
+}
+
 function evidenceSaveFailurePhase(phase) {
   return phase === "start" ? "start" : "terminal";
 }
@@ -68,6 +101,11 @@ function evidenceSaveFailureLabel(phase) {
   return evidenceSaveFailurePhase(phase) === "start"
     ? EVIDENCE_SAVE_FAILURE_LABEL_START
     : EVIDENCE_SAVE_FAILURE_LABEL;
+}
+
+function numericSeq(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
 }
 
 export function projectOperations({ live = null, events = [], localEvidenceFailures = [] } = {}) {
@@ -79,6 +117,7 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
       semanticAction: live.semanticAction ?? null,
       surface: live.surface ?? null,
       occurredAt: live.occurredAt ?? null,
+      seq: Object.hasOwn(live, "seq") ? live.seq : null,
       outcomeKind: null,
       outcomeFlags: {},
       durationMs: null,
@@ -104,6 +143,8 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
     }
   }
 
+  const persisted = [];
+
   for (const terminal of terminals) {
     const status = terminal.outcome === "success" || terminal.outcome === "failure" || terminal.outcome === "blocked"
       ? terminal.outcome
@@ -111,12 +152,13 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
     const outcomeFlags = terminal.outcomeFlags && typeof terminal.outcomeFlags === "object"
       ? { ...terminal.outcomeFlags }
       : {};
-    items.push({
+    persisted.push({
       status,
       correlationId: terminal.correlationId ?? null,
       semanticAction: terminal.semanticAction ?? null,
       surface: terminal.surface ?? null,
       occurredAt: terminal.occurredAt ?? null,
+      seq: Object.hasOwn(terminal, "seq") ? terminal.seq : null,
       outcomeKind: terminal.outcomeKind ?? null,
       outcomeFlags,
       durationMs: Object.hasOwn(terminal, "durationMs") ? terminal.durationMs : null,
@@ -134,12 +176,13 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
   for (const [correlationId, start] of starts) {
     if (live?.correlationId === correlationId) continue;
     if (terminals.some((terminal) => terminal.correlationId === correlationId)) continue;
-    items.push({
+    persisted.push({
       status: "interrupted",
       correlationId,
       semanticAction: start.semanticAction ?? null,
       surface: start.surface ?? null,
       occurredAt: start.occurredAt ?? null,
+      seq: Object.hasOwn(start, "seq") ? start.seq : null,
       outcomeKind: null,
       outcomeFlags: {},
       durationMs: null,
@@ -153,6 +196,9 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
     });
   }
 
+  persisted.sort((a, b) => numericSeq(a.seq) - numericSeq(b.seq));
+  items.push(...persisted);
+
   for (const failure of localEvidenceFailures || []) {
     if (!failure || typeof failure !== "object") continue;
     const phase = evidenceSaveFailurePhase(failure.phase);
@@ -162,6 +208,7 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
       semanticAction: failure.semanticAction ?? null,
       surface: failure.surface ?? null,
       occurredAt: null,
+      seq: null,
       outcomeKind: null,
       outcomeFlags: {},
       durationMs: null,
@@ -262,42 +309,44 @@ function samePanelTarget(a, b) {
     && a.structureSegmentIndex === b.structureSegmentIndex;
 }
 
-function formatCommandTargetLabel(target, { unsupported = false } = {}) {
-  if (unsupported || !target) {
-    return "Цель: недоступна / устарела — выберите поддерживаемую цель явно";
-  }
+function ownerFacingCommandLabel(target) {
+  if (!target) return "";
   if (target.kind === "storyboard") {
-    return "Цель: раскадровка (storyboard Structure edit)";
+    return "Изменить структуру всей раскадровки";
   }
   if (target.kind === "panel") {
     const displayNumber = target.displayFrameNumber == null ? "?" : String(target.displayFrameNumber);
-    const displayId = target.displayFrameId ?? "—";
-    const structureId = target.structureFrameId ?? "—";
-    const segment = target.structureSegmentIndex == null ? "—" : String(target.structureSegmentIndex);
-    const zeroBased = target.panelIndex == null ? "—" : String(target.panelIndex);
-    const oneBased = target.panelIndex == null ? "—" : String(target.panelIndex + 1);
-    return [
-      `Цель: панель ${oneBased} (1-based) / panelIndex ${zeroBased} (0-based)`,
-      `display кадр ${displayNumber} / ${displayId}`,
-      `structure ${structureId} / segment ${segment}`,
-    ].join(" · ");
+    const oneBased = target.panelIndex == null ? "?" : String(target.panelIndex + 1);
+    const subject = typeof target.panelSubject === "string" && target.panelSubject.trim()
+      ? ` — ${target.panelSubject.trim()}`
+      : "";
+    return `Перегенерировать изображение: кадр ${displayNumber}, панель ${oneBased}${subject}`;
   }
-  return "Цель: не поддерживается";
+  return "";
+}
+
+function formatCommandTargetLabel(target, { unsupported = false, unselected = false } = {}) {
+  if (unselected || !target) {
+    return "Действие не выбрано — выберите действие, чтобы ограничить выполнение";
+  }
+  if (unsupported) {
+    return "Выбранное действие недоступно — выберите другое действие";
+  }
+  return ownerFacingCommandLabel(target) || "Действие не поддерживается";
 }
 
 function formatCommandsHistoryItem(event) {
-  const stamp = event.occurredAt || "";
-  if (event.eventKind === "action_start") {
-    const action = event.semanticAction || "command";
-    const text = event.submittedText || "";
-    return stamp ? `${stamp} — ${action}: ${text}` : `${action}: ${text}`;
-  }
-  if (event.eventKind === "action_terminal") {
-    const action = event.semanticAction || "command";
-    const outcome = event.outcome || "failure";
-    return stamp ? `${stamp} — ${action} → ${outcome}` : `${action} → ${outcome}`;
-  }
-  return stamp ? `${stamp} — ${event.submittedText || ""}` : String(event.submittedText || "");
+  if (event?.eventKind !== "action_start") return "";
+  const stamp = formatResearchTimestamp(event.occurredAt);
+  const actionLabel = ownerFacingCommandLabel(event.commandTarget)
+    || (event.semanticAction === "panel_generate"
+      ? "Перегенерировать изображение"
+      : event.semanticAction === "structure_edit"
+        ? "Изменить структуру всей раскадровки"
+        : (event.semanticAction || "команда"));
+  const text = event.submittedText || "";
+  const body = `${actionLabel}: ${text}`.trim();
+  return stamp ? `${stamp} — ${body}` : body;
 }
 
 function newCorrelationId() {
@@ -340,8 +389,9 @@ export function bindResearchDock({
   let sendingNote = false;
   let sendingCommand = false;
   let availableTargets = { storyboardAvailable: false, panels: [] };
-  let stickyTarget = createEmptyCommandTarget("storyboard");
-  let targetUnsupported = true;
+  let stickyTarget = null;
+  let targetUnsupported = false;
+  let rememberedExpandedSize = null;
 
   function snapshotContext() {
     const base = createEmptyContext();
@@ -385,7 +435,7 @@ export function bindResearchDock({
     if (!notesHistory) return;
     clearChildren(notesHistory);
     for (const note of notes) {
-      const stamp = note.occurredAt || "";
+      const stamp = formatResearchTimestamp(note.occurredAt);
       const text = note.submittedText || "";
       appendTextItem(notesHistory, stamp ? `${stamp} — ${text}` : text);
     }
@@ -396,8 +446,9 @@ export function bindResearchDock({
     clearChildren(commandsHistory);
     for (const event of commandEvents) {
       if (event?.surface && event.surface !== "dock_commands") continue;
-      if (event?.eventKind !== "action_start" && event?.eventKind !== "action_terminal") continue;
-      appendTextItem(commandsHistory, formatCommandsHistoryItem(event));
+      if (event?.eventKind !== "action_start") continue;
+      const line = formatCommandsHistoryItem(event);
+      if (line) appendTextItem(commandsHistory, line);
     }
   }
 
@@ -410,8 +461,9 @@ export function bindResearchDock({
       localEvidenceFailures,
     });
     for (const item of projection) {
-      const stamp = item.occurredAt ? `${item.occurredAt} — ` : "";
-      appendTextItem(operationsList, `${stamp}${item.label}`);
+      const stamp = formatResearchTimestamp(item.occurredAt);
+      const prefix = stamp ? `${stamp} — ` : "";
+      appendTextItem(operationsList, `${prefix}${item.label}`);
     }
   }
 
@@ -442,17 +494,26 @@ export function bindResearchDock({
     renderOperations();
   }
 
+  function clearCommandSelection() {
+    stickyTarget = null;
+    targetUnsupported = false;
+  }
+
   function resolveStickyAgainstAvailable() {
-    if (stickyTarget?.kind === "storyboard") {
+    if (!stickyTarget) {
+      targetUnsupported = false;
+      return;
+    }
+    if (stickyTarget.kind === "storyboard") {
       if (availableTargets.storyboardAvailable) {
         targetUnsupported = false;
         stickyTarget = createEmptyCommandTarget("storyboard");
         return;
       }
-      targetUnsupported = true;
+      clearCommandSelection();
       return;
     }
-    if (stickyTarget?.kind === "panel") {
+    if (stickyTarget.kind === "panel") {
       const match = (availableTargets.panels || []).find((panel) => samePanelTarget(
         createEmptyCommandTarget("panel", panel),
         stickyTarget,
@@ -462,23 +523,10 @@ export function bindResearchDock({
         stickyTarget = createEmptyCommandTarget("panel", match);
         return;
       }
-      targetUnsupported = true;
+      clearCommandSelection();
       return;
     }
-    targetUnsupported = true;
-  }
-
-  function ensureDefaultStoryboardTarget() {
-    if (stickyTarget?.kind === "panel") return;
-    if (availableTargets.storyboardAvailable) {
-      stickyTarget = createEmptyCommandTarget("storyboard");
-      targetUnsupported = false;
-      return;
-    }
-    if (!stickyTarget || stickyTarget.kind === "storyboard") {
-      stickyTarget = createEmptyCommandTarget("storyboard");
-      targetUnsupported = true;
-    }
+    clearCommandSelection();
   }
 
   function renderTargetControls() {
@@ -487,25 +535,18 @@ export function bindResearchDock({
       clearChildren(commandsTarget);
       const placeholder = document.createElement("option");
       placeholder.value = "";
-      placeholder.textContent = "Выберите цель явно";
+      placeholder.textContent = "Выберите действие";
       commandsTarget.append(placeholder);
       if (availableTargets.storyboardAvailable) {
         const option = document.createElement("option");
         option.value = "storyboard";
-        option.textContent = "Раскадровка (Structure edit)";
+        option.textContent = "Изменить структуру всей раскадровки";
         commandsTarget.append(option);
       }
       for (const panel of availableTargets.panels || []) {
         const option = document.createElement("option");
         option.value = panelTargetKey(panel);
-        const oneBased = panel.panelIndex + 1;
-        const segment = panel.structureSegmentIndex == null ? "—" : String(panel.structureSegmentIndex);
-        option.textContent = [
-          `Панель ${oneBased}`,
-          `display ${panel.displayFrameNumber}/${panel.displayFrameId}`,
-          `structure ${panel.structureFrameId ?? "—"} / segment ${segment}`,
-          `panelIndex ${panel.panelIndex} (0-based)`,
-        ].join(" · ");
+        option.textContent = ownerFacingCommandLabel(createEmptyCommandTarget("panel", panel));
         commandsTarget.append(option);
       }
       if (stickyTarget?.kind === "storyboard" && availableTargets.storyboardAvailable && !targetUnsupported) {
@@ -513,31 +554,61 @@ export function bindResearchDock({
       } else if (stickyTarget?.kind === "panel" && !targetUnsupported) {
         commandsTarget.value = panelTargetKey(stickyTarget);
       } else {
-        // Neutral placeholder while sticky target is unsupported/stale.
-        // Do not visually auto-select the first concrete option.
         commandsTarget.value = "";
       }
     }
     if (commandsTargetLabel) {
       commandsTargetLabel.textContent = formatCommandTargetLabel(stickyTarget, {
         unsupported: targetUnsupported,
+        unselected: !stickyTarget,
       });
     }
     if (commandsUnavailable) {
       const noChoices = !availableTargets.storyboardAvailable
         && !(availableTargets.panels || []).length;
-      commandsUnavailable.hidden = !noChoices && !targetUnsupported;
-      if (targetUnsupported) {
-        commandsUnavailable.hidden = false;
-        commandsUnavailable.textContent = noChoices
-          ? "Нет поддерживаемой цели команды. Доступны только правка раскадровки и явно выбранная панель."
-          : "Выбранная цель недоступна или устарела. Выберите поддерживаемую цель явно.";
+      commandsUnavailable.hidden = !noChoices;
+      if (noChoices) {
+        commandsUnavailable.textContent =
+          "Нет поддерживаемого действия. Доступны правка раскадровки и панели открытого кадра.";
       }
     }
   }
 
+  function rememberExpandedSizeFromDom() {
+    if (!root || collapsed) return;
+    const width = root.style?.width || (root.offsetWidth ? `${root.offsetWidth}px` : "");
+    const height = root.style?.height || (root.offsetHeight ? `${root.offsetHeight}px` : "");
+    if (width || height) {
+      rememberedExpandedSize = {
+        width: width || null,
+        height: height || null,
+      };
+    }
+  }
+
+  function applyRememberedExpandedSize() {
+    if (!root || !rememberedExpandedSize) return;
+    if (rememberedExpandedSize.width) root.style.width = rememberedExpandedSize.width;
+    if (rememberedExpandedSize.height) root.style.height = rememberedExpandedSize.height;
+  }
+
+  function clearInlineDockSize() {
+    if (!root?.style) return;
+    root.style.width = "";
+    root.style.height = "";
+    if (typeof root.style.removeProperty === "function") {
+      root.style.removeProperty("width");
+      root.style.removeProperty("height");
+    }
+  }
+
   function setCollapsed(next) {
-    collapsed = Boolean(next);
+    const becomingCollapsed = Boolean(next);
+    if (becomingCollapsed && !collapsed) {
+      rememberExpandedSizeFromDom();
+      clearInlineDockSize();
+    }
+    collapsed = becomingCollapsed;
     if (root) {
       const classes = String(root.className || "")
         .split(/\s+/)
@@ -545,6 +616,9 @@ export function bindResearchDock({
         .filter((name) => name !== "research-dock--collapsed");
       if (collapsed) classes.push("research-dock--collapsed");
       root.className = classes.join(" ");
+    }
+    if (!collapsed) {
+      applyRememberedExpandedSize();
     }
     if (toggle) {
       setElementAttribute(toggle, "aria-expanded", collapsed ? "false" : "true");
@@ -588,7 +662,7 @@ export function bindResearchDock({
         commandEvents = Array.isArray(payload?.events)
           ? payload.events.filter((event) => (
             event?.surface === "dock_commands"
-            && (event?.eventKind === "action_start" || event?.eventKind === "action_terminal")
+            && event?.eventKind === "action_start"
           ))
           : [];
         renderCommandsHistory();
@@ -666,9 +740,9 @@ export function bindResearchDock({
     if (!instruction.trim()) return;
 
     resolveStickyAgainstAvailable();
-    if (targetUnsupported || !stickyTarget) {
+    if (!stickyTarget || targetUnsupported) {
       setCommandsStatus(
-        "Выбранная цель недоступна или не поддерживается. Выберите цель явно — продуктовый вызов не выполнен.",
+        "Выберите действие — продуктовый вызов и запись исследования не выполнены.",
         "error",
       );
       return;
@@ -762,9 +836,7 @@ export function bindResearchDock({
     const terminalEvent = await postResearchEvent(terminalBody);
     if (terminalEvent) {
       clearEvidenceSaveFailure(correlationId);
-      commandEvents = [...commandEvents, terminalEvent];
       terminalEvents = [...terminalEvents, terminalEvent];
-      renderCommandsHistory();
       renderOperations();
     } else if (productOk) {
       reportEvidenceSaveFailure({
@@ -821,11 +893,9 @@ export function bindResearchDock({
           ? panel.structureSegmentIndex
           : null,
         panelIndex: Number.isInteger(panel.panelIndex) ? panel.panelIndex : null,
+        panelSubject: typeof panel.panelSubject === "string" ? panel.panelSubject : null,
       })).filter((panel) => panel.displayFrameId && Number.isInteger(panel.panelIndex)) : [],
     };
-    if (stickyTarget?.kind !== "panel") {
-      ensureDefaultStoryboardTarget();
-    }
     resolveStickyAgainstAvailable();
     renderTargetControls();
   }
@@ -833,7 +903,11 @@ export function bindResearchDock({
   function onTargetSelectChange() {
     if (!commandsTarget) return;
     const value = commandsTarget.value;
-    if (!value) return;
+    if (!value) {
+      clearCommandSelection();
+      renderTargetControls();
+      return;
+    }
     if (value === "storyboard") {
       selectCommandTarget({ kind: "storyboard" });
       return;
@@ -883,6 +957,14 @@ export function bindResearchDock({
       setCollapsed(!collapsed);
     });
   }
+  if (root && typeof root.addEventListener === "function") {
+    root.addEventListener("mouseup", () => {
+      if (!collapsed) rememberExpandedSizeFromDom();
+    });
+    root.addEventListener("pointerup", () => {
+      if (!collapsed) rememberExpandedSizeFromDom();
+    });
+  }
   if (detail) {
     detail.addEventListener("close", () => {
       exitDetail();
@@ -921,7 +1003,7 @@ export function bindResearchDock({
       if (!event) return;
       if (event.correlationId) clearEvidenceSaveFailure(event.correlationId);
       terminalEvents = [...terminalEvents, event];
-      if (event.surface === "dock_commands") {
+      if (event.surface === "dock_commands" && event.eventKind === "action_start") {
         commandEvents = [...commandEvents, event];
         renderCommandsHistory();
       }
@@ -931,7 +1013,20 @@ export function bindResearchDock({
     createEmptyCommandTarget,
     setAvailableTargets,
     selectCommandTarget,
-    getCommandTarget: () => createEmptyCommandTarget(stickyTarget?.kind || "storyboard", stickyTarget || {}),
-    isCommandTargetUnsupported: () => targetUnsupported,
+    getCommandTarget: () => (stickyTarget
+      ? createEmptyCommandTarget(stickyTarget.kind, stickyTarget)
+      : null),
+    isCommandTargetUnsupported: () => !stickyTarget || targetUnsupported,
+    rememberExpandedSizeFromDom,
+    recordExpandedSize(size) {
+      if (!size || typeof size !== "object") return;
+      rememberedExpandedSize = {
+        width: size.width || null,
+        height: size.height || null,
+      };
+    },
+    getRememberedExpandedSize: () => (rememberedExpandedSize
+      ? { ...rememberedExpandedSize }
+      : null),
   };
 }

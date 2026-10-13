@@ -181,7 +181,7 @@ function collectResearchCommandTargets() {
   const panels = [];
   const frame = detailIndex >= 0 ? readyFrames[detailIndex] : null;
   if (frame && Array.isArray(frame.panels)) {
-    frame.panels.forEach((_, panelIndex) => {
+    frame.panels.forEach((panel, panelIndex) => {
       panels.push({
         displayFrameNumber: detailIndex + 1,
         displayFrameId: typeof frame.id === "string" ? frame.id : null,
@@ -190,6 +190,7 @@ function collectResearchCommandTargets() {
           ? frame.structureSegmentIndex
           : null,
         panelIndex,
+        panelSubject: typeof panel?.subject === "string" ? panel.subject : null,
       });
     });
   }

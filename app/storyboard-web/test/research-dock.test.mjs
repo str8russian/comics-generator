@@ -230,7 +230,8 @@ test("Notes draft send posts fixed-key context and renders one timestamped histo
   assert.equal(history.children.length, 1);
   const itemText = history.children[0].textContent;
   assert.match(itemText, /наблюдение владельца/);
-  assert.match(itemText, /2026-10-13T00:00:00\.000Z/);
+  assert.match(itemText, /13 октября 2026, 03:00:00 \(UTC\+3\)/);
+  assert.equal(/2026-10-13T00:00:00\.000Z/.test(itemText), false);
   assert.equal(/AI|ассистент|ответ модели/i.test(itemText), false);
 });
 
@@ -547,7 +548,8 @@ test("Notes hydrate from GET trace kind=note after bind", async () => {
   const history = document.querySelector("#research-notes-history");
   assert.equal(history.children.length, 1);
   assert.match(history.children[0].textContent, /после перезагрузки/);
-  assert.match(history.children[0].textContent, /2026-10-13T04:00:00\.000Z/);
+  assert.match(history.children[0].textContent, /13 октября 2026, 07:00:00 \(UTC\+3\)/);
+  assert.equal(/2026-10-13T04:00:00\.000Z/.test(history.children[0].textContent), false);
 });
 
 function emptyTraceFetch() {
@@ -629,6 +631,7 @@ test("typing or sending Commands never changes Notes draft/history and the rever
     storyboardAvailable: true,
     panels: [],
   });
+  dock.selectCommandTarget({ kind: "storyboard" });
 
   const notesDraft = document.querySelector("#research-notes-draft");
   const commandsDraft = document.querySelector("#research-commands-draft");
@@ -677,6 +680,8 @@ test("sticky storyboard target stays storyboard-wide when detail opens or ambien
     storyboardAvailable: true,
     panels: [],
   });
+  assert.equal(dock.getCommandTarget(), null);
+  dock.selectCommandTarget({ kind: "storyboard" });
   assert.equal(dock.getCommandTarget().kind, "storyboard");
 
   dock.setAvailableTargets({
@@ -704,7 +709,8 @@ test("sticky storyboard target stays storyboard-wide when detail opens or ambien
   });
   assert.equal(dock.getCommandTarget().kind, "storyboard");
   const label = document.querySelector("#research-commands-target-label").textContent;
-  assert.match(label, /storyboard|раскадров/i);
+  assert.match(label, /раскадров/i);
+  assert.equal(/structureFrameId|displayFrameId|panelIndex|0-based/i.test(label), false);
 });
 
 test("panel target is used only after explicit selection with distinct display/structure identity", async () => {
@@ -741,9 +747,10 @@ test("panel target is used only after explicit selection with distinct display/s
       structureFrameId: "structure-1",
       structureSegmentIndex: 0,
       panelIndex: 0,
+      panelSubject: "Дуров",
     }],
   });
-  assert.equal(dock.getCommandTarget().kind, "storyboard");
+  assert.equal(dock.getCommandTarget(), null);
 
   dock.selectCommandTarget({
     kind: "panel",
@@ -752,6 +759,7 @@ test("panel target is used only after explicit selection with distinct display/s
     structureFrameId: "structure-1",
     structureSegmentIndex: 0,
     panelIndex: 0,
+    panelSubject: "Дуров",
   });
   const target = dock.getCommandTarget();
   assert.equal(target.kind, "panel");
@@ -762,9 +770,14 @@ test("panel target is used only after explicit selection with distinct display/s
   assert.notEqual(target.displayFrameId, target.structureFrameId);
 
   const label = document.querySelector("#research-commands-target-label").textContent;
-  assert.match(label, /display-2|кадр\s*2|frame\s*2/i);
-  assert.match(label, /structure-1/);
-  assert.match(label, /0|панел/i);
+  assert.match(label, /кадр\s*2/i);
+  assert.match(label, /панел/i);
+  assert.match(label, /Дуров/);
+  assert.equal(/display-2|structure-1|panelIndex|0-based|structureFrameId|displayFrameId/i.test(label), false);
+  const selectText = document.querySelector("#research-commands-target").children
+    .map((child) => child.textContent)
+    .join("\n");
+  assert.equal(/panelIndex|0-based|structureFrameId|displayFrameId|structure-1|display-2/i.test(selectText), false);
 
   document.querySelector("#research-commands-draft").value = "переделай панель";
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
@@ -879,6 +892,8 @@ test("stale or unsupported selected target shows honest limitation and makes no 
     storyboardAvailable: false,
     panels: [],
   });
+  assert.equal(dock.getCommandTarget(), null);
+  assert.equal(document.querySelector("#research-commands-target").value, "");
   document.querySelector("#research-commands-draft").value = "устаревшая цель";
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -886,7 +901,7 @@ test("stale or unsupported selected target shows honest limitation and makes no 
   assert.equal(requests.some((entry) => entry.path === "/api/research/events"), false);
   const status = document.querySelector("#research-commands-status");
   assert.equal(status.hidden, false);
-  assert.match(status.textContent, /недоступ|не поддержи|устарел|unsupported|stale/i);
+  assert.match(status.textContent, /выбер|действи|недоступ|не поддержи|устарел|unsupported|stale/i);
   assert.equal(document.querySelector("#research-commands-draft").value, "устаревшая цель");
 });
 
@@ -928,6 +943,7 @@ test("Commands is blocked while product busy including form/keyboard paths; Note
   });
   await dock.ready;
   dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  dock.selectCommandTarget({ kind: "storyboard" });
   document.querySelector("#research-commands-draft").value = "нельзя во время busy";
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
   document.querySelector("#research-commands-draft").dispatchEvent({ type: "keydown", key: "Enter", ctrlKey: true });
@@ -1057,6 +1073,7 @@ test("successful Commands send clears only Commands draft; product or research f
   });
   await dock.ready;
   dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  dock.selectCommandTarget({ kind: "storyboard" });
   const draft = document.querySelector("#research-commands-draft");
   const notesDraft = document.querySelector("#research-notes-draft");
   notesDraft.value = "заметка рядом";
@@ -1134,6 +1151,7 @@ test("product Structure form and dock Commands remain separable by surface and d
   });
   await dock.ready;
   dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  dock.selectCommandTarget({ kind: "storyboard" });
 
   const structureInstruction = document.querySelector("#structure-instruction") || (() => {
     const el = document.createElement("textarea");
@@ -1209,12 +1227,13 @@ test("sole available panel stays behind neutral placeholder until explicit selec
     panels: [solePanel],
   });
 
+  assert.equal(dock.getCommandTarget(), null);
   assert.equal(dock.isCommandTargetUnsupported(), true);
   const select = document.querySelector("#research-commands-target");
   assert.equal(select.value, "");
-  assert.match(select.children[0].textContent, /выберите цель явно/i);
+  assert.match(select.children[0].textContent, /Выберите действие/);
   assert.notEqual(select.value, panelOptionValue(select));
-  assert.match(document.querySelector("#research-commands-target-label").textContent, /недоступ|устарел|явно/i);
+  assert.match(document.querySelector("#research-commands-target-label").textContent, /не выбрано|Выберите|действи/i);
 
   document.querySelector("#research-commands-draft").value = "до явного выбора";
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
@@ -1289,10 +1308,10 @@ test("stale panel returns selector to neutral placeholder instead of auto-select
       panelIndex: 0,
     }],
   });
+  assert.equal(dock.getCommandTarget(), null);
   assert.equal(dock.isCommandTargetUnsupported(), true);
   assert.equal(select.value, "");
-  assert.match(select.children[0].textContent, /выберите цель явно/i);
-  assert.equal(dock.getCommandTarget().displayFrameId, "display-old");
+  assert.match(select.children[0].textContent, /Выберите действие/);
   assert.notEqual(select.value, panelOptionValue(select));
 
   document.querySelector("#research-commands-draft").value = "stale";
@@ -1373,7 +1392,7 @@ test("panel target key and matching distinguish structureSegmentIndex including 
   assert.equal(select.value, values.find((value) => value !== values[0]) || select.value);
 });
 
-test("valid storyboard default and explicit panel selection stay stable across ambient refreshes", async () => {
+test("explicit storyboard and panel selections stay stable across ambient refreshes", async () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   installDockDocument(html);
   const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
@@ -1399,6 +1418,9 @@ test("valid storyboard default and explicit panel selection stay stable across a
     }],
   });
   const select = document.querySelector("#research-commands-target");
+  assert.equal(dock.getCommandTarget(), null);
+  assert.equal(select.value, "");
+  dock.selectCommandTarget({ kind: "storyboard" });
   assert.equal(dock.getCommandTarget().kind, "storyboard");
   assert.equal(dock.isCommandTargetUnsupported(), false);
   assert.equal(select.value, "storyboard");
@@ -1511,6 +1533,7 @@ test("T028 Commands product success with terminal research failure shows local e
   });
   await dock.ready;
   dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  dock.selectCommandTarget({ kind: "storyboard" });
   const draft = document.querySelector("#research-commands-draft");
   draft.value = "команда при сбое terminal";
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
@@ -1681,6 +1704,7 @@ test("Commands start evidence save failure while product pending uses start word
   });
   await dock.ready;
   dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  dock.selectCommandTarget({ kind: "storyboard" });
   document.querySelector("#research-commands-draft").value = "команда при сбое start";
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1742,6 +1766,7 @@ test("Commands terminal evidence save failure after product success keeps comple
   });
   await dock.ready;
   dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  dock.selectCommandTarget({ kind: "storyboard" });
   document.querySelector("#research-commands-draft").value = "команда при сбое terminal";
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1755,4 +1780,448 @@ test("Commands terminal evidence save failure after product success keeps comple
   assert.equal(projection.some((item) => item.status === "running"), false);
   assert.equal(startPosts, 1);
   assert.equal(terminalPosts, 1);
+});
+
+// --- T035 owner-observation corrections (2026-10-13) ---
+
+test("T035 Commands starts unselected with no implicit default storyboard target", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+  assert.equal(dock.getCommandTarget(), null);
+  dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  assert.equal(dock.getCommandTarget(), null);
+  const select = document.querySelector("#research-commands-target");
+  assert.equal(select.value, "");
+  assert.match(select.children[0]?.textContent || "", /Выберите действие/);
+});
+
+test("T035 neutral Commands send performs zero product and research calls", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  let productCalls = 0;
+  const requests = [];
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    isProductBusy: () => false,
+    executeDockCommand: async () => {
+      productCalls += 1;
+      return { ok: true };
+    },
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      requests.push({ path, method: init.method ?? "GET" });
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/events") return jsonResponse(201, { event: { seq: 1 } });
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  dock.setAvailableTargets({ storyboardAvailable: true, panels: [] });
+  document.querySelector("#research-commands-draft").value = "кадр 12 про другое";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(productCalls, 0);
+  assert.equal(requests.filter((entry) => entry.path === "/api/research/events").length, 0);
+  const status = document.querySelector("#research-commands-status");
+  assert.equal(status.hidden, false);
+  assert.match(status.textContent, /выбер|действи/i);
+});
+
+test("T035 explicit storyboard and panel selections work with owner-facing labels only", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  let lastCommand = null;
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    isProductBusy: () => false,
+    executeDockCommand: async (payload) => {
+      lastCommand = payload;
+      return { ok: true };
+    },
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/research/events") {
+        return jsonResponse(201, { event: { ...JSON.parse(init.body), seq: 1, occurredAt: "2026-10-13T10:40:57.000Z" } });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 12,
+      displayFrameId: "disp-12",
+      structureFrameId: "struct-9",
+      structureSegmentIndex: 2,
+      panelIndex: 1,
+      panelSubject: "Дуров",
+    }],
+  });
+  const hint = document.querySelector("#research-commands-target-hint")?.textContent
+    || document.querySelector("#research-commands-target-label")?.textContent
+    || "";
+  assert.match(hint + document.querySelector("label[for='research-commands-target']")?.textContent, /открыт|кадр|огранич|выполнен/i);
+
+  dock.selectCommandTarget({ kind: "storyboard" });
+  assert.equal(dock.getCommandTarget().kind, "storyboard");
+  assert.match(document.querySelector("#research-commands-target-label").textContent, /Изменить структуру всей раскадровки/);
+  document.querySelector("#research-commands-draft").value = "storyboard cmd";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(lastCommand.commandTarget.kind, "storyboard");
+
+  dock.selectCommandTarget({
+    kind: "panel",
+    displayFrameNumber: 12,
+    displayFrameId: "disp-12",
+    structureFrameId: "struct-9",
+    structureSegmentIndex: 2,
+    panelIndex: 1,
+    panelSubject: "Дуров",
+  });
+  const panelLabel = document.querySelector("#research-commands-target-label").textContent;
+  assert.match(panelLabel, /Перегенерировать изображение: кадр 12, панель 2 — Дуров/);
+  assert.equal(/disp-12|struct-9|panelIndex|0-based|structureFrameId|displayFrameId|segment/i.test(panelLabel), false);
+  const optionsText = document.querySelector("#research-commands-target").children
+    .map((child) => child.textContent)
+    .join("\n");
+  assert.equal(/panelIndex|0-based|structureFrameId|displayFrameId|disp-12|struct-9/i.test(optionsText), false);
+  document.querySelector("#research-commands-draft").value = "panel cmd";
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(lastCommand.commandTarget.kind, "panel");
+  assert.equal(lastCommand.commandTarget.panelIndex, 1);
+  assert.equal(lastCommand.commandTarget.structureFrameId, "struct-9");
+});
+
+test("T035 ambient frame refresh never selects or retargets Commands action", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 1,
+      displayFrameId: "d1",
+      structureFrameId: "s1",
+      structureSegmentIndex: 0,
+      panelIndex: 0,
+    }],
+  });
+  assert.equal(dock.getCommandTarget(), null);
+  dock.enterDetail();
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 2,
+      displayFrameId: "d2",
+      structureFrameId: "s2",
+      structureSegmentIndex: 1,
+      panelIndex: 0,
+    }],
+  });
+  assert.equal(dock.getCommandTarget(), null);
+  dock.selectCommandTarget({ kind: "storyboard" });
+  dock.setAvailableTargets({
+    storyboardAvailable: true,
+    panels: [{
+      displayFrameNumber: 3,
+      displayFrameId: "d3",
+      structureFrameId: "s3",
+      structureSegmentIndex: 2,
+      panelIndex: 1,
+    }],
+  });
+  assert.equal(dock.getCommandTarget().kind, "storyboard");
+});
+
+test("T035 formatResearchTimestamp uses Russian UTC+3 and graceful invalid fallback", async () => {
+  const { formatResearchTimestamp } = await import("../public/research-dock.mjs");
+  assert.equal(
+    formatResearchTimestamp("2026-10-13T10:40:57.000Z"),
+    "13 октября 2026, 13:40:57 (UTC+3)",
+  );
+  assert.equal(formatResearchTimestamp("not-a-date"), "");
+  assert.equal(formatResearchTimestamp(null), "");
+  assert.equal(formatResearchTimestamp(undefined), "");
+  assert.equal(/Invalid Date/i.test(formatResearchTimestamp("bad")), false);
+});
+
+test("T035 Notes Commands Operations render Russian UTC+3 timestamps", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const iso = "2026-10-13T10:40:57.000Z";
+  const expected = "13 октября 2026, 13:40:57 (UTC+3)";
+  const { bindResearchDock } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => ({}),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: async (url) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path === "/api/research/trace?kind=note") {
+        return jsonResponse(200, {
+          events: [{ eventKind: "note", submittedText: "заметка", occurredAt: iso, seq: 1 }],
+        });
+      }
+      if (path === "/api/research/trace?surface=dock_commands") {
+        return jsonResponse(200, {
+          events: [{
+            eventKind: "action_start",
+            surface: "dock_commands",
+            semanticAction: "structure_edit",
+            submittedText: "команда",
+            commandTarget: { kind: "storyboard" },
+            occurredAt: iso,
+            seq: 2,
+          }],
+        });
+      }
+      if (path === "/api/research/trace") {
+        return jsonResponse(200, {
+          events: [{
+            eventKind: "action_terminal",
+            surface: "product_control",
+            semanticAction: "panel_generate",
+            outcome: "success",
+            occurredAt: iso,
+            seq: 3,
+          }],
+        });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  const notesText = document.querySelector("#research-notes-history").children.map((c) => c.textContent).join("\n");
+  const commandsText = document.querySelector("#research-commands-history").children.map((c) => c.textContent).join("\n");
+  const opsText = document.querySelector("#research-operations-list").children.map((c) => c.textContent).join("\n");
+  assert.match(notesText, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(commandsText, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(opsText, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(/2026-10-13T10:40:57/.test(notesText + commandsText + opsText), false);
+  assert.equal(/Invalid Date/i.test(notesText + commandsText + opsText), false);
+});
+
+test("T035 expanded dock is resizable; collapsed handle is fixed; same-page restore; no persistence", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
+  assert.match(css, /#research-dock\s*\{[^}]*resize:\s*both/s);
+  assert.match(css, /#research-dock\.research-dock--collapsed\s*\{[^}]*resize:\s*none/s);
+  assert.match(css, /#research-dock\.research-dock--collapsed\s*\{[^}]*width:\s*\d+px/s);
+  assert.equal(/localStorage|sessionStorage|document\.cookie/.test(
+    readFileSync(new URL("../public/research-dock.mjs", import.meta.url), "utf8"),
+  ), false);
+
+  installDockDocument(html);
+  const storageCalls = [];
+  globalThis.localStorage = {
+    getItem(...args) { storageCalls.push(["getItem", ...args]); return null; },
+    setItem(...args) { storageCalls.push(["setItem", ...args]); },
+    removeItem(...args) { storageCalls.push(["removeItem", ...args]); },
+  };
+  const { bindResearchDock } = await import("../public/research-dock.mjs");
+  const root = document.querySelector("#research-dock");
+  root.style = {};
+  const dock = bindResearchDock({
+    root,
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => ({}),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+  root.style.width = "420px";
+  root.style.height = "380px";
+  if (typeof dock.rememberExpandedSizeFromDom === "function") {
+    dock.rememberExpandedSizeFromDom();
+  } else {
+    dock.recordExpandedSize?.({ width: "420px", height: "380px" });
+  }
+  dock.setCollapsed(true);
+  assert.match(root.className, /collapsed/);
+  assert.equal(root.style.width === "420px", false);
+  dock.setCollapsed(false);
+  assert.equal(root.style.width, "420px");
+  assert.equal(root.style.height, "380px");
+  const beforeReparent = { width: root.style.width, height: root.style.height };
+  dock.enterDetail();
+  assert.equal(root.style.width, beforeReparent.width);
+  assert.equal(root.style.height, beforeReparent.height);
+  dock.exitDetail();
+  assert.equal(root.style.width, beforeReparent.width);
+  assert.equal(storageCalls.length, 0);
+});
+
+test("T035 Operations projects persisted entries by authoritative seq including older unmatched start", async () => {
+  const { projectOperations } = await import("../public/research-dock.mjs");
+  const events = [
+    {
+      eventKind: "action_terminal",
+      correlationId: "c-new",
+      semanticAction: "panel_generate",
+      outcome: "success",
+      occurredAt: "2026-10-13T12:00:00.000Z",
+      seq: 10,
+    },
+    {
+      eventKind: "action_start",
+      correlationId: "c-old",
+      semanticAction: "structure_edit",
+      occurredAt: "2026-10-13T09:00:00.000Z",
+      seq: 3,
+    },
+    {
+      eventKind: "action_terminal",
+      correlationId: "c-mid",
+      semanticAction: "frame_generate",
+      outcome: "failure",
+      occurredAt: "2026-10-13T11:00:00.000Z",
+      seq: 7,
+    },
+  ];
+  const projected = projectOperations({ live: null, events });
+  const persisted = projected.filter((item) => item.localOnly !== true);
+  assert.deepEqual(persisted.map((item) => item.seq), [3, 7, 10]);
+  assert.equal(persisted[0].status, "interrupted");
+  assert.equal(persisted[0].historical, true);
+  assert.equal(persisted[0].correlationId, "c-old");
+  assert.equal(persisted.at(-1).seq, 10);
+  assert.equal(persisted.at(-1).correlationId, "c-new");
+
+  const withLive = projectOperations({
+    live: { correlationId: "live-1", semanticAction: "structure_edit" },
+    events,
+    localEvidenceFailures: [{ correlationId: "gap", phase: "terminal", semanticAction: "structure_edit" }],
+  });
+  assert.equal(withLive[0].status, "running");
+  assert.equal(withLive.at(-1).localOnly, true);
+  assert.deepEqual(
+    withLive.filter((item) => item.localOnly !== true && item.status !== "running").map((item) => item.seq),
+    [3, 7, 10],
+  );
+});
+
+test("T035 Commands history shows submissions only; Operations owns terminal rows including after hydrate", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  installDockDocument(html);
+  const { bindResearchDock, createEmptyContext } = await import("../public/research-dock.mjs");
+  const correlationId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => createEmptyContext(),
+    isProductBusy: () => false,
+    executeDockCommand: async () => ({ ok: true }),
+    fetchImpl: async (url, init = {}) => {
+      const parsed = new URL(url, "http://127.0.0.1");
+      const path = parsed.pathname + parsed.search;
+      if (path.startsWith("/api/research/trace") && path.includes("kind=note")) {
+        return jsonResponse(200, { events: [] });
+      }
+      if (path === "/api/research/trace?surface=dock_commands") {
+        return jsonResponse(200, {
+          events: [
+            {
+              eventKind: "action_start",
+              surface: "dock_commands",
+              semanticAction: "structure_edit",
+              submittedText: "отправь это",
+              commandTarget: { kind: "storyboard" },
+              correlationId,
+              occurredAt: "2026-10-13T10:40:57.000Z",
+              seq: 2,
+            },
+            {
+              eventKind: "action_terminal",
+              surface: "dock_commands",
+              semanticAction: "structure_edit",
+              outcome: "success",
+              correlationId,
+              occurredAt: "2026-10-13T10:41:00.000Z",
+              seq: 3,
+            },
+          ],
+        });
+      }
+      if (path === "/api/research/trace") {
+        return jsonResponse(200, {
+          events: [
+            {
+              eventKind: "action_start",
+              surface: "dock_commands",
+              semanticAction: "structure_edit",
+              submittedText: "отправь это",
+              commandTarget: { kind: "storyboard" },
+              correlationId,
+              occurredAt: "2026-10-13T10:40:57.000Z",
+              seq: 2,
+            },
+            {
+              eventKind: "action_terminal",
+              surface: "dock_commands",
+              semanticAction: "structure_edit",
+              outcome: "success",
+              correlationId,
+              occurredAt: "2026-10-13T10:41:00.000Z",
+              seq: 3,
+            },
+          ],
+        });
+      }
+      if (path === "/api/research/events") {
+        return jsonResponse(201, { event: { ...JSON.parse(init.body), seq: 99, occurredAt: "2026-10-13T10:50:00.000Z" } });
+      }
+      return jsonResponse(404, {});
+    },
+  });
+  await dock.ready;
+  const commandsHistory = document.querySelector("#research-commands-history");
+  assert.equal(commandsHistory.children.length, 1);
+  const commandsText = commandsHistory.children[0].textContent;
+  assert.match(commandsText, /отправь это/);
+  assert.match(commandsText, /раскадров|структур/i);
+  assert.equal(/→|успех|success|failure|ошибка/i.test(commandsText), false);
+  const opsText = document.querySelector("#research-operations-list").children
+    .map((child) => child.textContent)
+    .join("\n");
+  assert.match(opsText, /Успех|success/i);
 });
