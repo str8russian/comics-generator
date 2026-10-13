@@ -146,6 +146,36 @@ export function captureResearchContext() {
   });
 }
 
+function frameActionContextOverrides(frame, displayFrameNumber = null) {
+  return {
+    displayFrameNumber: Number.isInteger(displayFrameNumber) ? displayFrameNumber : null,
+    displayFrameId: typeof frame?.id === "string" ? frame.id : null,
+    structureFrameId: typeof frame?.structureFrameId === "string" ? frame.structureFrameId : null,
+    structureSegmentIndex: Number.isInteger(frame?.structureSegmentIndex) ? frame.structureSegmentIndex : null,
+  };
+}
+
+function panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber = null) {
+  return {
+    ...frameActionContextOverrides(frame, displayFrameNumber),
+    panelIndex: Number.isInteger(panelIndex) ? panelIndex : null,
+    panelSubject: typeof panel?.subject === "string" ? panel.subject : null,
+    imageAssetId: typeof panel?.assetId === "string" ? panel.assetId : null,
+    generationId: typeof panel?.generationId === "string" ? panel.generationId : null,
+  };
+}
+
+function characterActionContextOverrides(character, {
+  imageAssetId = null,
+  anchorVersionId = null,
+} = {}) {
+  return {
+    characterName: typeof character?.name === "string" ? character.name : null,
+    imageAssetId: typeof imageAssetId === "string" ? imageAssetId : null,
+    anchorVersionId: typeof anchorVersionId === "string" ? anchorVersionId : null,
+  };
+}
+
 function collectResearchCommandTargets() {
   const storyboardAvailable = Boolean(visual) && structureTools && !structureTools.hidden;
   const panels = [];
@@ -190,9 +220,14 @@ function beginProductResearchCapture({
   submittedText = null,
   commandTarget = null,
   editTarget = null,
+  contextOverrides = null,
 }) {
   const correlationId = crypto.randomUUID();
-  const context = captureResearchContext();
+  const ambient = captureResearchContext();
+  const context = createEmptyContext({
+    ...ambient,
+    ...(contextOverrides && typeof contextOverrides === "object" ? contextOverrides : {}),
+  });
   const startSnapshot = {
     semanticAction,
     surface: "product_control",
@@ -244,6 +279,7 @@ async function runProductResearchAction({
   submittedText = null,
   commandTarget = null,
   editTarget = null,
+  contextOverrides = null,
   busyMessage = null,
   operation,
 }) {
@@ -252,6 +288,7 @@ async function runProductResearchAction({
     submittedText,
     commandTarget,
     editTarget,
+    contextOverrides,
   });
 
   const execute = async () => {
@@ -825,6 +862,9 @@ function renderCharacterCards() {
         semanticAction: "identity_save",
         submittedText: identityComment,
         commandTarget: createEmptyCommandTarget("character", { characterName: character.name }),
+        contextOverrides: characterActionContextOverrides(character, {
+          imageAssetId: character.identity?.assetId ?? null,
+        }),
         busyMessage: `Сохраняю фотографию для ${character.name}…`,
         async operation() {
           const imageDataUrl = await fileAsDataUrl(file);
@@ -854,6 +894,10 @@ function renderCharacterCards() {
         semanticAction: "anchor_generate",
         submittedText: anchorInstruction,
         commandTarget: createEmptyCommandTarget("character", { characterName: character.name }),
+        contextOverrides: characterActionContextOverrides(character, {
+          imageAssetId: character.candidate?.assetId ?? null,
+          anchorVersionId: character.candidate?.id ?? null,
+        }),
         busyMessage: `Создаю базовый образ для ${character.name}. Это может занять около минуты…`,
         async operation() {
           const next = await fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/anchor`, {
@@ -883,6 +927,10 @@ function renderCharacterCards() {
           submittedText: null,
           commandTarget: createEmptyCommandTarget("character", {
             characterName: character.name,
+            anchorVersionId,
+          }),
+          contextOverrides: characterActionContextOverrides(character, {
+            imageAssetId: character.candidate?.assetId ?? null,
             anchorVersionId,
           }),
           busyMessage: `Утверждаю образ ${character.name}…`,
@@ -945,8 +993,12 @@ async function generateFrame(frameId, button, index) {
     ? `Создаю изображения этого кадра: ${panelCount} панели…`
     : "Создаю изображение этого кадра…";
   const displayIndex = readyFrames.findIndex((frame) => frame.id === frameId);
+  const displayFrameNumber = displayIndex >= 0
+    ? displayIndex + 1
+    : (Number.isInteger(index) ? index + 1 : null);
+  const frameForContext = source || { id: frameId };
   const frameTarget = createEmptyCommandTarget("frame", {
-    displayFrameNumber: displayIndex >= 0 ? displayIndex + 1 : (Number.isInteger(index) ? index + 1 : null),
+    displayFrameNumber,
     displayFrameId: typeof frameId === "string" ? frameId : null,
     structureFrameId: typeof source?.structureFrameId === "string" ? source.structureFrameId : null,
     structureSegmentIndex: Number.isInteger(source?.structureSegmentIndex) ? source.structureSegmentIndex : null,
@@ -955,6 +1007,7 @@ async function generateFrame(frameId, button, index) {
     semanticAction: "frame_generate",
     submittedText: null,
     commandTarget: frameTarget,
+    contextOverrides: frameActionContextOverrides(frameForContext, displayFrameNumber),
     busyMessage: progress,
     async operation() {
       const previous = button?.textContent;
@@ -1022,8 +1075,9 @@ function renderPanelControls(frame) {
     regenerate.textContent = panel.assetId ? "Переделать эту панель" : "Создать эту панель";
     regenerate.addEventListener("click", async () => {
       const panelInstruction = instruction.value;
+      const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
       const panelTarget = createEmptyCommandTarget("panel", {
-        displayFrameNumber: detailIndex >= 0 ? detailIndex + 1 : null,
+        displayFrameNumber,
         displayFrameId: typeof frame.id === "string" ? frame.id : null,
         structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
         structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
@@ -1033,6 +1087,7 @@ function renderPanelControls(frame) {
         semanticAction: "panel_generate",
         submittedText: panelInstruction,
         commandTarget: panelTarget,
+        contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
         busyMessage: `Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`,
         async operation() {
           const file = performance.files?.[0];
@@ -1083,11 +1138,12 @@ function renderPanelControls(frame) {
         const committedZoom = Number(zoom.value);
         const positionX = 50;
         const positionY = 30;
+        const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
         await runProductResearchAction({
           semanticAction: "placement_commit",
           submittedText: null,
           commandTarget: createEmptyCommandTarget("panel", {
-            displayFrameNumber: detailIndex >= 0 ? detailIndex + 1 : null,
+            displayFrameNumber,
             displayFrameId: typeof frame.id === "string" ? frame.id : null,
             structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
             structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
@@ -1096,6 +1152,7 @@ function renderPanelControls(frame) {
             positionX,
             positionY,
           }),
+          contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
           busyMessage: "Сохраняю приближение…",
           async operation() {
             const next = await fetchJson(
@@ -1121,11 +1178,12 @@ function renderPanelControls(frame) {
 
 structureEditForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const instruction = structureInstruction.value.trim();
+  const submittedTextExact = structureInstruction.value;
+  const instruction = submittedTextExact.trim();
   if (!instruction) return;
   await runProductResearchAction({
     semanticAction: "structure_edit",
-    submittedText: instruction,
+    submittedText: submittedTextExact,
     commandTarget: createEmptyCommandTarget("storyboard"),
     busyMessage: "Применяю структурную правку к раскадровке…",
     async operation() {

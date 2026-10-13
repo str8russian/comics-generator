@@ -194,8 +194,8 @@ function readyVisual(overrides = {}) {
     readyForVideo: false,
     characters: [{
       name: "Путин",
-      identity: { assetUrl: "/id.png", comment: "исходный" },
-      candidate: { id: "anchor-1", assetId: "anchor-1", assetUrl: "/a.png", status: "ready" },
+      identity: { assetId: "identity-asset-1", assetUrl: "/id.png", comment: "исходный" },
+      candidate: { id: "anchor-1", assetId: "anchor-asset-1", assetUrl: "/a.png", status: "ready" },
       approvedAnchorId: null,
     }],
     frames: [{
@@ -220,6 +220,76 @@ function readyVisual(overrides = {}) {
       }],
     }],
     ...overrides,
+  };
+}
+
+function assertFixedContextKeys(context) {
+  assert.ok(context && typeof context === "object");
+  for (const key of [
+    "workflowPhase",
+    "storyboardVersionId",
+    "displayFrameNumber",
+    "displayFrameId",
+    "structureFrameId",
+    "structureSegmentIndex",
+    "panelIndex",
+    "panelSubject",
+    "imageAssetId",
+    "generationId",
+    "characterName",
+    "anchorVersionId",
+  ]) {
+    assert.equal(Object.hasOwn(context, key), true, `missing context key ${key}`);
+  }
+}
+
+function assertCastEditTargetShape(editTarget, expected) {
+  assert.equal(editTarget.editKind, expected.editKind);
+  assert.equal(editTarget.castPhase, expected.castPhase);
+  assert.equal(editTarget.characterName, expected.characterName);
+  assert.equal(editTarget.previousCharacterName, expected.previousCharacterName ?? null);
+  assert.equal(editTarget.surfaceForm, expected.surfaceForm ?? null);
+  assert.equal(editTarget.sourceItemId, expected.sourceItemId ?? null);
+  assert.deepEqual(Object.keys(editTarget).sort(), [
+    "castPhase",
+    "characterName",
+    "editKind",
+    "previousCharacterName",
+    "sourceItemId",
+    "surfaceForm",
+  ]);
+}
+
+function assertSingleCastPair(editKind, castPhase) {
+  const starts = researchStarts("cast_edit").filter((event) => (
+    event.editTarget?.editKind === editKind
+    && event.editTarget?.castPhase === castPhase
+  ));
+  assert.equal(starts.length, 1, `expected one start for ${editKind}/${castPhase}`);
+  const start = starts[0];
+  const terminals = researchPosts.filter((event) => (
+    event.eventKind === "action_terminal"
+    && event.correlationId === start.correlationId
+  ));
+  assert.equal(terminals.length, 1, `expected one terminal for ${editKind}/${castPhase}`);
+  assert.equal(terminals[0].outcome, "success");
+  return { start, terminal: terminals[0] };
+}
+
+function castReviewState(mode, castOverrides = {}) {
+  const baseCast = {
+    characters: [{ name: "Путин" }, { name: "Дуров" }],
+    aliases: [{ surface: "Владимир", characterName: "Путин" }],
+    speakers: [{ sourceItemId: "utterance-1", characterName: "Путин" }],
+    ...castOverrides,
+  };
+  return {
+    id: mode === "reading" ? "reading-1" : "material-1",
+    text: "текст",
+    sourceItems: [{ id: "utterance-1", kind: "utterance", sourceQuote: "Реплика" }],
+    cast: baseCast,
+    surfaceForms: [{ quote: "Владимир" }],
+    findings: [],
   };
 }
 
@@ -473,10 +543,42 @@ test("frame_generate and panel_generate capture display/structure identity; pane
   assert.equal(frame.start.commandTarget.structureFrameId, "structure-1");
   assert.equal(frame.start.commandTarget.structureSegmentIndex, 0);
   assert.notEqual(frame.start.commandTarget.displayFrameId, frame.start.commandTarget.structureFrameId);
+  assertFixedContextKeys(frame.start.context);
+  assert.equal(frame.start.context.displayFrameNumber, 1);
+  assert.equal(frame.start.context.displayFrameId, "display-1");
+  assert.equal(frame.start.context.structureFrameId, "structure-1");
+  assert.equal(frame.start.context.structureSegmentIndex, 0);
+  assert.equal(frame.start.context.panelIndex, null);
+  assert.equal(frame.start.context.panelSubject, null);
+  assert.equal(frame.start.context.imageAssetId, null);
+  assert.equal(frame.start.context.generationId, null);
 
   researchPosts.length = 0;
   productPosts.length = 0;
-  page.setResearchVisualState(readyVisual(), 0);
+  page.setResearchVisualState(readyVisual({
+    frames: [{
+      id: "display-1",
+      structureFrameId: "structure-1",
+      structureSegmentIndex: 0,
+      layout: "split2",
+      speakerPanel: 0,
+      dialogue: "Привет",
+      outsideFrameText: "",
+      visualReady: true,
+      panels: [{
+        description: "слева",
+        subject: "Путин",
+        assetId: "asset-1",
+        generationId: "gen-panel-1",
+        zoom: 1.2,
+      }, {
+        description: "справа",
+        subject: "Дуров",
+        assetId: "asset-2",
+        zoom: 1,
+      }],
+    }],
+  }), 0);
   const panelSection = document.querySelector("#detail-panel-controls").children[0];
   const instruction = panelSection.querySelector("textarea");
   const regenerate = [...panelSection.querySelectorAll("button")].find((button) => /панел|Создать|Переделать/i.test(button.textContent));
@@ -488,6 +590,15 @@ test("frame_generate and panel_generate capture display/structure identity; pane
   assert.equal(panel.start.commandTarget.kind, "panel");
   assert.equal(panel.start.commandTarget.panelIndex, 0);
   assert.equal(panel.start.commandTarget.structureSegmentIndex, 0);
+  assertFixedContextKeys(panel.start.context);
+  assert.equal(panel.start.context.displayFrameNumber, 1);
+  assert.equal(panel.start.context.displayFrameId, "display-1");
+  assert.equal(panel.start.context.structureFrameId, "structure-1");
+  assert.equal(panel.start.context.structureSegmentIndex, 0);
+  assert.equal(panel.start.context.panelIndex, 0);
+  assert.equal(panel.start.context.panelSubject, "Путин");
+  assert.equal(panel.start.context.imageAssetId, "asset-1");
+  assert.equal(panel.start.context.generationId, "gen-panel-1");
   const product = productPosts.find((entry) => /\/panels\/0\/generate$/.test(entry.path));
   assert.ok(product);
   assert.equal(product.body.instruction, "перерисуй панель");
@@ -519,6 +630,14 @@ test("placement_commit records zoom change only; input scrubbing is a non-event"
   assert.equal(placement.start.commandTarget.zoom, 1.55);
   assert.equal(placement.start.commandTarget.positionX, 50);
   assert.equal(placement.start.commandTarget.positionY, 30);
+  assertFixedContextKeys(placement.start.context);
+  assert.equal(placement.start.context.displayFrameId, "display-1");
+  assert.equal(placement.start.context.structureFrameId, "structure-1");
+  assert.equal(placement.start.context.structureSegmentIndex, 0);
+  assert.equal(placement.start.context.panelIndex, 0);
+  assert.equal(placement.start.context.panelSubject, "Путин");
+  assert.equal(placement.start.context.imageAssetId, "asset-1");
+  assert.equal(placement.start.context.generationId, null);
 });
 
 test("identity_save comment-only; anchor_generate/approve and visual_approve capture targets", async () => {
@@ -537,6 +656,11 @@ test("identity_save comment-only; anchor_generate/approve and visual_approve cap
   assert.equal(identity.start.submittedText, "только комментарий идентичности");
   assert.equal(identity.start.commandTarget.kind, "character");
   assert.equal(identity.start.commandTarget.characterName, "Путин");
+  assertFixedContextKeys(identity.start.context);
+  assert.equal(identity.start.context.characterName, "Путин");
+  assert.equal(identity.start.context.imageAssetId, "identity-asset-1");
+  assert.equal(identity.start.context.anchorVersionId, null);
+  assert.equal(identity.start.context.generationId, null);
   assert.equal(JSON.stringify(identity.start).includes("imageDataUrl"), false);
   assert.equal(JSON.stringify(identity.start).includes("data:image"), false);
 
@@ -554,13 +678,17 @@ test("identity_save comment-only; anchor_generate/approve and visual_approve cap
   const anchorGen = researchPair("anchor_generate");
   assert.equal(anchorGen.start.submittedText, "сделай строже");
   assert.equal(anchorGen.start.commandTarget.kind, "character");
+  assertFixedContextKeys(anchorGen.start.context);
+  assert.equal(anchorGen.start.context.characterName, "Путин");
+  assert.equal(anchorGen.start.context.anchorVersionId, "anchor-1");
+  assert.equal(anchorGen.start.context.imageAssetId, "anchor-asset-1");
 
   researchPosts.length = 0;
   page.setResearchVisualState(readyVisual({
     characters: [{
       name: "Путин",
-      identity: { assetUrl: "/id.png", comment: "x" },
-      candidate: { id: "anchor-1", assetId: "anchor-1", assetUrl: "/a.png", status: "ready" },
+      identity: { assetId: "identity-asset-1", assetUrl: "/id.png", comment: "x" },
+      candidate: { id: "anchor-1", assetId: "anchor-asset-1", assetUrl: "/a.png", status: "ready" },
       approvedAnchorId: null,
     }],
   }), -1);
@@ -573,6 +701,31 @@ test("identity_save comment-only; anchor_generate/approve and visual_approve cap
   assert.equal(anchorApprove.start.submittedText, null);
   assert.equal(anchorApprove.start.commandTarget.characterName, "Путин");
   assert.equal(anchorApprove.start.commandTarget.anchorVersionId, "anchor-1");
+  assertFixedContextKeys(anchorApprove.start.context);
+  assert.equal(anchorApprove.start.context.characterName, "Путин");
+  assert.equal(anchorApprove.start.context.anchorVersionId, "anchor-1");
+  assert.equal(anchorApprove.start.context.imageAssetId, "anchor-asset-1");
+
+  researchPosts.length = 0;
+  page.setResearchVisualState(readyVisual({
+    characters: [{
+      name: "Путин",
+      identity: { assetUrl: "/id.png", comment: "без assetId" },
+      candidate: { id: "anchor-orphan", assetUrl: "/a.png", status: "ready" },
+      approvedAnchorId: null,
+    }],
+  }), -1);
+  card = document.querySelector("#character-cards").children[0];
+  const orphanComment = card.querySelectorAll("textarea")[0];
+  const orphanSave = card.querySelectorAll("button").find((button) => /Сохранить фото|Сохранить новое фото/.test(button.textContent));
+  const orphanInput = card.querySelector("input");
+  orphanComment.value = "коммент без asset";
+  orphanInput.files = [{ name: "face.png", type: "image/png", size: 128 }];
+  orphanSave.dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const identityNullAsset = researchPair("identity_save");
+  assert.equal(identityNullAsset.start.context.characterName, "Путин");
+  assert.equal(identityNullAsset.start.context.imageAssetId, null);
 
   researchPosts.length = 0;
   page.setResearchVisualState(readyVisual(), -1);
@@ -584,70 +737,122 @@ test("identity_save comment-only; anchor_generate/approve and visual_approve cap
   assert.equal(visual.start.commandTarget.kind, "storyboard");
 });
 
-test("cast_edit captures rename/alias/speaker with phase and value-only editTarget", async () => {
+test("cast_edit covers all editKind × castPhase combinations with value-only editTarget", async () => {
   await ensurePage();
-  page.setResearchReviewState({
-    id: "reading-1",
-    text: "текст",
-    sourceItems: [{ id: "utterance-1", kind: "utterance", sourceQuote: "Реплика" }],
-    cast: {
-      characters: [{ name: "Путин" }],
-      aliases: [{ surface: "Владимир", characterName: "Путин" }],
-      speakers: [{ sourceItemId: "utterance-1", characterName: "Путин" }],
-    },
-    surfaceForms: [{ quote: "Владимир" }],
-    findings: [],
-  }, "reading");
 
-  const nameInput = document.querySelector("#material-characters").querySelector("input");
-  nameInput.value = "Песков";
-  nameInput.dispatchEvent({ type: "input" });
+  async function runRename(mode, nextName) {
+    researchPosts.length = 0;
+    productPosts.length = 0;
+    page.setResearchReviewState(castReviewState(mode), mode);
+    const nameInput = document.querySelector("#material-characters").querySelector("input");
+    nameInput.value = nextName;
+    nameInput.dispatchEvent({ type: "input" });
+    assert.equal(researchPosts.length, 0);
+    nameInput.dispatchEvent({ type: "blur" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const pair = assertSingleCastPair("character_rename", mode === "reading" ? "pending_reading" : "material_state");
+    assert.equal(pair.start.surface, "product_control");
+    assert.equal(pair.start.commandTarget, null);
+    assert.equal(pair.start.submittedText, nextName);
+    assertCastEditTargetShape(pair.start.editTarget, {
+      editKind: "character_rename",
+      castPhase: mode === "reading" ? "pending_reading" : "material_state",
+      characterName: nextName,
+      previousCharacterName: "Путин",
+    });
+    assert.equal(Object.hasOwn(pair.start, "cast"), false);
+    assert.equal(JSON.stringify(pair.start).includes("sourceItems"), false);
+    assert.equal(JSON.stringify(pair.start).includes('"characters"'), false);
+    if (mode === "reading") {
+      assert.ok(productPosts.some((entry) => entry.method === "PUT" && entry.path === "/api/readings/reading-1/cast"));
+    } else {
+      assert.ok(productPosts.some((entry) => entry.method === "POST" && entry.path === "/api/material-states"));
+    }
+  }
+
+  async function runAlias(mode, nextName) {
+    researchPosts.length = 0;
+    productPosts.length = 0;
+    page.setResearchReviewState(castReviewState(mode), mode);
+    const aliasSelect = document.querySelector("#material-aliases").querySelector("select");
+    aliasSelect.value = nextName;
+    aliasSelect.dispatchEvent({ type: "change" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const pair = assertSingleCastPair("alias_assignment", mode === "reading" ? "pending_reading" : "material_state");
+    assert.equal(pair.start.surface, "product_control");
+    assert.equal(pair.start.commandTarget, null);
+    assert.equal(pair.start.submittedText, nextName);
+    assertCastEditTargetShape(pair.start.editTarget, {
+      editKind: "alias_assignment",
+      castPhase: mode === "reading" ? "pending_reading" : "material_state",
+      characterName: nextName,
+      surfaceForm: "Владимир",
+    });
+    assert.equal(JSON.stringify(pair.start).includes("sourceItems"), false);
+    if (mode === "reading") {
+      assert.ok(productPosts.some((entry) => entry.method === "PUT" && entry.path === "/api/readings/reading-1/cast"));
+    } else {
+      assert.ok(productPosts.some((entry) => entry.method === "POST" && entry.path === "/api/material-states"));
+    }
+  }
+
+  async function runSpeaker(mode, nextName) {
+    researchPosts.length = 0;
+    productPosts.length = 0;
+    page.setResearchReviewState(castReviewState(mode), mode);
+    const speakerSelect = document.querySelector("#material-speakers").querySelector("select");
+    speakerSelect.value = nextName;
+    speakerSelect.dispatchEvent({ type: "change" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const pair = assertSingleCastPair("speaker_assignment", mode === "reading" ? "pending_reading" : "material_state");
+    assert.equal(pair.start.surface, "product_control");
+    assert.equal(pair.start.commandTarget, null);
+    assert.equal(pair.start.submittedText, nextName);
+    assertCastEditTargetShape(pair.start.editTarget, {
+      editKind: "speaker_assignment",
+      castPhase: mode === "reading" ? "pending_reading" : "material_state",
+      characterName: nextName,
+      sourceItemId: "utterance-1",
+    });
+    assert.equal(JSON.stringify(pair.start).includes("sourceQuote"), false);
+    if (mode === "reading") {
+      assert.ok(productPosts.some((entry) => entry.method === "PUT" && entry.path === "/api/readings/reading-1/cast"));
+    } else {
+      assert.ok(productPosts.some((entry) => entry.method === "POST" && entry.path === "/api/material-states"));
+    }
+  }
+
+  await runRename("reading", "Песков");
+  await runRename("material", "Медведев");
+  await runAlias("reading", "Дуров");
+  await runAlias("material", "Дуров");
+  await runSpeaker("reading", "Дуров");
+  await runSpeaker("material", "Дуров");
+});
+
+test("structure_edit research text keeps exact whitespace while product still receives trimmed instruction", async () => {
+  await ensurePage();
+  productPosts.length = 0;
+  researchPosts.length = 0;
+  page.setResearchVisualState(readyVisual());
+  const exact = "  сделай кадры плотнее\n  ";
+  document.querySelector("#structure-instruction").value = exact;
+  document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const edit = researchPair("structure_edit");
+  assert.equal(edit.start.submittedText, exact);
+  assert.notEqual(edit.start.submittedText, exact.trim());
+  const product = productPosts.find((entry) => entry.path === "/api/visual/storyboard/edit");
+  assert.ok(product);
+  assert.equal(product.body.instruction, exact.trim());
+
+  researchPosts.length = 0;
+  productPosts.length = 0;
+  document.querySelector("#structure-instruction").value = "   \n\t  ";
+  document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(researchPosts.length, 0);
-  nameInput.dispatchEvent({ type: "blur" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  const rename = researchPair("cast_edit");
-  assert.equal(rename.start.submittedText, "Песков");
-  assert.equal(rename.start.commandTarget, null);
-  assert.equal(rename.start.editTarget.editKind, "character_rename");
-  assert.equal(rename.start.editTarget.castPhase, "pending_reading");
-  assert.equal(rename.start.editTarget.characterName, "Песков");
-  assert.equal(rename.start.editTarget.previousCharacterName, "Путин");
-  assert.equal(Object.hasOwn(rename.start, "cast"), false);
-  assert.equal(JSON.stringify(rename.start).includes("sourceItems"), false);
-  assert.equal(rename.terminal.outcome, "success");
-
-  researchPosts.length = 0;
-  page.setResearchReviewState({
-    id: "material-1",
-    text: "текст",
-    sourceItems: [{ id: "utterance-1", kind: "utterance", sourceQuote: "Реплика" }],
-    cast: {
-      characters: [{ name: "Песков" }, { name: "Дуров" }],
-      aliases: [{ surface: "Владимир", characterName: "Песков" }],
-      speakers: [{ sourceItemId: "utterance-1", characterName: "Песков" }],
-    },
-    surfaceForms: [{ quote: "Владимир" }],
-    findings: [],
-  }, "material");
-  const aliasSelect = document.querySelector("#material-aliases").querySelector("select");
-  aliasSelect.value = "Дуров";
-  aliasSelect.dispatchEvent({ type: "change" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  const alias = researchPair("cast_edit");
-  assert.equal(alias.start.editTarget.editKind, "alias_assignment");
-  assert.equal(alias.start.editTarget.castPhase, "material_state");
-  assert.equal(alias.start.editTarget.surfaceForm, "Владимир");
-  assert.equal(alias.start.submittedText, "Дуров");
-
-  researchPosts.length = 0;
-  const speakerSelect = document.querySelector("#material-speakers").querySelector("select");
-  speakerSelect.value = "Дуров";
-  speakerSelect.dispatchEvent({ type: "change" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  const speaker = researchPair("cast_edit");
-  assert.equal(speaker.start.editTarget.editKind, "speaker_assignment");
-  assert.equal(speaker.start.editTarget.sourceItemId, "utterance-1");
-  assert.equal(speaker.start.submittedText, "Дуров");
+  assert.equal(productPosts.filter((entry) => entry.path === "/api/visual/storyboard/edit").length, 0);
 });
 
 test("failed cast save never claims cast_edit success terminal", async () => {
@@ -723,5 +928,75 @@ test("navigation after start does not relabel terminal; incomplete startSnapshot
   assert.equal(terminal.startSnapshot.semanticAction, "structure_edit");
   assert.equal(terminal.startSnapshot.commandTarget.kind, "storyboard");
   assert.notEqual(terminal.startSnapshot.context?.displayFrameId, "display-99");
+  fetchImpl = original;
+});
+
+test("panel action-specific context stays frozen after navigation in startSnapshot path", async () => {
+  await ensurePage();
+  page.setResearchVisualState(readyVisual({
+    frames: [{
+      id: "display-1",
+      structureFrameId: "structure-1",
+      structureSegmentIndex: 0,
+      layout: "split2",
+      speakerPanel: 0,
+      dialogue: "Привет",
+      outsideFrameText: "",
+      visualReady: true,
+      panels: [{
+        description: "слева",
+        subject: "Путин",
+        assetId: "asset-1",
+        generationId: "gen-frozen",
+        zoom: 1.2,
+      }, {
+        description: "справа",
+        subject: "Дуров",
+        assetId: "asset-2",
+        zoom: 1,
+      }],
+    }],
+  }), 0);
+  const original = fetchImpl;
+  let researchCalls = 0;
+  fetchImpl = async (url, init = {}) => {
+    const path = new URL(url, "http://127.0.0.1").pathname;
+    if (path === "/api/research/events") {
+      researchCalls += 1;
+      const body = JSON.parse(init.body);
+      if (body.eventKind === "action_start") return jsonResponse(500, { status: "failed" });
+      researchPosts.push(body);
+      return jsonResponse(201, { event: { ...body, seq: researchCalls, occurredAt: "2026-10-13T13:00:00.000Z" } });
+    }
+    return original(url, init);
+  };
+  researchPosts.length = 0;
+  const panelSection = document.querySelector("#detail-panel-controls").children[0];
+  const instruction = panelSection.querySelector("textarea");
+  const regenerate = [...panelSection.querySelectorAll("button")].find((button) => /панел|Создать|Переделать/i.test(button.textContent));
+  instruction.value = "freeze panel context";
+  regenerate.dispatchEvent({ type: "click" });
+  page.setResearchDetailState([{
+    id: "display-99",
+    structureFrameId: "structure-99",
+    structureSegmentIndex: 9,
+    panels: [{ subject: "Другой", assetId: "other-asset", generationId: "other-gen" }],
+  }], 0);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const terminal = researchPosts.find((event) => event.eventKind === "action_terminal");
+  assert.ok(terminal?.startSnapshot);
+  assert.equal(terminal.startSnapshot.semanticAction, "panel_generate");
+  assert.equal(terminal.startSnapshot.commandTarget.kind, "panel");
+  assert.equal(terminal.startSnapshot.commandTarget.panelIndex, 0);
+  assertFixedContextKeys(terminal.startSnapshot.context);
+  assert.equal(terminal.startSnapshot.context.displayFrameId, "display-1");
+  assert.equal(terminal.startSnapshot.context.structureFrameId, "structure-1");
+  assert.equal(terminal.startSnapshot.context.structureSegmentIndex, 0);
+  assert.equal(terminal.startSnapshot.context.panelIndex, 0);
+  assert.equal(terminal.startSnapshot.context.panelSubject, "Путин");
+  assert.equal(terminal.startSnapshot.context.imageAssetId, "asset-1");
+  assert.equal(terminal.startSnapshot.context.generationId, "gen-frozen");
+  assert.notEqual(terminal.startSnapshot.context.displayFrameId, "display-99");
+  assert.notEqual(terminal.startSnapshot.context.panelSubject, "Другой");
   fetchImpl = original;
 });
