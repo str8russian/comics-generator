@@ -36,6 +36,13 @@ const visualApproval = document.querySelector("#visual-approval");
 const approveVisual = document.querySelector("#approve-visual");
 const approvalCopy = document.querySelector("#approval-copy");
 const readyForVideo = document.querySelector("#ready-for-video");
+const buildMarker = document.querySelector("#build-marker");
+const renderPanel = document.querySelector("#render-panel");
+const renderStatus = document.querySelector("#render-status");
+const startRender = document.querySelector("#start-render");
+const renderError = document.querySelector("#render-error");
+const renderPreview = document.querySelector("#render-preview");
+const renderDownload = document.querySelector("#render-download");
 
 const materialReview = document.querySelector("#material-review");
 const materialSources = document.querySelector("#material-sources");
@@ -497,6 +504,7 @@ function clearBoard() {
   visualHeading.hidden = true;
   visualApproval.hidden = true;
   readyForVideo.hidden = true;
+  if (renderPanel) renderPanel.hidden = true;
   document.body.dataset.state = "";
   syncResearchCommandTargets();
 }
@@ -626,13 +634,14 @@ function showReady(frames, state = "ready") {
     const card = document.createElement("article");
     card.className = "story-card";
     card.dataset.ready = frame.visualReady ? "true" : "false";
+    card.dataset.structureFrameId = frame.structureFrameId || frame.id || "";
     const top = document.createElement("div");
     top.className = "card-heading";
     const number = document.createElement("span");
     number.textContent = `Кадр ${index + 1}`;
     const status = document.createElement("span");
     status.className = "card-status";
-    status.textContent = frame.visualReady ? "Изображения готовы" : "Текст";
+    status.textContent = frameStatus(frame);
     top.append(number, status);
     const preview = document.createElement("button");
     preview.type = "button";
@@ -655,7 +664,7 @@ function showReady(frames, state = "ready") {
       generate.className = "generate-frame";
       generate.textContent = frame.visualReady ? "Открыть и изменить" : "Создать изображения кадра";
       generate.addEventListener("click", async () => {
-        if (frame.visualReady) {
+        if (frame.visualReady || frame.frameKind === "text" || frame.frameKind === "image") {
           openDetail(index);
           return;
         }
@@ -663,9 +672,215 @@ function showReady(frames, state = "ready") {
       });
       card.append(generate);
     }
+    appendAssemblyControls(card, frame);
     grid.append(card);
   });
   openLast.hidden = frames.length === 0;
+  if (renderPanel) renderPanel.hidden = !visual;
+  if (renderPanel && !renderPanel.hidden) refreshRenderStatus();
+}
+
+function frameStatus(frame) {
+  if (frame.frameKind === "text") return "Текстовая карточка";
+  if (frame.frameKind === "image" || !String(frame.dialogue || "").trim()) {
+    return frame.visualReady ? "Изображение" : "Кадр без реплики";
+  }
+  return frame.visualReady ? "Изображения готовы" : "Текст";
+}
+
+function formatSeconds(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  return String(Math.round(number * 1000) / 1000);
+}
+
+function structureIdsInOrder(frames) {
+  const ids = [];
+  for (const frame of frames) {
+    const id = frame.structureFrameId || frame.id;
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function assemblyButton(label, onClick) {
+  const node = document.createElement("button");
+  node.type = "button";
+  node.className = "assembly-button";
+  node.textContent = label;
+  node.addEventListener("click", onClick);
+  return node;
+}
+
+function frameAddress(frame) {
+  return {
+    structureFrameId: frame.structureFrameId || frame.id,
+    structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
+  };
+}
+
+async function runAssembly(operation, message) {
+  const next = await runBusy(message, () => fetchJson("/api/visual/operations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(operation),
+  }));
+  if (next?.status === "ready") {
+    applyVisual(next);
+    showActionNotice("Изменение сохранено.");
+  }
+  return next;
+}
+
+function appendAssemblyControls(card, frame) {
+  if (!visual) return;
+  const box = document.createElement("div");
+  box.className = "assembly";
+  const address = frameAddress(frame);
+  const timing = document.createElement("span");
+  timing.className = "assembly-timing";
+  timing.textContent = `${formatSeconds(frame.durationSeconds)} с · ${frame.durationFrames} кадров`;
+  const duration = document.createElement("input");
+  duration.type = "number";
+  duration.min = String(frame.minimumDurationFrames || 1);
+  duration.step = "1";
+  duration.value = String(frame.durationFrames || 36);
+  duration.setAttribute?.("aria-label", "Длительность в кадрах");
+  duration.addEventListener("change", () => {
+    runAssembly({
+      op: "setDuration",
+      ...address,
+      durationFrames: Number(duration.value),
+    }, "Сохраняю длительность…");
+  });
+  box.append(
+    timing,
+    duration,
+    assemblyButton("Кадр с изображением после", () => runAssembly({
+      op: "insertFrame",
+      afterStructureFrameId: address.structureFrameId,
+      kind: "image",
+    }, "Добавляю кадр…")),
+    assemblyButton("Текстовая карточка после", () => runAssembly({
+      op: "insertFrame",
+      afterStructureFrameId: address.structureFrameId,
+      kind: "text",
+    }, "Добавляю текстовую карточку…")),
+    assemblyButton("Раньше", () => moveStructureFrame(address.structureFrameId, -1)),
+    assemblyButton("Позже", () => moveStructureFrame(address.structureFrameId, 1)),
+    assemblyButton("Удалить кадр", () => runAssembly({
+      op: "deleteFrame",
+      structureFrameId: address.structureFrameId,
+    }, "Удаляю кадр…")),
+  );
+  if (Number.isInteger(frame.structureSegmentIndex)) {
+    const hint = document.createElement("p");
+    hint.className = "assembly-note";
+    hint.textContent = "Это часть структурного кадра. Вставка, удаление и порядок относятся ко всему структурному кадру.";
+    box.append(hint);
+  }
+  if (frame.frameKind === "text") {
+    const text = document.createElement("textarea");
+    text.value = frame.textCard || "";
+    text.placeholder = "Текст карточки";
+    text.addEventListener("change", () => {
+      runAssembly({
+        op: "setTextCard",
+        structureFrameId: address.structureFrameId,
+        text: text.value,
+      }, "Сохраняю текст карточки…");
+    });
+    box.append(text);
+  } else if ((frame.panels || []).length === 1) {
+    box.append(assemblyButton("Добавить панель", () => runAssembly({
+      op: "addPanel",
+      ...address,
+    }, "Добавляю панель…")));
+  }
+  if ((frame.panels || []).length === 2) {
+    box.append(assemblyButton("Поменять панели", () => runAssembly({
+      op: "reorderPanels",
+      ...address,
+      panelIds: [frame.panels[1].id, frame.panels[0].id],
+    }, "Меняю панели местами…")));
+  }
+  for (const [panelIndex, panel] of (frame.panels || []).entries()) {
+    appendPanelAssembly(box, frame, panel, panelIndex);
+  }
+  card.append(box);
+}
+
+function moveStructureFrame(structureFrameId, direction) {
+  const ids = structureIdsInOrder(readyFrames);
+  const index = ids.indexOf(structureFrameId);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= ids.length) return;
+  const next = ids.slice();
+  const [moved] = next.splice(index, 1);
+  next.splice(target, 0, moved);
+  runAssembly({ op: "reorderFrames", structureFrameIds: next }, "Меняю порядок кадров…");
+}
+
+function appendPanelAssembly(box, frame, panel, panelIndex) {
+  const label = document.createElement("span");
+  label.className = "assembly-note";
+  label.textContent = `Панель ${panelIndex + 1}${panel.subject ? ` · ${panel.subject}` : ""}`;
+  const upload = document.createElement("input");
+  upload.type = "file";
+  upload.accept = "image/png,image/jpeg,image/webp";
+  upload.setAttribute?.("aria-label", `Загрузить изображение для панели ${panelIndex + 1}`);
+  upload.addEventListener("change", () => {
+    const file = upload.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      runAssembly({
+        op: "uploadAsset",
+        imageDataUrl: String(reader.result || ""),
+        targets: [{ panelId: panel.id }],
+      }, "Назначаю загруженное изображение…");
+    };
+    reader.readAsDataURL(file);
+  });
+  const reuse = document.createElement("select");
+  reuse.setAttribute?.("aria-label", `Существующее изображение для панели ${panelIndex + 1}`);
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "Существующее изображение";
+  reuse.append(blank);
+  for (const asset of visual?.reusableAssets || []) {
+    const option = document.createElement("option");
+    option.value = asset.id;
+    option.textContent = `${asset.kind === "uploaded-image" ? "Загрузка" : "Кадр"} ${asset.width || "?"}×${asset.height || "?"}`;
+    reuse.append(option);
+  }
+  const note = document.createElement("input");
+  note.type = "text";
+  note.value = panel.ownerDescription || "";
+  note.placeholder = "Своё описание, не меняет замысел";
+  note.addEventListener("change", () => {
+    runAssembly({
+      op: "setOwnerDescription",
+      panelId: panel.id,
+      ownerDescription: note.value,
+    }, "Сохраняю описание…");
+  });
+  box.append(label, upload, reuse, assemblyButton("Назначить", () => {
+    if (!reuse.value) return;
+    runAssembly({
+      op: "assignAsset",
+      assetId: reuse.value,
+      targets: [{ panelId: panel.id }],
+    }, "Назначаю существующее изображение…");
+  }), note);
+  const dialogue = String(frame.dialogue || "").trim();
+  const speakerLocked = Boolean(dialogue) && frame.speakerPanel === panelIndex;
+  if ((frame.panels || []).length === 2 && !speakerLocked) {
+    box.append(assemblyButton("Удалить панель", () => runAssembly({
+      op: "deletePanel",
+      panelId: panel.id,
+    }, "Удаляю панель…")));
+  }
 }
 
 function openDetail(index) {
@@ -751,6 +966,27 @@ export function actionMessage(kind) {
     "stale-version": "Раскадровка уже изменилась. Обновите страницу и повторите действие.",
     "asset-load-failed": "Изображение не удалось показать. Обновите страницу или создайте панель заново.",
     "nothing-to-undo": "Предыдущей структурной версии пока нет.",
+    "invalid-operation": "Эта операция сборки не поддерживается.",
+    "invalid-position": "Нельзя вставить кадр в эту позицию.",
+    "invalid-kind": "Можно добавить кадр с изображением или текстовую карточку.",
+    "last-frame": "Нельзя удалить последний кадр.",
+    "frame-not-found": "Этот структурный кадр уже изменился. Обновите страницу.",
+    "segment-required": "Сначала выберите конкретную часть структурного кадра.",
+    "segment-not-found": "Эта часть структурного кадра не найдена.",
+    "layout-full": "В кадре уже две панели. Третью добавить нельзя.",
+    "not-panel-frame": "У текстовой карточки нет панелей.",
+    "last-panel": "В кадре должна остаться хотя бы одна панель.",
+    "panel-not-found": "Панель не найдена. Обновите страницу.",
+    "speaker-remains": "Нельзя удалить панель, которой принадлежит реплика. Удалите кадр или другую панель.",
+    "invalid-order": "Порядок кадров или панелей не совпадает с текущей раскадровкой.",
+    "invalid-duration": "Длительность должна быть целым положительным числом кадров.",
+    "duration-truncates-dialogue": "Эта длительность оборвёт реплику до конца появления текста.",
+    "not-text-card": "Текст можно менять только у текстовой карточки.",
+    "invalid-text": "Текст слишком длинный или не распознан.",
+    "asset-not-reusable": "Это изображение нельзя назначить из текущей раскадровки.",
+    "render-busy": "Сборка видео уже идёт.",
+    "no-storyboard": "Сначала откройте готовую раскадровку.",
+    "render-failed": "Не удалось собрать видео.",
   };
   return messages[kind] || "Не удалось выполнить действие. Попробуйте ещё раз.";
 }
@@ -843,10 +1079,10 @@ function fileAsDataUrl(file) {
 function withVisualReady(frames) {
   return (frames || []).map((frame) => {
     const panels = Array.isArray(frame?.panels) ? frame.panels : [];
-    return {
-      ...frame,
-      visualReady: panels.length > 0 && panels.every((panel) => Boolean(panel?.assetId)),
-    };
+    const visualReady = frame?.frameKind === "text"
+      ? Boolean(String(frame.textCard || "").trim())
+      : panels.length > 0 && panels.every((panel) => Boolean(panel?.assetId));
+    return { ...frame, visualReady };
   });
 }
 
@@ -2051,3 +2287,62 @@ form.addEventListener("submit", async (event) => {
     },
   });
 });
+
+const renderLabels = {
+  idle: "Ожидание",
+  running: "Сборка идёт",
+  success: "Видео готово",
+  failure: "Сборка не удалась",
+};
+
+let renderTimer = 0;
+
+async function refreshRenderStatus() {
+  if (!renderPanel || renderPanel.hidden) return;
+  globalThis.clearTimeout(renderTimer);
+  try {
+    const status = await fetchJson("/api/visual/render");
+    if (!renderStatus) return;
+    renderStatus.textContent = renderLabels[status.status] || renderLabels.idle;
+    if (renderError) {
+      renderError.hidden = status.status !== "failure";
+      renderError.textContent = status.message || "Не удалось собрать видео.";
+    }
+    const ready = status.status === "success" && status.id;
+    if (renderPreview) renderPreview.hidden = !ready;
+    if (renderDownload) renderDownload.hidden = !ready;
+    if (ready) {
+      const src = `/api/visual/render/result?render=${encodeURIComponent(status.id)}`;
+      if (renderPreview && !renderPreview.src.endsWith(encodeURIComponent(status.id))) renderPreview.src = src;
+      if (renderDownload) renderDownload.href = src;
+    }
+    if (status.status === "running") renderTimer = globalThis.setTimeout(refreshRenderStatus, 2000);
+  } catch {
+    if (renderStatus) renderStatus.textContent = renderLabels.idle;
+  }
+}
+
+startRender?.addEventListener("click", async () => {
+  if (renderError) renderError.hidden = true;
+  const started = await runBusy("Запускаю сборку видео…", () => fetchJson("/api/visual/render", { method: "POST" }));
+  if (started?.status === "running") {
+    if (renderStatus) renderStatus.textContent = renderLabels.running;
+    renderTimer = globalThis.setTimeout(refreshRenderStatus, 1000);
+  }
+});
+
+async function loadBuildMarker() {
+  if (!buildMarker) return;
+  try {
+    const response = await fetch("/api/build", { cache: "no-store" });
+    if (!response.ok) throw new Error("status");
+    const payload = await response.json();
+    const id = typeof payload.id === "string" && payload.id ? payload.id : "unknown";
+    const when = payload.builtAt ? ` · ${payload.builtAt}` : "";
+    buildMarker.textContent = `Сборка ${id}${when}`;
+  } catch {
+    buildMarker.textContent = "Сборка unknown";
+  }
+}
+
+loadBuildMarker();

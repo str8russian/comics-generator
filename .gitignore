@@ -1,6 +1,8 @@
 node_modules/
 .DS_Store
 .env.local
+build-info.json
+.render-output/
 spikes/contest-chat-completions/results/
 
 # One approved Stage artistic baseline. Do not commit the saved candidate.

@@ -476,6 +476,8 @@ test("the last stored frame still opens, with structure fallback for an unknown 
     assert.equal(requests.every((path) => (
       path === "/api/project"
       || path === "/api/visual"
+      || path === "/api/build"
+      || path === "/api/visual/render"
       || path.startsWith("/api/research/")
     )), true);
     assert.equal(requests.some((path) => path.includes("/generate")), false);

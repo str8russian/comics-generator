@@ -10,6 +10,7 @@
 <body>
   <main class="page">
     <h1>Раскадровка</h1>
+    <p id="build-marker" class="build-marker">Сборка …</p>
     <form id="draft-form" class="paste-form">
       <label for="draft">Черновик диалога</label>
       <textarea id="draft" name="draft"></textarea>
@@ -80,6 +81,19 @@
       <button id="approve-visual" type="button">Утвердить визуальную раскадровку</button>
     </section>
     <p id="ready-for-video" class="ready-for-video" hidden>Визуальная раскадровка утверждена и готова к созданию видео.</p>
+    <section id="render-panel" class="workspace-panel" hidden>
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Видео</p>
+          <h2>Собрать текущую раскадровку</h2>
+        </div>
+      </div>
+      <p id="render-status" class="helper">Ожидание</p>
+      <button id="start-render" type="button">Собрать видео</button>
+      <p id="render-error" class="notice" hidden></p>
+      <video id="render-preview" class="render-preview" controls hidden></video>
+      <a id="render-download" hidden download="storyboard.mp4">Скачать видео</a>
+    </section>
   </main>
   <div id="research-dock-host">
     <aside id="research-dock" class="research-dock" aria-label="Research workspace">

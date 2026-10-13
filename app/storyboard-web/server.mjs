@@ -1,17 +1,21 @@
-import { readFileSync } from "node:fs";
+import { createReadStream, readFileSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { loadBuildInfo } from "./build-info.mjs";
 import { createPool } from "./db/pool.mjs";
 import { migrate as migrateDatabase } from "./db/migrate.mjs";
 import { loadConfig } from "./config.mjs";
 import { isEmptyDraft } from "./fidelity.mjs";
 import { interpretDraft } from "./interpret.mjs";
 import { draftInputError, createProjectStore } from "./project-store.mjs";
+import { createRenderController } from "./render-service.mjs";
 import { stageStoryboard } from "./stage.mjs";
 import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
 import { generateImage } from "./image-provider.mjs";
 import { editStoryboard } from "./storyboard-edit.mjs";
+import { compileVideoSpec } from "./video-spec.mjs";
 import {
   anchorPrompt,
   aspectRatioForFrame,
@@ -77,6 +81,7 @@ function sendJson(res, status, payload) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
+    "Cache-Control": "no-store",
   });
   res.end(body);
 }
@@ -840,6 +845,118 @@ async function sendVisualState(res, runtime, { logger, request } = {}) {
   sendJson(res, 200, visual);
 }
 
+function handleBuild(req, res) {
+  if ((req.method || "GET") !== "GET") {
+    sendEmpty(res, 405, { Allow: "GET" });
+    req.resume();
+    return;
+  }
+  sendJson(res, 200, loadBuildInfo());
+}
+
+async function handleOperations(req, res, { runtime, logger, nextRequest }) {
+  if ((req.method || "GET") !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  if (!runtime.visualStore?.applyOperation) {
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  const body = await readVisualBody(req, res, IMAGE_MAX_BODY_BYTES);
+  if (body.done) return;
+  if (body.invalid || !body.payload || typeof body.payload !== "object") {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const request = nextRequest();
+  const result = await runtime.visualStore.applyOperation(body.payload);
+  if (!result.ok) {
+    logVisual(logger, request, "visual-operation", {
+      status: "failed",
+      kind: safeKind(result.kind),
+      http: result.httpStatus || 400,
+    });
+    sendVisualFailure(res, result);
+    return;
+  }
+  logVisual(logger, request, "visual-operation", { status: "ok", http: 200 });
+  await sendVisualState(res, runtime, { logger, request });
+}
+
+async function handleRender(req, res, { runtime, logger, nextRequest }) {
+  const method = req.method || "GET";
+  if (method !== "GET" && method !== "POST") {
+    sendEmpty(res, 405, { Allow: "GET, POST" });
+    req.resume();
+    return;
+  }
+  const controller = runtime.ensureRender();
+  if (method === "GET") {
+    req.resume();
+    sendJson(res, 200, controller.status());
+    return;
+  }
+  req.resume();
+  const request = nextRequest();
+  if (!runtime.visualStore) {
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  const visual = await runtime.visualStore.load();
+  if (!visual?.ok || visual.status !== "ready") {
+    sendJson(res, 409, { status: "failed", kind: "no-storyboard" });
+    return;
+  }
+  const port = req.socket?.localPort;
+  if (!port) {
+    sendJson(res, 500, { status: "failed", kind: "configuration" });
+    return;
+  }
+  const compiled = compileVideoSpec(visual, { assetOrigin: `http://127.0.0.1:${port}` });
+  if (!compiled.ok) {
+    sendJson(res, 400, { status: "failed", kind: safeKind(compiled.kind) || "invalid-request" });
+    return;
+  }
+  const started = controller.start(compiled.spec);
+  if (!started.ok) {
+    logVisual(logger, request, "render", { status: "failed", kind: safeKind(started.kind), http: started.httpStatus || 409 });
+    sendVisualFailure(res, started);
+    return;
+  }
+  logVisual(logger, request, "render", { status: "running", http: 202 });
+  sendJson(res, 202, { status: "running", id: started.id });
+}
+
+async function handleRenderResult(req, res, { runtime }) {
+  if ((req.method || "GET") !== "GET") {
+    sendEmpty(res, 405, { Allow: "GET" });
+    req.resume();
+    return;
+  }
+  const file = runtime.ensureRender().resultFile();
+  if (!file) {
+    sendEmpty(res, 404);
+    return;
+  }
+  let info;
+  try {
+    info = await stat(file);
+  } catch {
+    sendEmpty(res, 404);
+    return;
+  }
+  res.writeHead(200, {
+    "Content-Type": "video/mp4",
+    "Content-Length": info.size,
+    "Cache-Control": "no-store",
+    "Content-Disposition": "inline; filename=\"storyboard.mp4\"",
+    "X-Content-Type-Options": "nosniff",
+  });
+  createReadStream(file).pipe(res);
+}
+
 async function handleVisualIdentity(req, res, { runtime, characterName, logger, nextRequest }) {
   if (req.method !== "POST") {
     sendEmpty(res, 405, { Allow: "POST" });
@@ -1596,6 +1713,22 @@ async function handle(req, res, {
     await handleStoryboardResults(req, res, { maxBodyBytes, env, fetchImpl, logger, nextRequest, runtime });
     return;
   }
+  if (pathname === "/api/build") {
+    handleBuild(req, res);
+    return;
+  }
+  if (pathname === "/api/visual/operations") {
+    await handleOperations(req, res, { runtime, logger, nextRequest });
+    return;
+  }
+  if (pathname === "/api/visual/render") {
+    await handleRender(req, res, { runtime, logger, nextRequest });
+    return;
+  }
+  if (pathname === "/api/visual/render/result") {
+    await handleRenderResult(req, res, { runtime });
+    return;
+  }
   if (pathname === "/api/visual") {
     if (method !== "GET") {
       sendEmpty(res, 405, { Allow: "GET" });
@@ -1710,6 +1843,7 @@ async function handle(req, res, {
   res.writeHead(200, {
     "Content-Type": contentType(route.file),
     "Content-Length": body.length,
+    "Cache-Control": "no-store",
   });
   res.end(body);
 }
@@ -1733,6 +1867,7 @@ export function createServer({
   researchStore,
   imageGenerator = generateImage,
   enableLegacyStoryboardRoute = false,
+  renderController,
 } = {}) {
   const load = readFile ?? defaultRead;
   const runtime = {
@@ -1740,6 +1875,11 @@ export function createServer({
     visualStore: visualStore ?? null,
     researchStore: researchStore ?? null,
     pool: null,
+    renderController: renderController ?? null,
+    ensureRender() {
+      if (!this.renderController) this.renderController = createRenderController({ logger });
+      return this.renderController;
+    },
   };
   let requestSerial = 0;
   const nextRequest = () => {
