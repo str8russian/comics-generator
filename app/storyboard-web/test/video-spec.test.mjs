@@ -50,6 +50,34 @@ test("compiles persisted placement, order, text, and duration into one video spe
   );
 });
 
+test("hard cut stays the default and cross dissolve overlaps six frames except at text cards", () => {
+  const frames = [
+    { id: "a", frameKind: "image", dialogue: "", durationFrames: 36, layout: "single", panels: [{ id: "p1" }] },
+    { id: "b", frameKind: "image", dialogue: "", durationFrames: 36, layout: "single", panels: [{ id: "p2" }] },
+    { id: "card", frameKind: "text", textCard: "Пауза", dialogue: "", durationFrames: 36, layout: "single", panels: [] },
+    { id: "c", frameKind: "image", dialogue: "", durationFrames: 4, layout: "single", panels: [{ id: "p3" }] },
+  ];
+  const visual = { status: "ready", frames };
+  const hard = compileVideoSpec(visual);
+  assert.equal(hard.spec.project.exportTransition.mode, "hard-cut");
+  assert.equal(hard.spec.project.exportTransition.overlapFrames, 0);
+  assert.equal(hard.spec.project.totalDurationFrames, 36 + 36 + 36 + 4);
+  assert.equal(hard.spec.frames[1].startFrame, 36);
+  assert.equal(hard.spec.frames[0].transitionOut.overlapFrames, 0);
+  const dissolve = compileVideoSpec(visual, { transition: "cross-dissolve" });
+  assert.equal(dissolve.spec.project.exportTransition.mode, "cross-dissolve");
+  assert.equal(dissolve.spec.project.exportTransition.overlapFrames, 6);
+  assert.equal(dissolve.spec.frames[0].durationFrames, 36);
+  assert.equal(dissolve.spec.frames[1].startFrame, 30);
+  assert.deepEqual(dissolve.spec.frames[0].transitionOut, { mode: "cross-dissolve", overlapFrames: 6 });
+  assert.equal(dissolve.spec.frames[1].transitionOut.mode, "hard-cut");
+  assert.equal(dissolve.spec.frames[2].startFrame, 66);
+  assert.equal(dissolve.spec.frames[2].transitionOut.mode, "hard-cut");
+  assert.equal(dissolve.spec.project.nominalDurationFrames, 36 + 36 + 36 + 4);
+  assert.equal(dissolve.spec.project.totalDurationFrames, 106);
+  assert.equal(compileVideoSpec(visual, { transition: "fade" }).kind, "invalid-transition");
+});
+
 test("a silent frame compiles to 36 frames when no duration is stored", () => {
   const compiled = compileVideoSpec({
     status: "ready",

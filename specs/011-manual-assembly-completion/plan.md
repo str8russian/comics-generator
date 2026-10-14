@@ -39,3 +39,16 @@ Install Remotion and its browser in the existing app image. Write `build-info.js
 ## Tests
 
 Pure tests cover identity, rejection, duration, the video spec, render-state rules, and the build marker. PostgreSQL covers assignment, dedup, and copy-forward by panel id. One short Remotion render checks that the composition writes a playable file.
+
+## Correction 3
+
+- Undo: `POST /api/visual/storyboard/undo` with `content-type: application/json` and `{}`. Return `undoneLabel` and `undoneTarget` from the version being left. Remove `#undo-structure`.
+- No-op: compare canonical frame JSON and panel visual fields before `forkVisibleState`. Return `changed: false` and record research outcome `no-change`.
+- Performance reference: store `performance_intent` (`keep`, `set`, `clear`) on the pending generation. Apply `performance_asset_id` only in the successful generation fork.
+- Provenance: nullable `visual_asset.provenance` jsonb, backfilled from ready `panel_generation` rows only. Assignment carry is decided in `metadataCarryDecision`.
+- Picker: `placeAssetPicker` anchors a 600px popover, flips, clamps, and closes with the anchor. Upload is sticky; assets are a three-column grid.
+- Status: `#action-status` is fixed, with polite and assertive `aria-live`.
+- Operations: extend the research semantic-action check with the assembly and render actions, and store `panelId`, `transitionMode`, and `transitionOverlapFrames` in context. Labels include `кадр N, панель M`.
+- Render evidence: the server writes one start when a render is accepted and one terminal when `createRenderController` finishes. The browser poll does not append a terminal.
+- Export: `CROSS_DISSOLVE_OVERLAP_FRAMES` is 6. `compileVideoSpec` takes `transition`. Hard cut keeps the current start and total. Cross dissolve overlaps only when both frames are non-text and at least six frames. The choice is request state, not a storyboard version.
+- Subjects: `setManualSubject` rejects a name that is not an exact `canonical_character.name` before any fork.

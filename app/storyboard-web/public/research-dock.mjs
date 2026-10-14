@@ -11,6 +11,9 @@ export const CONTEXT_KEYS = [
   "generationId",
   "characterName",
   "anchorVersionId",
+  "panelId",
+  "transitionMode",
+  "transitionOverlapFrames",
 ];
 
 /** Expanded dock minimums for pointer resize (viewport-safe clamp uses live window size). */
@@ -35,6 +38,7 @@ const COMMAND_TARGET_KEYS = [
   "mirrored",
   "characterName",
   "anchorVersionId",
+  "panelId",
 ];
 
 export function createEmptyContext(overrides = {}) {
@@ -155,7 +159,10 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
   const persisted = [];
 
   for (const terminal of terminals) {
-    const status = terminal.outcome === "success" || terminal.outcome === "failure" || terminal.outcome === "blocked"
+    const status = terminal.outcome === "success"
+      || terminal.outcome === "failure"
+      || terminal.outcome === "blocked"
+      || terminal.outcome === "no-change"
       ? terminal.outcome
       : "failure";
     const outcomeFlags = terminal.outcomeFlags && typeof terminal.outcomeFlags === "object"
@@ -174,11 +181,13 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
       localOnly: false,
       historical: false,
       submittedText: operationSubmittedText(terminal, starts.get(terminal.correlationId)),
+      commandTarget: terminal.commandTarget || starts.get(terminal.correlationId)?.commandTarget || null,
       label: formatOperationLabel({
         status,
         semanticAction: terminal.semanticAction,
         outcomeKind: terminal.outcomeKind,
         outcomeFlags,
+        commandTarget: terminal.commandTarget || starts.get(terminal.correlationId)?.commandTarget || null,
       }),
     });
   }
@@ -243,18 +252,38 @@ function operationSubmittedText(terminal, start) {
   return fromSnapshot.trim() ? fromSnapshot : "";
 }
 
-function formatOperationLabel({ status, semanticAction, outcomeKind, outcomeFlags = {} }) {
+function operationAddress(target) {
+  if (!target || typeof target !== "object") return "";
+  if (target.displayFrameNumber == null) return "";
+  if (target.kind === "panel") {
+    const panel = Number.isInteger(target.panelIndex) ? `, панель ${target.panelIndex + 1}` : "";
+    return `кадр ${target.displayFrameNumber}${panel}`;
+  }
+  if (target.kind === "frame") return `кадр ${target.displayFrameNumber}`;
+  return "";
+}
+
+function formatOperationLabel({
+  status,
+  semanticAction,
+  outcomeKind,
+  outcomeFlags = {},
+  commandTarget = null,
+}) {
   const action = semanticAction || "operation";
-  if (status === "running") return `Выполняется: ${action}`;
-  if (status === "success") return `Успех: ${action}`;
-  if (status === "interrupted") return `Прервано (историческое): ${action}`;
-  if (status === "blocked") return `Блокировано: ${action}`;
+  const address = operationAddress(commandTarget);
+  const where = address ? ` · ${address}` : "";
+  if (status === "running") return `Выполняется: ${action}${where}`;
+  if (status === "success") return `Успех: ${action}${where}`;
+  if (status === "no-change") return `Без изменений: ${action}${where}`;
+  if (status === "interrupted") return `Прервано (историческое): ${action}${where}`;
+  if (status === "blocked") return `Блокировано: ${action}${where}`;
   if (status === "evidence-save-failure") return EVIDENCE_SAVE_FAILURE_LABEL;
   const kind = outcomeKind ? ` (${outcomeKind})` : "";
   const retained = outcomeFlags?.retainedLastGoodImage === true
     ? " · показан предыдущий вариант"
     : "";
-  return `Ошибка: ${action}${kind}${retained}`;
+  return `Ошибка: ${action}${where}${kind}${retained}`;
 }
 
 export function reparentDockIntoDetail({ dock, detail }) {

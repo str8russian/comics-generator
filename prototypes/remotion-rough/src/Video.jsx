@@ -21,12 +21,27 @@ const imageSource = (asset) => {
   return staticFile(asset);
 };
 
+const frameOpacity = (frame, localFrame) => {
+  const fadeIn = frame.transitionIn?.overlapFrames || 0;
+  const fadeOut = frame.transitionOut?.overlapFrames || 0;
+  let opacity = 1;
+  if (fadeIn > 0 && localFrame < fadeIn) {
+    opacity = Math.min(opacity, (localFrame + 1) / fadeIn);
+  }
+  if (fadeOut > 0 && localFrame >= frame.durationFrames - fadeOut) {
+    const index = localFrame - (frame.durationFrames - fadeOut);
+    opacity = Math.min(opacity, (fadeOut - (index + 1)) / fadeOut);
+  }
+  return opacity;
+};
+
 const FrameView = ({frame, spec}) => {
   const localFrame = useCurrentFrame();
   const {theme} = spec;
+  const opacity = frameOpacity(frame, localFrame);
   if (frame.kind === 'text') {
     return (
-      <AbsoluteFill style={{backgroundColor: theme.backgroundColor, color: theme.textColor, fontFamily: theme.fontFamily}}>
+      <AbsoluteFill style={{backgroundColor: theme.backgroundColor, color: theme.textColor, fontFamily: theme.fontFamily, opacity}}>
         <div style={{
           position: 'absolute',
           inset: 0,
@@ -60,7 +75,7 @@ const FrameView = ({frame, spec}) => {
   const visualBottom = hasDialogue ? theme.dialogueBarHeightPx : 0;
 
   return (
-    <AbsoluteFill style={{backgroundColor: theme.backgroundColor, color: theme.textColor, fontFamily: theme.fontFamily}}>
+    <AbsoluteFill style={{backgroundColor: theme.backgroundColor, color: theme.textColor, fontFamily: theme.fontFamily, opacity}}>
       <div style={{position: 'absolute', inset: `0 0 ${visualBottom}px 0`, display: 'flex'}}>
         {(frame.panels || []).map((panel, index) => (
           <div

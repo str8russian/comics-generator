@@ -19,10 +19,22 @@ const SEMANTIC_ACTIONS = new Set([
   "panel_generate",
   "placement_commit",
   "visual_approve",
+  "frame_insert",
+  "frame_delete",
+  "frame_reorder",
+  "panel_add",
+  "panel_delete",
+  "panel_reorder",
+  "frame_duration",
+  "text_card",
+  "panel_subject",
+  "asset_assign",
+  "storyboard_undo",
+  "render",
 ]);
 
 const SURFACES = new Set(["dock_notes", "dock_commands", "product_control"]);
-const OUTCOMES = new Set(["success", "failure", "blocked"]);
+const OUTCOMES = new Set(["success", "failure", "blocked", "no-change"]);
 const EVENT_KINDS = new Set(["note", "action_start", "action_terminal"]);
 const WORKFLOW_PHASES = new Set([
   "draft",
@@ -50,6 +62,9 @@ const CONTEXT_KEYS = [
   "generationId",
   "characterName",
   "anchorVersionId",
+  "panelId",
+  "transitionMode",
+  "transitionOverlapFrames",
 ];
 
 const COMMAND_TARGET_KEYS = [
@@ -65,6 +80,7 @@ const COMMAND_TARGET_KEYS = [
   "mirrored",
   "characterName",
   "anchorVersionId",
+  "panelId",
 ];
 
 const EDIT_TARGET_KEYS = [
@@ -136,6 +152,11 @@ function normalizeContext(context) {
   if (!nullableString(out.generationId)) return null;
   if (!nullableString(out.characterName)) return null;
   if (!nullableString(out.anchorVersionId)) return null;
+  if (!nullableString(out.panelId)) return null;
+  if (!(out.transitionMode === null || out.transitionMode === "hard-cut" || out.transitionMode === "cross-dissolve")) {
+    return null;
+  }
+  if (!nullableIntegerMin(out.transitionOverlapFrames, 0)) return null;
   return out;
 }
 

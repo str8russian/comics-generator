@@ -1,3 +1,4 @@
+import { compileTransitionTimeline } from "./public/export-timing.mjs";
 import {
   CHARACTERS_PER_SECOND,
   FPS,
@@ -8,10 +9,9 @@ import {
   typedDialogue,
 } from "./timing.mjs";
 
-export function compileVideoSpec(visual, { assetOrigin = "" } = {}) {
+export function compileVideoSpec(visual, { assetOrigin = "", transition = "hard-cut" } = {}) {
   const frames = Array.isArray(visual?.frames) ? visual.frames : null;
   if (!visual || visual.status !== "ready" || !frames?.length) return { ok: false, kind: "no-storyboard" };
-  let cursor = 0;
   const compiled = [];
   for (const frame of frames) {
     const timing = presentFrameTiming(frame);
@@ -26,7 +26,6 @@ export function compileVideoSpec(visual, { assetOrigin = "" } = {}) {
       id: frame.id,
       structureFrameId: frame.structureFrameId || frame.id,
       kind,
-      startFrame: cursor,
       durationFrames: timing.durationFrames,
       preRollFrames,
       revealFrames,
@@ -50,8 +49,15 @@ export function compileVideoSpec(visual, { assetOrigin = "" } = {}) {
         mirrored: panel.mirrored === true,
       })),
     });
-    cursor += timing.durationFrames;
   }
+  const timeline = compileTransitionTimeline(compiled, transition);
+  if (!timeline.ok) return timeline;
+  const timed = compiled.map((frame, index) => ({
+    ...frame,
+    startFrame: timeline.frames[index].startFrame,
+    transitionIn: timeline.frames[index].transitionIn,
+    transitionOut: timeline.frames[index].transitionOut,
+  }));
   return {
     ok: true,
     spec: {
@@ -60,7 +66,12 @@ export function compileVideoSpec(visual, { assetOrigin = "" } = {}) {
         width: 1920,
         height: 1080,
         fps: FPS,
-        totalDurationFrames: cursor,
+        totalDurationFrames: timeline.totalDurationFrames,
+        nominalDurationFrames: timeline.nominalDurationFrames,
+        exportTransition: {
+          mode: timeline.mode,
+          overlapFrames: timeline.overlapFrames,
+        },
       },
       timing: {
         mode: "typed-dialogue",
@@ -76,7 +87,7 @@ export function compileVideoSpec(visual, { assetOrigin = "" } = {}) {
         textColor: "#f6f4ed",
         fontFamily: "Arial, Helvetica, sans-serif",
       },
-      frames: compiled,
+      frames: timed,
     },
   };
 }

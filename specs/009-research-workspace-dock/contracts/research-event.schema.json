@@ -38,7 +38,19 @@
         "frame_generate",
         "panel_generate",
         "placement_commit",
-        "visual_approve"
+        "visual_approve",
+        "frame_insert",
+        "frame_delete",
+        "frame_reorder",
+        "panel_add",
+        "panel_delete",
+        "panel_reorder",
+        "frame_duration",
+        "text_card",
+        "panel_subject",
+        "asset_assign",
+        "storyboard_undo",
+        "render"
       ]
     },
     "correlationId": {
@@ -72,7 +84,8 @@
         "positionY": { "type": ["number", "null"] },
         "mirrored": { "type": ["boolean", "null"] },
         "characterName": { "type": ["string", "null"] },
-        "anchorVersionId": { "type": ["string", "null"] }
+        "anchorVersionId": { "type": ["string", "null"] },
+        "panelId": { "type": ["string", "null"] }
       }
     },
     "editTarget": {
@@ -109,7 +122,10 @@
         "imageAssetId",
         "generationId",
         "characterName",
-        "anchorVersionId"
+        "anchorVersionId",
+        "panelId",
+        "transitionMode",
+        "transitionOverlapFrames"
       ],
       "properties": {
         "workflowPhase": {
@@ -135,12 +151,18 @@
         "imageAssetId": { "type": ["string", "null"] },
         "generationId": { "type": ["string", "null"] },
         "characterName": { "type": ["string", "null"] },
-        "anchorVersionId": { "type": ["string", "null"] }
+        "anchorVersionId": { "type": ["string", "null"] },
+        "panelId": { "type": ["string", "null"] },
+        "transitionMode": {
+          "type": ["string", "null"],
+          "enum": ["hard-cut", "cross-dissolve", null]
+        },
+        "transitionOverlapFrames": { "type": ["integer", "null"], "minimum": 0 }
       }
     },
     "outcome": {
       "type": ["string", "null"],
-      "enum": ["success", "failure", "blocked", null]
+      "enum": ["success", "failure", "blocked", "no-change", null]
     },
     "outcomeKind": { "type": ["string", "null"], "maxLength": 64 },
     "outcomeFlags": {

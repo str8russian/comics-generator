@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { applyOperation, ensurePanelIds, preservePanelIdentity } from "./assembly.mjs";
+import {
+  applyOperation,
+  ensurePanelIds,
+  metadataCarryDecision,
+  preservePanelIdentity,
+  visibleFrameSignature,
+} from "./assembly.mjs";
 import { inspectImage, parseIdentityImage } from "./image-info.mjs";
 import { presentFrameTiming } from "./timing.mjs";
 import {
@@ -191,14 +197,21 @@ async function backfillCurrentAssets(client, versionId) {
   `, [versionId]);
 }
 
-async function forkVisibleState(client, current, { instruction, frames, customize = null }) {
+async function forkVisibleState(client, current, { instruction, frames, customize = null, operationContext = null }) {
   const versionId = randomUUID();
   const nextFrames = frames ?? current.version.frames;
   await client.query(`
     INSERT INTO storyboard_version (
-      id, storyboard_result_id, parent_storyboard_version_id, instruction, frames
-    ) VALUES ($1, $2, $3, $4, $5::jsonb)
-  `, [versionId, current.result.id, current.version.id, instruction, JSON.stringify(nextFrames)]);
+      id, storyboard_result_id, parent_storyboard_version_id, instruction, frames, operation_context
+    ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+  `, [
+    versionId,
+    current.result.id,
+    current.version.id,
+    instruction,
+    JSON.stringify(nextFrames),
+    operationContext ? JSON.stringify(operationContext) : null,
+  ]);
   await copyPanelState(client, current.version.id, versionId, nextFrames);
   const next = {
     result: current.result,
@@ -260,18 +273,83 @@ function invalidImageError() {
   return error;
 }
 
-async function insertAsset(client, kind, image) {
+const PROVENANCE_INTENT_KEYS = [
+  "framing",
+  "upperBody",
+  "gesture",
+  "headPose",
+  "gaze",
+  "expression",
+  "background",
+  "eyes",
+  "eyebrows",
+];
+
+export function sanitizeProvenance(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const out = {};
+  if (value.origin === "generation" || value.origin === "upload" || value.origin === "reuse") {
+    out.origin = value.origin;
+  }
+  if (typeof value.subject === "string" && value.subject) out.subject = value.subject;
+  if (typeof value.description === "string" && value.description.trim()) out.description = value.description;
+  if (typeof value.submittedText === "string" && value.submittedText.trim()) out.submittedText = value.submittedText;
+  if (typeof value.structureFrameId === "string" && value.structureFrameId) out.structureFrameId = value.structureFrameId;
+  if (typeof value.panelId === "string" && value.panelId) out.panelId = value.panelId;
+  if (Number.isInteger(value.panelIndex) && value.panelIndex >= 0) out.panelIndex = value.panelIndex;
+  if (typeof value.storyboardResultId === "string" && value.storyboardResultId) {
+    out.storyboardResultId = value.storyboardResultId;
+  }
+  if (typeof value.styleAssetId === "string" && value.styleAssetId) out.styleAssetId = value.styleAssetId;
+  if (typeof value.anchorVersionId === "string" && value.anchorVersionId) out.anchorVersionId = value.anchorVersionId;
+  if (typeof value.sourceAssetId === "string" && value.sourceAssetId) out.sourceAssetId = value.sourceAssetId;
+  if (value.intent && typeof value.intent === "object" && !Array.isArray(value.intent)) {
+    const intent = {};
+    for (const key of PROVENANCE_INTENT_KEYS) {
+      if (typeof value.intent[key] === "string" && value.intent[key]) intent[key] = value.intent[key];
+    }
+    if (Object.keys(intent).length) out.intent = intent;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function publicProvenance(value) {
+  const clean = sanitizeProvenance(value);
+  if (!clean) return null;
+  return {
+    origin: clean.origin ?? null,
+    subject: clean.subject ?? null,
+    description: clean.description ?? null,
+    submittedText: clean.submittedText ?? null,
+    structureFrameId: clean.structureFrameId ?? null,
+    panelId: clean.panelId ?? null,
+    panelIndex: clean.panelIndex ?? null,
+  };
+}
+
+async function insertAsset(client, kind, image, provenance = null) {
   const bytes = imageBytes(image);
   const inspected = bytes ? inspectImage(bytes) : { mime: null };
   if (!inspected.mime || !["image/png", "image/jpeg", "image/webp"].includes(inspected.mime)) {
     throw invalidImageError();
   }
   const id = randomUUID();
+  const clean = sanitizeProvenance(provenance);
   await client.query(`
-    INSERT INTO visual_asset (id, kind, mime, width, height, byte_length, sha256, bytes)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-  `, [id, kind, inspected.mime, inspected.width, inspected.height, inspected.byteLength, inspected.sha256, bytes]);
-  return { id, ...inspected };
+    INSERT INTO visual_asset (id, kind, mime, width, height, byte_length, sha256, bytes, provenance)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+  `, [
+    id,
+    kind,
+    inspected.mime,
+    inspected.width,
+    inspected.height,
+    inspected.byteLength,
+    inspected.sha256,
+    bytes,
+    clean ? JSON.stringify(clean) : null,
+  ]);
+  return { id, ...inspected, provenance: clean };
 }
 
 async function currentIdentity(client, materialStateId, characterName) {
@@ -411,9 +489,11 @@ async function loadVisualWithClient(client) {
              panel_generation.status AS generation_status,
              panel_generation.anchor_version_id,
              panel_generation.output_asset_id,
-             panel_generation.instruction AS generation_instruction
+             panel_generation.instruction AS generation_instruction,
+             current_asset.provenance AS current_asset_provenance
       FROM panel_visual_state
       LEFT JOIN panel_generation ON panel_generation.id = panel_visual_state.current_generation_id
+      LEFT JOIN visual_asset AS current_asset ON current_asset.id = panel_visual_state.current_asset_id
       WHERE panel_visual_state.storyboard_version_id = $1
       ORDER BY panel_visual_state.frame_id, panel_visual_state.panel_index
     `, [context.version.id]);
@@ -487,6 +567,7 @@ async function loadVisualWithClient(client) {
           ownerDescription: typeof panel.ownerDescription === "string" ? panel.ownerDescription : "",
           performanceAssetId: state?.performance_asset_id ?? null,
           performanceAssetUrl: assetUrl(state?.performance_asset_id),
+          assetProvenance: publicProvenance(state?.current_asset_provenance),
           generationStatus: latestGeneration?.status ?? null,
           generationError: latestGeneration?.error_kind ?? null,
           instruction: state?.generation_instruction ?? "",
@@ -512,7 +593,7 @@ async function loadVisualWithClient(client) {
       && JSON.stringify(normalizeApprovalSnapshot(approval.rows[0].snapshot)) === JSON.stringify(normalizeApprovalSnapshot(snapshot));
     const styleSeed = await backfillStyleSeed(client, context.result.material_state_id);
     const reusable = await client.query(`
-      SELECT DISTINCT a.id, a.kind, a.mime, a.width, a.height
+      SELECT DISTINCT a.id, a.kind, a.mime, a.width, a.height, a.provenance, a.created_at
       FROM visual_asset a
       WHERE a.kind IN ('uploaded-image', 'panel-image')
         AND a.id IN (
@@ -557,6 +638,8 @@ async function loadVisualWithClient(client) {
         width: row.width,
         height: row.height,
         url: assetUrl(row.id),
+        provenance: publicProvenance(row.provenance),
+        createdAt: row.created_at ?? null,
       })),
       complete,
       approved,
@@ -749,16 +832,6 @@ export async function beginPanelGeneration(pool, {
         await client.query("ROLLBACK");
         return failed("not-found", 404);
       }
-      let performanceAssetId = clearPerformance ? null : target.state.performance_asset_id;
-      if (performanceImage?.bytes) {
-        performanceAssetId = (await insertAsset(client, "performance-reference", performanceImage)).id;
-      }
-      if (clearPerformance || performanceImage?.bytes) {
-        await client.query(
-          `UPDATE panel_visual_state SET performance_asset_id = $2, updated_at = clock_timestamp() WHERE id = $1`,
-          [target.state.id, performanceAssetId],
-        );
-      }
       const subject = target.state.subject;
       const manual = isManualCharacterTarget(target.frame, panelIndex);
       if (manual && !subject) {
@@ -775,6 +848,15 @@ export async function beginPanelGeneration(pool, {
         await client.query("ROLLBACK");
         return failed("style-required", 409);
       }
+      let performanceAssetId = target.state.performance_asset_id;
+      let performanceIntent = "keep";
+      if (performanceImage?.bytes) {
+        performanceAssetId = (await insertAsset(client, "performance-reference", performanceImage)).id;
+        performanceIntent = "set";
+      } else if (clearPerformance) {
+        performanceAssetId = null;
+        performanceIntent = "clear";
+      }
       const parent = target.state.current_generation_id
         ? (await client.query("SELECT * FROM panel_generation WHERE id = $1", [target.state.current_generation_id])).rows[0]
         : null;
@@ -786,14 +868,15 @@ export async function beginPanelGeneration(pool, {
       await client.query(`
         INSERT INTO panel_generation (
           id, panel_visual_state_id, parent_generation_id, anchor_version_id,
-          performance_asset_id, resolved_description, instruction, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+          performance_asset_id, performance_intent, resolved_description, instruction, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
       `, [
         id,
         target.state.id,
         parent?.id ?? null,
         anchor?.id ?? null,
         performanceAssetId,
+        performanceIntent,
         target.panel.description,
         String(instruction).trim(),
       ]);
@@ -822,7 +905,7 @@ export async function beginPanelGeneration(pool, {
   }
 }
 
-export async function finishPanelGeneration(pool, { id, result }) {
+export async function finishPanelGeneration(pool, { id, result, provenance = null }) {
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
@@ -839,7 +922,7 @@ export async function finishPanelGeneration(pool, { id, result }) {
         await client.query("COMMIT");
         return failed(result?.kind || "provider", result?.httpStatus || 502);
       }
-      const asset = await insertAsset(client, "panel-image", result.image);
+      const asset = await insertAsset(client, "panel-image", result.image, provenance);
       await client.query(
         `UPDATE panel_generation
          SET status = 'ready', output_asset_id = $2, provider_metadata = $3::jsonb
@@ -847,7 +930,7 @@ export async function finishPanelGeneration(pool, { id, result }) {
         [id, asset.id, JSON.stringify(result.metadata || {})],
       );
       const state = await client.query(
-        `SELECT panel_id FROM panel_visual_state WHERE id = $1`,
+        `SELECT panel_id, frame_id, panel_index FROM panel_visual_state WHERE id = $1`,
         [generation.rows[0].panel_visual_state_id],
       );
       const panelId = state.rows[0]?.panel_id ?? null;
@@ -866,15 +949,32 @@ export async function finishPanelGeneration(pool, { id, result }) {
       }
       await forkVisibleState(client, current, {
         instruction: "panel-generation",
+        operationContext: {
+          op: "panel-generation",
+          structureFrameId: state.rows[0]?.frame_id ?? null,
+          panelId,
+          panelIndex: state.rows[0]?.panel_index ?? null,
+        },
         customize: async (forkClient, next) => {
           await forkClient.query(`
             UPDATE panel_visual_state
             SET current_generation_id = $3,
                 current_asset_id = $4,
                 current_asset_origin = 'generation',
+                performance_asset_id = CASE
+                  WHEN $5::text IN ('set', 'clear') THEN $6::uuid
+                  ELSE performance_asset_id
+                END,
                 updated_at = clock_timestamp()
             WHERE storyboard_version_id = $1 AND panel_id = $2
-          `, [next.version.id, panelId, id, asset.id]);
+          `, [
+            next.version.id,
+            panelId,
+            id,
+            asset.id,
+            generation.rows[0].performance_intent,
+            generation.rows[0].performance_asset_id,
+          ]);
         },
       });
       await client.query("COMMIT");
@@ -919,6 +1019,7 @@ export async function updatePlacement(pool, input = {}) {
         await client.query("COMMIT");
         return {
           ok: true,
+          changed: false,
           placement: resolved,
         };
       }
@@ -933,7 +1034,7 @@ export async function updatePlacement(pool, input = {}) {
         },
       });
       await client.query("COMMIT");
-      return { ok: true, placement: resolved };
+      return { ok: true, changed: true, placement: resolved };
     });
   } catch {
     return failed("database", 503);
@@ -980,11 +1081,22 @@ export async function undoStoryboardEdit(pool) {
       const current = await ensureVersion(client);
       const parent = current?.version?.parent_storyboard_version_id;
       if (!current || !parent) return failed("nothing-to-undo", 409);
+      const leaving = await client.query(
+        `SELECT instruction, operation_context FROM storyboard_version WHERE id = $1`,
+        [current.version.id],
+      );
       await client.query(
         `UPDATE storyboard_head SET active_storyboard_version_id = $2 WHERE storyboard_result_id = $1`,
         [current.result.id, parent],
       );
-      return { ok: true, storyboardVersionId: parent };
+      const context = leaving.rows[0]?.operation_context ?? null;
+      return {
+        ok: true,
+        changed: true,
+        storyboardVersionId: parent,
+        undoneLabel: undoLabelFor(leaving.rows[0]?.instruction),
+        undoneTarget: context && typeof context === "object" ? context : null,
+      };
     });
   } catch {
     return failed("database", 503);
@@ -1086,7 +1198,7 @@ async function prepareAssignment(client, current, operation) {
       assetId = existing.rows[0].id;
       origin = "reuse";
     } else {
-      const inserted = await insertAsset(client, "uploaded-image", image);
+      const inserted = await insertAsset(client, "uploaded-image", image, { origin: "upload" });
       assetId = inserted.id;
       origin = "upload";
     }
@@ -1098,7 +1210,111 @@ async function prepareAssignment(client, current, operation) {
     WHERE storyboard_version_id = $1 AND panel_id = ANY($2::text[])
   `, [current.version.id, panelIds]);
   if (rows.rowCount !== new Set(panelIds).size) return failed("panel-not-found");
-  return { ok: true, patch: { panelIds: [...new Set(panelIds)], assetId, origin } };
+  const stored = await client.query(`SELECT provenance FROM visual_asset WHERE id = $1`, [assetId]);
+  return {
+    ok: true,
+    patch: {
+      panelIds: [...new Set(panelIds)],
+      assetId,
+      origin,
+      provenance: sanitizeProvenance(stored.rows[0]?.provenance),
+      carryMetadata: operation.carryMetadata === true,
+    },
+  };
+}
+
+function eachStoredPanel(frames, visit) {
+  for (const frame of frames || []) {
+    if (frame?.directingBeat === true && Array.isArray(frame.segments) && frame.segments.length > 0) {
+      for (const segment of frame.segments) {
+        for (const panel of segment.panels || []) visit(frame, segment, panel);
+      }
+      continue;
+    }
+    for (const panel of frame.panels || []) visit(frame, frame, panel);
+  }
+}
+
+function applyMetadataCarry(frames, patches, castNames) {
+  for (const patch of patches) {
+    for (const panelId of patch.panelIds) {
+      eachStoredPanel(frames, (frame, node, panel) => {
+        if (panel.id !== panelId) return;
+        const decision = metadataCarryDecision({
+          frame: { origin: frame.origin, frameKind: node.frameKind ?? frame.frameKind },
+          panel,
+          provenance: patch.provenance,
+          castNames,
+          carryMetadata: patch.carryMetadata,
+        });
+        if (decision.mode !== "carry") return;
+        if (decision.subject) panel.manualSubject = decision.subject;
+        if (decision.description) panel.description = decision.description;
+      });
+    }
+  }
+}
+
+function panelVisualSignature(rows) {
+  return JSON.stringify(rows.map((row) => ({
+    panelId: row.panel_id ?? null,
+    subject: row.subject ?? null,
+    currentAssetId: row.current_asset_id ?? null,
+    currentAssetOrigin: row.current_asset_origin ?? null,
+    zoom: Number(row.zoom),
+    positionX: Number(row.position_x),
+    positionY: Number(row.position_y),
+    mirrored: row.mirrored === true,
+    performanceAssetId: row.performance_asset_id ?? null,
+  })).sort((left, right) => String(left.panelId).localeCompare(String(right.panelId))));
+}
+
+function proposedPanelRows(currentRows, frames, patches, cast) {
+  const byId = new Map(currentRows.map((row) => [row.panel_id, { ...row }]));
+  const next = [];
+  for (const frame of expandStoryboardFrames(frames)) {
+    for (const panel of frame.panels || []) {
+      const existing = byId.get(panel.id) || {
+        panel_id: panel.id,
+        subject: null,
+        current_asset_id: null,
+        current_asset_origin: null,
+        zoom: 1,
+        position_x: 50,
+        position_y: 30,
+        mirrored: false,
+        performance_asset_id: null,
+      };
+      const manual = typeof panel.manualSubject === "string" ? panel.manualSubject.trim() : "";
+      const derived = resolvePanelSubject(panel.description, cast.characters, cast.aliases);
+      existing.subject = manual || derived || null;
+      next.push(existing);
+    }
+  }
+  for (const patch of patches) {
+    for (const panelId of patch.panelIds) {
+      const row = next.find((entry) => entry.panel_id === panelId);
+      if (!row) continue;
+      row.current_asset_id = patch.assetId;
+      row.current_asset_origin = patch.origin;
+    }
+  }
+  return next;
+}
+
+function operationContextFor(operations) {
+  const operation = operations.length === 1 ? operations[0] : { op: "batch" };
+  const panelId = typeof operation.panelId === "string"
+    ? operation.panelId
+    : (operation.targets?.[0]?.panelId ?? null);
+  return {
+    op: operation.op,
+    structureFrameId: operation.structureFrameId ?? operation.afterStructureFrameId ?? null,
+    structureSegmentIndex: Number.isInteger(operation.structureSegmentIndex) ? operation.structureSegmentIndex : null,
+    panelId: typeof panelId === "string" ? panelId : null,
+    panelIndex: Number.isInteger(operation.panelIndex) ? operation.panelIndex : null,
+    displayFrameNumber: Number.isInteger(operation.displayFrameNumber) ? operation.displayFrameNumber : null,
+  };
 }
 
 export async function applyProductOperation(pool, input) {
@@ -1126,6 +1342,13 @@ export async function applyProductOperation(pool, input) {
       let frames = current.version.frames;
       const patches = [];
       for (const operation of operations) {
+        if (operation.op === "setManualSubject") {
+          const name = typeof operation.characterName === "string" ? operation.characterName.trim() : "";
+          if (!cast.characters.some((entry) => entry.name === name)) {
+            await client.query("ROLLBACK");
+            return failed("unknown-subject");
+          }
+        }
         if (operation.op === "uploadAsset" || operation.op === "assignAsset") {
           const prepared = await prepareAssignment(client, current, operation);
           if (!prepared.ok) {
@@ -1142,10 +1365,25 @@ export async function applyProductOperation(pool, input) {
         }
         frames = applied.frames;
       }
+      applyMetadataCarry(frames, patches, cast.characters.map((entry) => entry.name));
+      const beforeRows = await client.query(`
+        SELECT panel_id, subject, current_asset_id, current_asset_origin,
+               zoom, position_x, position_y, mirrored, performance_asset_id
+        FROM panel_visual_state
+        WHERE storyboard_version_id = $1
+      `, [current.version.id]);
+      const sameFrames = visibleFrameSignature(frames) === visibleFrameSignature(current.version.frames);
+      const samePanels = panelVisualSignature(beforeRows.rows)
+        === panelVisualSignature(proposedPanelRows(beforeRows.rows, frames, patches, cast));
+      if (sameFrames && samePanels) {
+        await client.query("COMMIT");
+        return { ok: true, changed: false, storyboardVersionId: current.version.id };
+      }
       const instruction = operations.length === 1 ? operations[0].op : "batch";
       const next = await forkVisibleState(client, current, {
         instruction,
         frames,
+        operationContext: operationContextFor(operations),
         customize: async (forkClient, version) => {
           for (const patch of patches) {
             for (const panelId of patch.panelIds) {
@@ -1163,7 +1401,7 @@ export async function applyProductOperation(pool, input) {
         },
       });
       await client.query("COMMIT");
-      return { ok: true, storyboardVersionId: next.version.id };
+      return { ok: true, changed: true, storyboardVersionId: next.version.id };
     });
   } catch (error) {
     if (error?.kind === "invalid-image") return failed("invalid-image");

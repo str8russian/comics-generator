@@ -7,6 +7,7 @@ const files = {
   "/research-dock.mjs": "app/storyboard-web/public/research-dock.mjs",
   "/visual-anchors.mjs": "app/storyboard-web/public/visual-anchors.mjs",
   "/asset-picker.mjs": "app/storyboard-web/public/asset-picker.mjs",
+  "/export-timing.mjs": "app/storyboard-web/public/export-timing.mjs",
   "/app.js": "app/storyboard-web/public/app.js",
 };
 

@@ -15,6 +15,9 @@ const CONTEXT_KEYS = [
   "generationId",
   "characterName",
   "anchorVersionId",
+  "panelId",
+  "transitionMode",
+  "transitionOverlapFrames",
 ];
 
 function createElement(tag = "div") {
@@ -2341,6 +2344,7 @@ test("createEmptyCommandTarget omits panelSubject even when override supplies it
     "displayFrameNumber",
     "kind",
     "mirrored",
+    "panelId",
     "panelIndex",
     "positionX",
     "positionY",

@@ -73,7 +73,7 @@ The storyboard page shows a build marker that comes from the running server. A D
 - **FR-004**: Accepted mutations MUST be atomic. A rejected mutation MUST leave the last saved storyboard and assets usable.
 - **FR-005**: Dialogue wording and source order MUST NOT be rewritten by structure, upload, duration, or render operations.
 - **FR-006**: Upload and reuse MUST validate PNG, JPEG, and WebP within the existing 12 MiB limit, MUST NOT call an image provider, and MUST NOT create a generation attempt. Reuse MUST keep the same asset id.
-- **FR-007**: Asset bytes, panel intent (`description`), and an optional owner note MUST stay separate. Reuse MUST NOT copy another panel’s description or note.
+- **FR-007**: Asset bytes, panel intent (`description`), and any stored owner note MUST stay separate fields. Reuse copies subject and supported intent only for a blank manual panel, or when the owner explicitly chooses metadata replacement on a nonblank manual panel. A source-derived intent is not overwritten. An owner note is not part of the primary assembly controls.
 - **FR-008**: The practical layouts are only `single` and `split2`.
 - **FR-009**: Duration MUST be stored in frames, shown in seconds at 30 fps, and rejected when it is not a positive finite integer or when it would truncate typed dialogue before reveal completes.
 - **FR-010**: Text-card text MUST be owner-authored display text and MUST NOT create or edit source items.
@@ -88,16 +88,34 @@ The storyboard page shows a build marker that comes from the running server. A D
 - A frame with one assigned panel and one empty panel shows the assigned image immediately and a placeholder for the missing panel.
 - One anchored picker assigns a reusable thumbnail or a disk upload in the same step.
 - Either panel of a `split2` frame can be deleted. Deleting the speaking panel requires an explicit confirmation that the exact dialogue stays and ownership moves to the surviving panel.
-- Reorder controls say what they do and are disabled at the ends. A panel note is labeled as a note that is not used for generation.
+- Reorder controls say what they do and are disabled at the ends.
 - The current visible asset is one choice. A later successful generation replaces an earlier upload or reuse. Failure keeps the last-good image. The current image is the revision reference. A manual panel without an explicit cast subject cannot generate.
 - Every accepted storyboard-content change is one persisted undo step. Undo walks backward and survives reload. Redo is out of scope.
 - Operations shows each owner action and the submitted instruction text.
 
+## Correction 3
+
+This correction supersedes any earlier sentence that keeps a second structure-only Undo, treats every mutation as a new version, writes the performance reference before a successful generation, or leaves cross dissolve out of export.
+
+- One floating Undo posts JSON to the undo route. Its success names the undone operation and target. A failed Undo does not move the head. There is no second Undo control.
+- A mutation whose canonical visible and render-affecting state is unchanged does not create a version. The research outcome `no-change` records that result.
+- Beginning a generation may store attempt evidence, including a proposed performance reference or an explicit clear, and must not change the active panel. Only a successful current generation writes the new image and the proposed performance reference in one version. Undo restores both.
+- The detail view shows `Кадр N` outside the 1920×1080 canvas, using the current display number.
+- The image picker is an anchored popover: it flips above when needed, clamps to the viewport, follows scroll and resize, closes when the anchor leaves, keeps upload sticky at the top, and shows a three-column grid without dimension labels.
+- A reusable generated asset keeps an immutable provenance snapshot: source identity when known, accepted-cast subject, supported description or intent, user-submitted text, style and reference ids, time, and origin. Uploads may have an unknown subject. Assignment to a blank manual panel copies an accepted-cast subject and supported intent. Source intent is kept. A nonblank manual panel can explicitly replace metadata.
+- The panel-note control is absent from the primary assembly UI. Stored notes remain.
+- Action status floats and stays visible while the storyboard scrolls. Partial image frames say `Изображение готово частично`. Operations name the real frame or panel and keep user-submitted text.
+- Render start and its single terminal outcome are stored by the server. Polling does not write another terminal.
+- A manual subject must be an exact current accepted-cast name. An unknown name creates no version.
+- Export defaults to `Жёсткая склейка`. `Cross dissolve` is a parameter of that render only: a uniform six-frame overlap between eligible adjacent frames, represented separately from each frame’s nominal duration, with the resulting runtime shown. It does not change storyboard state or the Undo stack. Text-card boundaries stay hard cuts so the text stays readable. A frame shorter than six frames also stays a hard cut on that boundary.
+- Conversation-turn bridges and sequential zoom are not part of this block.
+
 ## Out of Scope
 
-- Block C base-image redesign, speaking/listening renditions, and performance-reference transfer.
-- Block D undo history, source-aware dialogue editing, intent synchronization, and matte color.
+- Block C base-image redesign, speaking/listening renditions, and performance-reference transfer beyond the atomic current-generation update above.
+- Block D source-aware dialogue editing, intent synchronization, and matte color.
 - Intro, title, and outro templates.
 - Layouts other than `single` and `split2`.
+- Conversation-turn bridges and sequential zoom.
 - Production queues, cancellation, crash recovery, remote workers, and a durable render registry.
 - Repair of the unrelated PostgreSQL `storyboard-result` expectation.

@@ -17,6 +17,9 @@ function nullContext(overrides = {}) {
     generationId: null,
     characterName: null,
     anchorVersionId: null,
+    panelId: null,
+    transitionMode: null,
+    transitionOverlapFrames: null,
     ...overrides,
   };
 }
@@ -204,8 +207,10 @@ function storyboardTarget(overrides = {}) {
     zoom: null,
     positionX: null,
     positionY: null,
+    mirrored: null,
     characterName: null,
     anchorVersionId: null,
+    panelId: null,
     ...overrides,
   };
 }

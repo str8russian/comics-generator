@@ -173,6 +173,11 @@ function installDocument(html) {
   return elements;
 }
 
+function statusText() {
+  const status = document.querySelector("#action-status");
+  return [status?.textContent, ...(status?.children || []).map((child) => child.textContent || "")].join(" ");
+}
+
 function jsonResponse(status, payload) {
   return {
     ok: status >= 200 && status < 300,
@@ -320,6 +325,20 @@ async function loadCapturePage() {
     const parsed = new URL(url, "http://127.0.0.1");
     const path = parsed.pathname + parsed.search;
     const method = init.method ?? "GET";
+    const scripted = (globalThis.__visualScript || []).find((entry) => entry.path === path && (entry.method || "POST") === method);
+    if (scripted) {
+      globalThis.__visualScript = globalThis.__visualScript.filter((entry) => entry !== scripted);
+      let scriptBody = null;
+      if (init.body != null) {
+        try {
+          scriptBody = JSON.parse(init.body);
+        } catch {
+          scriptBody = init.body;
+        }
+      }
+      productPosts.push({ path, method, body: scriptBody, headers: init.headers || {} });
+      return jsonResponse(scripted.status || 200, typeof scripted.body === "function" ? scripted.body(scriptBody) : scripted.body);
+    }
     let body = null;
     if (init.body != null) {
       try {
@@ -357,7 +376,7 @@ async function loadCapturePage() {
     }
     if (path === "/api/visual") return jsonResponse(200, { status: "missing" });
 
-    productPosts.push({ path, method, body });
+    productPosts.push({ path, method, body, headers: init.headers || {} });
 
     if (path === "/api/readings" && method === "POST") {
       return jsonResponse(200, {
@@ -381,8 +400,16 @@ async function loadCapturePage() {
         readyEligible: true,
       });
     }
-    if (path === "/api/visual/storyboard/edit" || path === "/api/visual/storyboard/undo") {
-      return jsonResponse(200, readyVisual({ canUndo: path.endsWith("edit") }));
+    if (path === "/api/visual/storyboard/edit") {
+      return jsonResponse(200, readyVisual({ canUndo: true, undoLabel: "вставку кадра" }));
+    }
+    if (path === "/api/visual/storyboard/undo") {
+      return jsonResponse(200, readyVisual({
+        canUndo: false,
+        undoLabel: null,
+        undoneLabel: "вставку кадра",
+        undoneTarget: { displayFrameNumber: 2, op: "insertFrame" },
+      }));
     }
     if (path === "/api/visual/approve") return jsonResponse(200, readyVisual({ approved: true, readyForVideo: true }));
     if (/\/api\/visual\/frames\/[^/]+\/generate$/.test(path)) return jsonResponse(200, readyVisual());
@@ -500,7 +527,7 @@ test("confirm_material and stage_storyboard capture without submitted text", asy
   assert.equal(stagePair.terminal.outcome, "success");
 });
 
-test("structure_edit and structure_undo capture storyboard targets on product controls", async () => {
+test("structure_edit and global undo capture storyboard targets on product controls", async () => {
   await ensurePage();
   page.setResearchVisualState(readyVisual());
   document.querySelector("#structure-instruction").value = "сделай кадры плотнее";
@@ -513,12 +540,20 @@ test("structure_edit and structure_undo capture storyboard targets on product co
   assert.equal(edit.terminal.outcome, "success");
 
   researchPosts.length = 0;
-  document.querySelector("#undo-structure").dispatchEvent({ type: "click" });
+  assert.equal(document.querySelector("#undo-structure"), null);
+  document.querySelector("#global-undo").disabled = false;
+  document.querySelector("#global-undo").hidden = false;
+  document.querySelector("#global-undo").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  const undo = researchPair("structure_undo");
+  const undo = researchPair("storyboard_undo");
   assert.equal(undo.start.submittedText, null);
   assert.equal(undo.start.commandTarget.kind, "storyboard");
   assert.equal(undo.terminal.outcome, "success");
+  const request = productPosts.find((entry) => entry.path === "/api/visual/storyboard/undo");
+  assert.deepEqual(request.body, {});
+  assert.match(JSON.stringify(request.headers).toLowerCase(), /application\/json/);
+  assert.match(statusText(), /Отменено: вставку кадра · кадр 2/);
+  assert.equal(/Предыдущая структура восстановлена/.test(document.body.textContent || ""), false);
 });
 
 test("frame_generate and panel_generate capture display/structure identity; panel omits performance image", async () => {
@@ -1721,7 +1756,7 @@ test("failed placement save does not claim success and restores the prior rendit
     assert.notEqual(left.style.objectPosition, "41% 22%");
     left.parentNode.dispatchEvent({ type: "pointerup", clientX: 80, clientY: 40, button: 0, pointerId: 3, preventDefault() {} });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const notice = document.querySelector("#notice");
+    const notice = document.querySelector("#action-status");
     assert.equal(notice.dataset.kind, "error");
     assert.equal(/Приближение сохранено|Кадрирование сохранено|Кадрирование сброшено|Отражение сохранено/.test(notice.textContent), false);
     assert.equal(left.style.objectPosition, "41% 22%");
@@ -1730,4 +1765,191 @@ test("failed placement save does not claim success and restores the prior rendit
   } finally {
     fetchImpl = original;
   }
+});
+
+test("detail frame number follows the open frame when its display position changes", async () => {
+  await ensurePage();
+  const first = {
+    id: "display-1",
+    structureFrameId: "structure-1",
+    durationFrames: 36,
+    layout: "single",
+    dialogue: "",
+    visualReady: true,
+    panels: [{ id: "panel-a", description: "слева", subject: "Путин", assetId: "asset-1" }],
+  };
+  const second = {
+    id: "display-2",
+    structureFrameId: "structure-2",
+    durationFrames: 36,
+    layout: "single",
+    dialogue: "",
+    visualReady: true,
+    panels: [{ id: "panel-b", description: "справа", subject: "Дуров", assetId: "asset-2" }],
+  };
+  page.applyVisual(readyVisual({ frames: [first, second], complete: false }));
+  document.querySelector("#storyboard").querySelector(".frame-preview").dispatchEvent({ type: "click" });
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
+  assert.equal(document.querySelector("#detail-frame").querySelector("#detail-frame-number"), null);
+  page.applyVisual(readyVisual({ frames: [second, first], complete: false }));
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 2");
+});
+
+test("assembly has one undo control and no panel note", async () => {
+  await ensurePage();
+  page.applyVisual(readyVisual({
+    frames: [{
+      id: "display-1",
+      structureFrameId: "structure-1",
+      durationFrames: 36,
+      layout: "single",
+      dialogue: "",
+      panels: [{ id: "panel-a", description: "", subject: null, subjectEditable: true }],
+    }],
+  }));
+  const controls = document.querySelector("#storyboard").textContent;
+  assert.equal(document.querySelector("#undo-structure"), null);
+  assert.equal(/Заметка к панели|Не используется при генерации/.test(controls), false);
+  assert.equal(document.querySelector("#global-undo").hidden, false);
+});
+
+test("insert then undo removes the frame, and undo after delete restores it", async () => {
+  await ensurePage();
+  const baseFrame = {
+    id: "display-1",
+    structureFrameId: "structure-1",
+    durationFrames: 36,
+    layout: "single",
+    dialogue: "",
+    frameKind: "image",
+    visualReady: false,
+    panels: [{ id: "panel-a", description: "", subject: null }],
+  };
+  const extraFrame = {
+    id: "display-2",
+    structureFrameId: "structure-2",
+    durationFrames: 36,
+    layout: "single",
+    dialogue: "",
+    frameKind: "image",
+    visualReady: false,
+    panels: [{ id: "panel-b", description: "", subject: null }],
+  };
+  const base = readyVisual({ canUndo: false, storyboardVersionId: "version-1", frames: [baseFrame] });
+  const inserted = readyVisual({
+    canUndo: true,
+    undoLabel: "вставку кадра",
+    storyboardVersionId: "version-2",
+    frames: [baseFrame, extraFrame],
+  });
+  page.applyVisual(base);
+  globalThis.__visualScript = [{ path: "/api/visual/operations", body: inserted }];
+  const insert = [...document.querySelector("#storyboard").querySelectorAll("button")]
+    .find((button) => button.textContent === "Кадр с изображением после");
+  insert.dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(document.querySelector("#storyboard").querySelectorAll(".story-card").length, 2);
+
+  globalThis.__visualScript = [{
+    path: "/api/visual/storyboard/undo",
+    body: { ...base, undoneLabel: "вставку кадра", undoneTarget: { displayFrameNumber: 2, op: "insertFrame" } },
+  }];
+  document.querySelector("#global-undo").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(document.querySelector("#storyboard").querySelectorAll(".story-card").length, 1);
+  assert.match(statusText(), /Отменено: вставку кадра/);
+  assert.equal(/Не удалось выполнить действие/.test(statusText()), false);
+
+  page.applyVisual(inserted);
+  globalThis.__visualScript = [{
+    path: "/api/visual/operations",
+    body: readyVisual({ ...base, canUndo: true, undoLabel: "удаление кадра", storyboardVersionId: "version-3" }),
+  }];
+  const remove = [...document.querySelector("#storyboard").querySelectorAll("button")]
+    .find((button) => button.textContent === "Удалить кадр");
+  remove.dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(document.querySelector("#storyboard").querySelectorAll(".story-card").length, 1);
+  globalThis.__visualScript = [{
+    path: "/api/visual/storyboard/undo",
+    body: {
+      ...inserted,
+      undoneLabel: "удаление кадра",
+      undoneTarget: { displayFrameNumber: 2, op: "deleteFrame" },
+    },
+  }];
+  document.querySelector("#global-undo").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(document.querySelector("#storyboard").querySelectorAll(".story-card").length, 2);
+  assert.match(statusText(), /Отменено: удаление кадра/);
+});
+
+test("action status stays visible when the edited card is offscreen", async () => {
+  await ensurePage();
+  page.applyVisual(readyVisual({
+    frames: [{
+      id: "display-1",
+      structureFrameId: "structure-1",
+      durationFrames: 36,
+      layout: "single",
+      dialogue: "",
+      frameKind: "image",
+      panels: [{ id: "panel-a", description: "", subject: null }],
+    }],
+  }));
+  globalThis.__visualScript = [{
+    path: "/api/visual/operations",
+    body: readyVisual({ changed: false }),
+  }];
+  const duration = [...document.querySelector("#storyboard").querySelectorAll("input")]
+    .find((input) => input.type === "number");
+  duration.value = "36";
+  duration.dispatchEvent({ type: "change" });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const status = document.querySelector("#action-status");
+  assert.equal(status.hidden, false);
+  assert.match(statusText(), /Без изменений/);
+  assert.equal(status.getAttribute("aria-live"), "polite");
+});
+
+test("cross dissolve is sent with render and does not post a storyboard operation", async () => {
+  await ensurePage();
+  page.applyVisual(readyVisual({
+    storyboardVersionId: "version-locked",
+    frames: [{
+      ...readyVisual().frames[0],
+      durationFrames: 36,
+    }, {
+      id: "display-2",
+      structureFrameId: "structure-2",
+      durationFrames: 36,
+      frameKind: "image",
+      dialogue: "",
+      layout: "single",
+      panels: [{ id: "panel-b", description: "" }],
+    }],
+  }));
+  productPosts.length = 0;
+  const select = document.querySelector("#render-transition");
+  select.value = "cross-dissolve";
+  select.dispatchEvent({ type: "change" });
+  assert.match(document.querySelector("#render-runtime").textContent, /Cross dissolve 6/);
+  assert.equal(productPosts.some((entry) => entry.path === "/api/visual/operations"), false);
+  globalThis.__visualScript = [{
+    path: "/api/visual/render",
+    status: 202,
+    body: {
+      status: "running",
+      id: "render-1",
+      transition: "cross-dissolve",
+      overlapFrames: 6,
+      totalDurationFrames: 66,
+      nominalDurationFrames: 72,
+    },
+  }];
+  document.querySelector("#start-render").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const renderPost = productPosts.find((entry) => entry.path === "/api/visual/render");
+  assert.equal(renderPost.body.transition, "cross-dissolve");
+  assert.equal(productPosts.some((entry) => entry.path === "/api/visual/operations"), false);
 });

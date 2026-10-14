@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+  <div id="action-status" class="action-status" aria-live="polite" hidden></div>
   <main class="page">
     <h1>Раскадровка</h1>
     <p id="build-marker" class="build-marker">Сборка …</p>
@@ -44,7 +45,6 @@
           <p class="eyebrow">Текстовая раскадровка</p>
           <h2 id="structure-tools-title">Что изменить в кадрах?</h2>
         </div>
-        <button id="undo-structure" type="button" class="secondary" hidden>Вернуть обратно</button>
       </div>
       <p class="helper">Укажите номера кадров обычным текстом. Реплики и описания изображений пока остаются без прямого редактирования.</p>
       <form id="structure-edit-form" class="instruction-form">
@@ -90,6 +90,12 @@
         </div>
       </div>
       <p id="render-status" class="helper">Ожидание</p>
+      <label for="render-transition">Переходы</label>
+      <select id="render-transition">
+        <option value="hard-cut" selected>Жёсткая склейка</option>
+        <option value="cross-dissolve">Cross dissolve</option>
+      </select>
+      <p id="render-runtime" class="helper"></p>
       <button id="start-render" type="button">Собрать видео</button>
       <p id="render-error" class="notice" hidden></p>
       <video id="render-preview" class="render-preview" controls hidden></video>
@@ -146,6 +152,7 @@
   <dialog id="detail">
     <div id="detail-scroll" class="detail-scroll">
       <div class="detail-layout">
+        <p id="detail-frame-number" class="detail-frame-number"></p>
         <div id="detail-frame" class="frame-host"></div>
         <p id="detail-outside" class="outside-frame"></p>
         <div id="detail-panel-controls" class="panel-controls"></div>

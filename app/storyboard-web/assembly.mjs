@@ -278,6 +278,60 @@ function setOwnerDescription(frames, operation) {
   return { ok: true, frames, mode: "current" };
 }
 
+function nodeSignature(node) {
+  return {
+    id: node?.id ?? null,
+    frameKind: node?.frameKind ?? null,
+    layout: node?.layout ?? null,
+    durationFrames: node?.durationFrames ?? null,
+    textCard: node?.textCard ?? "",
+    dialogue: node?.dialogue ?? node?.quote ?? "",
+    speakerPanel: Number.isInteger(node?.speakerPanel) ? node.speakerPanel : null,
+    panels: (node?.panels || []).map((panel) => ({
+      id: panel?.id ?? null,
+      description: panel?.description ?? "",
+      manualSubject: typeof panel?.manualSubject === "string" ? panel.manualSubject : "",
+      ownerDescription: typeof panel?.ownerDescription === "string" ? panel.ownerDescription : "",
+    })),
+    segments: Array.isArray(node?.segments) ? node.segments.map(nodeSignature) : [],
+  };
+}
+
+export function visibleFrameSignature(frames) {
+  return JSON.stringify((Array.isArray(frames) ? frames : []).map(nodeSignature));
+}
+
+export function metadataCarryDecision({
+  frame,
+  panel,
+  provenance = null,
+  castNames = [],
+  carryMetadata = false,
+} = {}) {
+  const storedSubject = typeof provenance?.subject === "string" ? provenance.subject : "";
+  const accepted = castNames.includes(storedSubject) ? storedSubject : null;
+  const description = typeof provenance?.description === "string" ? provenance.description.trim() : "";
+  const intent = provenance?.intent && typeof provenance.intent === "object" ? provenance.intent : null;
+  const manual = frame?.origin === "derived" || frame?.frameKind === "image";
+  const currentDescription = String(panel?.description || "").trim();
+  const currentSubject = String(panel?.manualSubject || "").trim();
+  const blank = manual && !currentDescription && !currentSubject;
+  const nonblankManual = manual && !blank;
+  if (!manual) return { mode: "bytes" };
+  if (blank && accepted) {
+    return { mode: "carry", subject: accepted, description: description || null, intent };
+  }
+  if (carryMetadata === true && nonblankManual) {
+    return {
+      mode: "carry",
+      subject: accepted,
+      description: description || null,
+      intent,
+    };
+  }
+  return { mode: "bytes" };
+}
+
 export function preservePanelIdentity(previousFrames, nextFrames, idFactory = randomUUID) {
   const previous = ensurePanelIds(previousFrames, idFactory).frames;
   const next = cloneFrames(nextFrames);

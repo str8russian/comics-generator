@@ -27,7 +27,16 @@ export function createRenderController({
   logger = null,
 } = {}) {
   const directory = outputDir || path.join(process.cwd(), ".render-output");
-  let current = { status: "idle", id: null, message: null, file: null };
+  let current = {
+    status: "idle",
+    id: null,
+    message: null,
+    file: null,
+    transition: null,
+    overlapFrames: null,
+    totalDurationFrames: null,
+    nominalDurationFrames: null,
+  };
   let chain = Promise.resolve();
 
   function view() {
@@ -35,6 +44,10 @@ export function createRenderController({
       status: current.status,
       id: current.id,
       message: current.status === "failure" ? current.message : null,
+      transition: current.transition,
+      overlapFrames: current.overlapFrames,
+      totalDurationFrames: current.totalDurationFrames,
+      nominalDurationFrames: current.nominalDurationFrames,
     };
   }
 
@@ -44,24 +57,37 @@ export function createRenderController({
       if (current.status !== "success" || !isSafeResultPath(directory, current.file)) return null;
       return path.resolve(current.file);
     },
-    start(spec) {
+    start(spec, hooks = {}) {
       if (!spec || spec.schemaVersion !== "storyboard-video-spec-1") {
         return { ok: false, kind: "invalid-request", httpStatus: 400 };
       }
       if (current.status === "running") return { ok: false, kind: "render-busy", httpStatus: 409 };
       const id = randomUUID();
-      current = { status: "running", id, message: null, file: null };
+      const transition = spec.project?.exportTransition?.mode || "hard-cut";
+      const overlapFrames = spec.project?.exportTransition?.overlapFrames ?? 0;
+      const timing = {
+        transition,
+        overlapFrames,
+        totalDurationFrames: spec.project?.totalDurationFrames ?? null,
+        nominalDurationFrames: spec.project?.nominalDurationFrames ?? null,
+      };
+      current = { status: "running", id, message: null, file: null, ...timing };
       const output = path.join(directory, "current.mp4");
       const execute = runRender || defaultRunRender;
+      let settled = false;
       chain = chain.then(async () => {
         if (current.id !== id) return;
+        await hooks.onStart?.({ id, spec });
+        if (current.id !== id || settled) return;
         const temporary = path.join(directory, `${id}.mp4`);
+        let outcome = "success";
         try {
           await mkdir(directory, { recursive: true });
           await execute(spec, temporary);
           await rename(temporary, output);
-          if (current.id === id) current = { status: "success", id, message: null, file: output };
+          if (current.id === id) current = { status: "success", id, message: null, file: output, ...timing };
         } catch (error) {
+          outcome = "failure";
           await rm(temporary, { force: true }).catch(() => {});
           const message = safeRenderMessage(error);
           logger?.error?.({
@@ -69,8 +95,11 @@ export function createRenderController({
             id,
             detail: String(error?.detail || error?.message || message).slice(0, 2000),
           });
-          if (current.id === id) current = { status: "failure", id, message, file: null };
+          if (current.id === id) current = { status: "failure", id, message, file: null, ...timing };
         }
+        if (settled || current.id !== id) return;
+        settled = true;
+        await hooks.onTerminal?.({ id, status: outcome, spec });
       });
       return { ok: true, status: "running", id };
     },

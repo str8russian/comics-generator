@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream, readFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
@@ -16,6 +17,8 @@ import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "
 import { generateImage } from "./image-provider.mjs";
 import { editStoryboard } from "./storyboard-edit.mjs";
 import { compileVideoSpec } from "./video-spec.mjs";
+import { createEmptyContext, createEmptyCommandTarget } from "./public/research-dock.mjs";
+import { normalizeExportTransition } from "./public/export-timing.mjs";
 import {
   anchorPrompt,
   aspectRatioForFrame,
@@ -45,6 +48,7 @@ export const routes = [
   { method: "GET", path: "/viewer.css", file: "prototypes/storyboard-viewer/viewer.css" },
   { method: "GET", path: "/visual-anchors.mjs", file: "app/storyboard-web/public/visual-anchors.mjs" },
   { method: "GET", path: "/asset-picker.mjs", file: "app/storyboard-web/public/asset-picker.mjs" },
+  { method: "GET", path: "/export-timing.mjs", file: "app/storyboard-web/public/export-timing.mjs" },
   { method: "GET", path: "/character-anchors/putin.png", file: "app/storyboard-web/public/character-anchors/putin.png" },
   { method: "GET", path: "/character-anchors/durov.png", file: "app/storyboard-web/public/character-anchors/durov.png" },
   { method: "GET", path: "/character-anchors/peskov.png", file: "app/storyboard-web/public/character-anchors/peskov.png" },
@@ -833,7 +837,7 @@ function imageMeta(image) {
   };
 }
 
-async function sendVisualState(res, runtime, { logger, request } = {}) {
+async function sendVisualState(res, runtime, { logger, request, extra = null } = {}) {
   const visual = await runtime.visualStore.load();
   if (!visual?.ok) {
     logVisual(logger, request, "visual-load-failed", {
@@ -844,7 +848,7 @@ async function sendVisualState(res, runtime, { logger, request } = {}) {
     sendVisualFailure(res, visual);
     return;
   }
-  sendJson(res, 200, visual);
+  sendJson(res, 200, extra ? { ...visual, ...extra } : visual);
 }
 
 function handleBuild(req, res) {
@@ -884,7 +888,11 @@ async function handleOperations(req, res, { runtime, logger, nextRequest }) {
     return;
   }
   logVisual(logger, request, "visual-operation", { status: "ok", http: 200 });
-  await sendVisualState(res, runtime, { logger, request });
+  await sendVisualState(res, runtime, {
+    logger,
+    request,
+    extra: { changed: result.changed !== false },
+  });
 }
 
 async function handleRender(req, res, { runtime, logger, nextRequest }) {
@@ -900,8 +908,25 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
     sendJson(res, 200, controller.status());
     return;
   }
-  req.resume();
   const request = nextRequest();
+  const declaredLength = Number(req.headers["content-length"] || 0);
+  let payload = {};
+  if (declaredLength > 0) {
+    const body = await readVisualBody(req, res);
+    if (body.done) return;
+    if (body.invalid || !body.payload || typeof body.payload !== "object") {
+      sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+      return;
+    }
+    payload = body.payload;
+  } else {
+    req.resume();
+  }
+  const transition = normalizeExportTransition(payload.transition ?? "hard-cut");
+  if (!transition) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-transition" });
+    return;
+  }
   if (!runtime.visualStore) {
     sendJson(res, 503, { status: "failed", kind: "database" });
     return;
@@ -916,19 +941,74 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
     sendJson(res, 500, { status: "failed", kind: "configuration" });
     return;
   }
-  const compiled = compileVideoSpec(visual, { assetOrigin: `http://127.0.0.1:${port}` });
+  const compiled = compileVideoSpec(visual, {
+    assetOrigin: `http://127.0.0.1:${port}`,
+    transition,
+  });
   if (!compiled.ok) {
     sendJson(res, 400, { status: "failed", kind: safeKind(compiled.kind) || "invalid-request" });
     return;
   }
-  const started = controller.start(compiled.spec);
+  const correlationId = randomUUID();
+  const overlapFrames = compiled.spec.project.exportTransition?.overlapFrames ?? 0;
+  let resolveStarted;
+  const startedGate = new Promise((resolve) => {
+    resolveStarted = resolve;
+  });
+  const renderContext = createEmptyContext({
+    workflowPhase: "visual",
+    storyboardVersionId: visual.storyboardVersionId ?? null,
+    transitionMode: transition,
+    transitionOverlapFrames: overlapFrames,
+  });
+  const started = controller.start(compiled.spec, {
+    onStart: async () => {
+      try {
+        await recordRenderEvent(runtime, {
+          eventKind: "action_start",
+          correlationId,
+          semanticAction: "render",
+          surface: "product_control",
+          submittedText: null,
+          commandTarget: createEmptyCommandTarget("storyboard"),
+          editTarget: null,
+          context: renderContext,
+        });
+      } finally {
+        resolveStarted();
+      }
+    },
+    onTerminal: async ({ status }) => {
+      await recordRenderEvent(runtime, {
+        eventKind: "action_terminal",
+        correlationId,
+        outcome: status === "success" ? "success" : "failure",
+        outcomeKind: status === "success" ? null : "render-failed",
+        outcomeFlags: {},
+      });
+    },
+  });
   if (!started.ok) {
+    resolveStarted();
     logVisual(logger, request, "render", { status: "failed", kind: safeKind(started.kind), http: started.httpStatus || 409 });
     sendVisualFailure(res, started);
     return;
   }
+  await startedGate;
   logVisual(logger, request, "render", { status: "running", http: 202 });
-  sendJson(res, 202, { status: "running", id: started.id });
+  sendJson(res, 202, {
+    status: "running",
+    id: started.id,
+    transition,
+    overlapFrames,
+    totalDurationFrames: compiled.spec.project.totalDurationFrames,
+    nominalDurationFrames: compiled.spec.project.nominalDurationFrames,
+  });
+}
+
+async function recordRenderEvent(runtime, input) {
+  if (!runtime.researchStore?.appendEvent) return;
+  await runtime.researchStore.appendEvent(input).catch(() => {});
 }
 
 async function handleRenderResult(req, res, { runtime }) {
@@ -1197,8 +1277,9 @@ async function generateOnePanel({
   const providerStarted = Date.now();
   let prompt;
   let diagnosticFields = {};
+  let intent = null;
   if (constrained) {
-    const intent = compilePanelReadyIntent({
+    intent = compilePanelReadyIntent({
       frame: pending.frame,
       panelIndex,
       characterName: pending.subject,
@@ -1248,7 +1329,22 @@ async function generateOnePanel({
     storyboardVersionId: pending.storyboardVersionId,
     ...diagnosticFields,
   });
-  const finished = await runtime.visualStore.finishPanelGeneration({ id: pending.id, result });
+  const finished = await runtime.visualStore.finishPanelGeneration({
+    id: pending.id,
+    result,
+    provenance: {
+      origin: "generation",
+      subject: pending.subject || null,
+      description: pending.panel?.description || "",
+      submittedText: pending.instruction || null,
+      intent: constrained ? intent : null,
+      structureFrameId: pending.frame?.structureFrameId || pending.frame?.id || null,
+      panelId: pending.panel?.id || null,
+      panelIndex,
+      styleAssetId: pending.refs?.style?.id || pending.refs?.anchor?.id || null,
+      sourceAssetId: pending.refs?.previous?.id || null,
+    },
+  });
   logVisual(logger, request, "visual-panel-storage", {
     status: finished.ok ? "ok" : "failed",
     kind: finished.ok ? undefined : safeKind(finished.kind),
@@ -1304,7 +1400,11 @@ async function handleVisualGeneration(req, res, {
       sendVisualFailure(res, result);
       return;
     }
-    await sendVisualState(res, runtime, { logger, request });
+    await sendVisualState(res, runtime, {
+      logger,
+      request,
+      extra: { changed: result.changed !== false },
+    });
     return;
   }
   if (req.method !== "POST") {
@@ -1482,7 +1582,14 @@ async function handleVisualSimple(req, res, { runtime, action }) {
     sendVisualFailure(res, result);
     return;
   }
-  await sendVisualState(res, runtime);
+  const extra = action === "undoStoryboardEdit"
+    ? {
+      changed: true,
+      undoneLabel: result.undoneLabel ?? null,
+      undoneTarget: result.undoneTarget ?? null,
+    }
+    : null;
+  await sendVisualState(res, runtime, { extra });
 }
 
 const RESEARCH_FORBIDDEN_KEYS = new Set([

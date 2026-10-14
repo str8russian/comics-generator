@@ -8,6 +8,7 @@ import {
   createEmptyEditTarget,
 } from "/research-dock.mjs";
 import { openAssetPicker } from "/asset-picker.mjs";
+import { compileTransitionTimeline, formatExportRuntime } from "/export-timing.mjs";
 import { presentFrameForMount } from "/visual-anchors.mjs";
 export { presentFrameForMount };
 
@@ -29,7 +30,10 @@ const structureTools = document.querySelector("#structure-tools");
 const structureEditForm = document.querySelector("#structure-edit-form");
 const structureInstruction = document.querySelector("#structure-instruction");
 const structureResult = document.querySelector("#structure-result");
-const undoStructure = document.querySelector("#undo-structure");
+const actionStatus = document.querySelector("#action-status");
+const detailFrameNumber = document.querySelector("#detail-frame-number");
+const renderTransition = document.querySelector("#render-transition");
+const renderRuntime = document.querySelector("#render-runtime");
 const charactersWorkspace = document.querySelector("#characters-workspace");
 const characterCards = document.querySelector("#character-cards");
 const visualHeading = document.querySelector("#visual-heading");
@@ -65,6 +69,8 @@ let review = null;
 let castChain = Promise.resolve();
 let visual = null;
 let detailIndex = -1;
+let detailStructureId = null;
+let statusTimer = 0;
 let busy = false;
 let pendingCastEdit = null;
 
@@ -89,7 +95,6 @@ export function setResearchVisualState(next, index = -1) {
   readyFrames = withVisualReady(next.frames || []);
   detailIndex = Number.isInteger(index) ? index : -1;
   if (structureTools) structureTools.hidden = false;
-  if (undoStructure) undoStructure.hidden = !next.canUndo;
   if (charactersWorkspace) charactersWorkspace.hidden = false;
   if (visualHeading) visualHeading.hidden = !next.allAnchorsApproved;
   if (visualApproval) visualApproval.hidden = !next.complete;
@@ -169,6 +174,7 @@ function panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumbe
   return {
     ...frameActionContextOverrides(frame, displayFrameNumber),
     panelIndex: Number.isInteger(panelIndex) ? panelIndex : null,
+    panelId: typeof panel?.id === "string" ? panel.id : null,
     panelSubject: typeof panel?.subject === "string" ? panel.subject : null,
     imageAssetId: typeof panel?.assetId === "string" ? panel.assetId : null,
     generationId: typeof panel?.generationId === "string" ? panel.generationId : null,
@@ -318,7 +324,9 @@ function normalizeResearchClassification(classified) {
   if (!classified || typeof classified !== "object") {
     return { outcome: "success", outcomeKind: null, outcomeFlags: {} };
   }
-  const outcome = classified.outcome === "failure" || classified.outcome === "blocked"
+  const outcome = classified.outcome === "failure"
+    || classified.outcome === "blocked"
+    || classified.outcome === "no-change"
     ? classified.outcome
     : "success";
   return {
@@ -656,7 +664,7 @@ function frameStatus(frame) {
   const panels = Array.isArray(frame.panels) ? frame.panels : [];
   const readyCount = panels.filter((panel) => panel?.assetId).length;
   if (frame.frameKind === "text") return "Текстовая карточка";
-  if (readyCount > 0 && readyCount < panels.length) return "Частично готово";
+  if (readyCount > 0 && readyCount < panels.length) return "Изображение готово частично";
   if (frame.frameKind === "image" || !String(frame.dialogue || "").trim()) {
     return frame.visualReady ? "Изображение" : "Кадр без реплики";
   }
@@ -694,7 +702,29 @@ function frameAddress(frame) {
   };
 }
 
-async function runAssembly(operation, message, { submittedText = null } = {}) {
+function assemblyCommandTarget(frame, panel = null, panelIndex = null) {
+  const displayIndex = readyFrames.findIndex((entry) => (
+    (entry.structureFrameId || entry.id) === (frame?.structureFrameId || frame?.id)
+    && entry.structureSegmentIndex === frame?.structureSegmentIndex
+  ));
+  const displayFrameNumber = displayIndex >= 0 ? displayIndex + 1 : null;
+  const shared = {
+    displayFrameNumber,
+    displayFrameId: typeof frame?.id === "string" ? frame.id : null,
+    structureFrameId: frame?.structureFrameId || frame?.id || null,
+    structureSegmentIndex: Number.isInteger(frame?.structureSegmentIndex) ? frame.structureSegmentIndex : null,
+  };
+  if (panel) {
+    return createEmptyCommandTarget("panel", {
+      ...shared,
+      panelIndex,
+      panelId: panel.id,
+    });
+  }
+  return createEmptyCommandTarget("frame", shared);
+}
+
+async function runAssembly(operation, message, { submittedText = null, frame = null, panel = null, panelIndex = null } = {}) {
   const semanticAction = {
     insertFrame: "frame_insert",
     deleteFrame: "frame_delete",
@@ -704,25 +734,45 @@ async function runAssembly(operation, message, { submittedText = null } = {}) {
     reorderPanels: "panel_reorder",
     setDuration: "frame_duration",
     setTextCard: "text_card",
-    setOwnerDescription: "panel_note",
     setManualSubject: "panel_subject",
     uploadAsset: "asset_assign",
     assignAsset: "asset_assign",
   }[operation?.op] || "storyboard_edit";
+  const commandTarget = frame
+    ? assemblyCommandTarget(frame, panel, panelIndex)
+    : createEmptyCommandTarget("storyboard");
   return runProductResearchAction({
     semanticAction,
     submittedText,
-    commandTarget: createEmptyCommandTarget("storyboard"),
+    commandTarget,
+    contextOverrides: {
+      displayFrameNumber: commandTarget.displayFrameNumber,
+      displayFrameId: commandTarget.displayFrameId,
+      structureFrameId: commandTarget.structureFrameId,
+      structureSegmentIndex: commandTarget.structureSegmentIndex,
+      panelIndex: commandTarget.panelIndex,
+      panelId: commandTarget.panelId,
+      panelSubject: panel?.subject || null,
+    },
     busyMessage: message,
+    classifyResult: (result) => (result?.changed === false ? { outcome: "no-change" } : null),
     async operation() {
       const next = await fetchJson("/api/visual/operations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(operation),
+        body: JSON.stringify({
+          ...operation,
+          displayFrameNumber: commandTarget.displayFrameNumber,
+          panelIndex: commandTarget.kind === "panel" ? commandTarget.panelIndex : operation.panelIndex,
+        }),
       });
+      if (next?.changed === false) {
+        showActionNotice("Без изменений.", "no-change");
+        return next;
+      }
       if (next?.status === "ready") {
         applyVisual(next);
-        showActionNotice("Изменение сохранено.");
+        showActionNotice("Изменение сохранено.", "success");
       }
       return next;
     },
@@ -748,7 +798,7 @@ function appendAssemblyControls(card, frame) {
       op: "setDuration",
       ...address,
       durationFrames: Number(duration.value),
-    }, "Сохраняю длительность…", { submittedText: String(duration.value) });
+    }, "Сохраняю длительность…", { submittedText: String(duration.value), frame });
   });
   const order = structureIdsInOrder(readyFrames);
   const structureIndex = order.indexOf(address.structureFrameId);
@@ -763,18 +813,18 @@ function appendAssemblyControls(card, frame) {
       op: "insertFrame",
       afterStructureFrameId: address.structureFrameId,
       kind: "image",
-    }, "Добавляю кадр…")),
+    }, "Добавляю кадр…", { frame })),
     assemblyButton("Текстовая карточка после", () => runAssembly({
       op: "insertFrame",
       afterStructureFrameId: address.structureFrameId,
       kind: "text",
-    }, "Добавляю текстовую карточку…")),
+    }, "Добавляю текстовую карточку…", { frame })),
     earlier,
     later,
     assemblyButton("Удалить кадр", () => runAssembly({
       op: "deleteFrame",
       structureFrameId: address.structureFrameId,
-    }, "Удаляю кадр…")),
+    }, "Удаляю кадр…", { frame })),
   );
   if (Number.isInteger(frame.structureSegmentIndex)) {
     const hint = document.createElement("p");
@@ -791,21 +841,21 @@ function appendAssemblyControls(card, frame) {
         op: "setTextCard",
         structureFrameId: address.structureFrameId,
         text: text.value,
-      }, "Сохраняю текст карточки…", { submittedText: text.value });
+      }, "Сохраняю текст карточки…", { submittedText: text.value, frame });
     });
     box.append(text);
   } else if ((frame.panels || []).length === 1) {
     box.append(assemblyButton("Добавить панель", () => runAssembly({
       op: "addPanel",
       ...address,
-    }, "Добавляю панель…")));
+    }, "Добавляю панель…", { frame })));
   }
   if ((frame.panels || []).length === 2) {
     box.append(assemblyButton("Поменять панели", () => runAssembly({
       op: "reorderPanels",
       ...address,
       panelIds: [frame.panels[1].id, frame.panels[0].id],
-    }, "Меняю панели местами…")));
+    }, "Меняю панели местами…", { frame })));
   }
   for (const [panelIndex, panel] of (frame.panels || []).entries()) {
     appendPanelAssembly(box, frame, panel, panelIndex);
@@ -821,22 +871,63 @@ function moveStructureFrame(structureFrameId, direction) {
   const next = ids.slice();
   const [moved] = next.splice(index, 1);
   next.splice(target, 0, moved);
-  runAssembly({ op: "reorderFrames", structureFrameIds: next }, "Меняю порядок кадров…");
+  const frame = readyFrames.find((entry) => (entry.structureFrameId || entry.id) === structureFrameId);
+  runAssembly({ op: "reorderFrames", structureFrameIds: next }, "Меняю порядок кадров…", { frame });
+}
+
+function panelAssets() {
+  return (visual?.reusableAssets || []).map((asset) => {
+    const provenance = asset.provenance && typeof asset.provenance === "object" ? asset.provenance : null;
+    return {
+      ...asset,
+      subject: provenance?.subject || null,
+      sourceLabel: provenance?.origin === "upload"
+        ? "Загрузка"
+        : (provenance?.origin === "generation" ? "Генерация" : null),
+    };
+  });
+}
+
+function manualMetadataChoice(frame, panel) {
+  const manual = frame?.origin === "derived" || frame?.frameKind === "image";
+  if (!manual) return null;
+  const blank = !String(panel?.description || "").trim() && !String(panel?.manualSubject || "").trim();
+  if (blank) return null;
+  return true;
 }
 
 function appendPanelAssembly(box, frame, panel, panelIndex) {
   const label = document.createElement("span");
   label.className = "assembly-note";
   label.textContent = `Панель ${panelIndex + 1}${panel.subject ? ` · ${panel.subject}` : ""}`;
+  let carryMetadata = false;
+  if (manualMetadataChoice(frame, panel)) {
+    const mode = document.createElement("select");
+    mode.setAttribute?.("aria-label", "Что перенести с изображением");
+    const imageOnly = document.createElement("option");
+    imageOnly.value = "image";
+    imageOnly.textContent = "Только изображение";
+    const withMetadata = document.createElement("option");
+    withMetadata.value = "metadata";
+    withMetadata.textContent = "Изображение, персонаж и описание";
+    mode.append(imageOnly, withMetadata);
+    mode.addEventListener("change", () => {
+      carryMetadata = mode.value === "metadata";
+    });
+    box.append(mode);
+  }
+  const assign = (operation, message) => runAssembly(operation, message, { frame, panel, panelIndex });
   const choose = assemblyButton("Выбрать изображение…", () => {
     openAssetPicker({
       anchor: choose,
-      assets: visual?.reusableAssets || [],
+      assets: panelAssets(),
       currentAssetId: panel.assetId,
+      obstacles: () => statusObstacles(),
       onSelect: (asset) => {
-        runAssembly({
+        assign({
           op: "assignAsset",
           assetId: asset.id,
+          carryMetadata,
           targets: [{ panelId: panel.id }],
         }, "Назначаю изображение…");
       },
@@ -849,9 +940,10 @@ function appendPanelAssembly(box, frame, panel, panelIndex) {
           if (!file) return;
           const reader = new FileReader();
           reader.onload = () => {
-            runAssembly({
+            assign({
               op: "uploadAsset",
               imageDataUrl: String(reader.result || ""),
+              carryMetadata,
               targets: [{ panelId: panel.id }],
             }, "Назначаю загруженное изображение…");
           };
@@ -861,24 +953,7 @@ function appendPanelAssembly(box, frame, panel, panelIndex) {
       },
     });
   });
-  const noteLabel = document.createElement("label");
-  noteLabel.className = "assembly-note";
-  noteLabel.textContent = "Заметка к панели";
-  const noteHelp = document.createElement("span");
-  noteHelp.className = "assembly-note";
-  noteHelp.textContent = "Не используется при генерации и не меняет замысел.";
-  const note = document.createElement("input");
-  note.type = "text";
-  note.value = panel.ownerDescription || "";
-  note.setAttribute?.("aria-label", "Заметка к панели");
-  note.addEventListener("change", () => {
-    runAssembly({
-      op: "setOwnerDescription",
-      panelId: panel.id,
-      ownerDescription: note.value,
-    }, "Сохраняю заметку…", { submittedText: note.value });
-  });
-  box.append(label, choose, noteLabel, noteHelp, note);
+  box.append(label, choose);
   if (panel.subjectEditable) {
     const subject = document.createElement("select");
     subject.setAttribute?.("aria-label", `Персонаж панели ${panelIndex + 1}`);
@@ -899,7 +974,7 @@ function appendPanelAssembly(box, frame, panel, panelIndex) {
         op: "setManualSubject",
         panelId: panel.id,
         characterName: subject.value,
-      }, "Сохраняю персонажа панели…", { submittedText: subject.value });
+      }, "Сохраняю персонажа панели…", { submittedText: subject.value, frame, panel, panelIndex });
     });
     box.append(subject);
   }
@@ -916,6 +991,9 @@ function appendPanelAssembly(box, frame, panel, panelIndex) {
         confirmSpeakerTransfer: speaking,
       }, "Удаляю панель…", {
         submittedText: speaking ? "Реплика остаётся у оставшейся панели" : null,
+        frame,
+        panel,
+        panelIndex,
       });
     }));
   }
@@ -925,6 +1003,8 @@ function openDetail(index) {
   const frame = readyFrames[index];
   if (!frame) return;
   detailIndex = index;
+  detailStructureId = frame.structureFrameId || frame.id;
+  if (detailFrameNumber) detailFrameNumber.textContent = `Кадр ${index + 1}`;
   mountFrame(detailHost, frame, 0.5);
   detailOutside.textContent = frame.outsideFrameText || "";
   renderPanelControls(frame);
@@ -959,10 +1039,36 @@ nextFrame.addEventListener("click", async () => {
   await generateFrame(frame.id, nextFrame, index);
 });
 
-function showActionNotice(text, kind = "info") {
-  notice.hidden = false;
-  notice.textContent = text;
-  notice.dataset.kind = kind;
+function showActionNotice(text, kind = "success") {
+  if (!actionStatus) {
+    notice.hidden = false;
+    notice.textContent = text;
+    notice.dataset.kind = kind;
+    return;
+  }
+  globalThis.clearTimeout(statusTimer);
+  actionStatus.hidden = false;
+  actionStatus.dataset.kind = kind === "info" ? "running" : kind;
+  actionStatus.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
+  actionStatus.replaceChildren();
+  const message = document.createElement("p");
+  message.textContent = text;
+  actionStatus.append(message);
+  if (kind === "error") {
+    const dismiss = document.createElement("button");
+    dismiss.type = "button";
+    dismiss.textContent = "Закрыть";
+    dismiss.addEventListener("click", () => {
+      actionStatus.hidden = true;
+    });
+    actionStatus.append(dismiss);
+    return;
+  }
+  if (kind === "success" || kind === "no-change") {
+    statusTimer = globalThis.setTimeout(() => {
+      actionStatus.hidden = true;
+    }, 4500);
+  }
 }
 
 async function fetchJson(path, options = {}) {
@@ -1003,7 +1109,8 @@ export function actionMessage(kind) {
     database: "Не удалось сохранить результат. Попробуйте ещё раз.",
     "stale-version": "Раскадровка уже изменилась. Обновите страницу и повторите действие.",
     "asset-load-failed": "Изображение не удалось показать. Обновите страницу или создайте панель заново.",
-    "nothing-to-undo": "Предыдущей структурной версии пока нет.",
+    "nothing-to-undo": "Нечего отменять.",
+    "unknown-subject": "Этого персонажа нет в утверждённом составе.",
     "invalid-operation": "Эта операция сборки не поддерживается.",
     "invalid-position": "Нельзя вставить кадр в эту позицию.",
     "invalid-kind": "Можно добавить кадр с изображением или текстовую карточку.",
@@ -1073,7 +1180,7 @@ async function runBusy(message, operation) {
   if (busy) return null;
   busy = true;
   document.body.dataset.busy = "true";
-  showActionNotice(message);
+  showActionNotice(message, "running");
   try {
     return await operation();
   } catch (error) {
@@ -1296,13 +1403,12 @@ function renderCharacterCards() {
   }
 }
 
-function applyVisual(next) {
+export function applyVisual(next) {
   if (!next || next.status !== "ready") return;
   visual = next;
   const fitted = fitFrames(next.frames || []);
   showReady(fitted, "ready");
   structureTools.hidden = false;
-  undoStructure.hidden = !next.canUndo;
   charactersWorkspace.hidden = false;
   visualHeading.hidden = !next.allAnchorsApproved;
   renderCharacterCards();
@@ -1318,7 +1424,12 @@ function applyVisual(next) {
   readyForVideo.hidden = !next.readyForVideo;
   syncGlobalUndo(next);
   syncResearchCommandTargets();
-  if (detail.open && detailIndex >= 0) openDetail(detailIndex);
+  syncExportRuntime();
+  if (detail?.open && detailStructureId) {
+    const nextIndex = readyFrames.findIndex((frame) => (frame.structureFrameId || frame.id) === detailStructureId);
+    if (nextIndex >= 0) openDetail(nextIndex);
+    else detail.close();
+  }
 }
 
 async function refreshVisual() {
@@ -1531,6 +1642,7 @@ async function commitPlacement(frame, panel, panelIndex, patch, messages) {
       structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
       structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
       panelIndex,
+      panelId: panel.id,
       zoom: intended.zoom,
       positionX: intended.positionX,
       positionY: intended.positionY,
@@ -1538,6 +1650,7 @@ async function commitPlacement(frame, panel, panelIndex, patch, messages) {
     }),
     contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
     busyMessage: messages.busy,
+    classifyResult: (result) => (result?.changed === false ? { outcome: "no-change" } : null),
     async operation() {
       const body = patch.reset === true
         ? { reset: true }
@@ -1556,8 +1669,12 @@ async function commitPlacement(frame, panel, panelIndex, patch, messages) {
             body: JSON.stringify(body),
           },
         );
+        if (next?.changed === false) {
+          showActionNotice("Без изменений.", "no-change");
+          return next;
+        }
         applyVisual(next);
-        showActionNotice(messages.success);
+        showActionNotice(messages.success, "success");
         return next;
       } catch (error) {
         restorePlacement(panel, panelIndex, saved);
@@ -1660,6 +1777,16 @@ function renderPanelControls(frame) {
     const description = document.createElement("p");
     description.className = "panel-description-copy";
     description.textContent = panel.description;
+    const lineage = panel.assetProvenance;
+    let lineageCopy = null;
+    if (lineage?.description || lineage?.submittedText) {
+      lineageCopy = document.createElement("p");
+      lineageCopy.className = "asset-lineage";
+      const parts = [];
+      if (lineage.description) parts.push(lineage.description);
+      if (lineage.submittedText) parts.push(`Правка: ${lineage.submittedText}`);
+      lineageCopy.textContent = parts.join(" · ");
+    }
     const attempt = describePanelAttempt(panel);
     let failure = null;
     if (attempt.failureText) {
@@ -1690,6 +1817,7 @@ function renderPanelControls(frame) {
         structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
         structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
         panelIndex,
+        panelId: panel.id,
       });
       const priorAssetId = typeof panel.assetId === "string" ? panel.assetId : null;
       await runProductResearchAction({
@@ -1728,6 +1856,7 @@ function renderPanelControls(frame) {
       });
     });
     section.append(title, description);
+    if (lineageCopy) section.append(lineageCopy);
     if (failure) section.append(failure);
     section.append(instruction, performanceLabel, regenerate);
     if (panel.assetId) {
@@ -1817,26 +1946,6 @@ structureEditForm?.addEventListener("submit", async (event) => {
     busyMessage: "Применяю структурную правку к раскадровке…",
     async operation() {
       return runStructureEditProduct(instruction, { clearProductForm: true });
-    },
-  });
-});
-
-undoStructure?.addEventListener("click", async () => {
-  await runProductResearchAction({
-    semanticAction: "structure_undo",
-    submittedText: null,
-    commandTarget: createEmptyCommandTarget("storyboard"),
-    busyMessage: "Возвращаю предыдущую структуру…",
-    async operation() {
-      const next = await fetchJson("/api/visual/storyboard/undo", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      });
-      applyVisual(next);
-      structureResult.hidden = false;
-      structureResult.textContent = "Предыдущая структура восстановлена.";
-      return next;
     },
   });
 });
@@ -2355,19 +2464,30 @@ async function refreshRenderStatus() {
       if (renderPreview && !renderPreview.src.endsWith(encodeURIComponent(status.id))) renderPreview.src = src;
       if (renderDownload) renderDownload.href = src;
     }
-    if (status.status === "success" || status.status === "failure") {
-      const capture = renderCapture;
-      renderCapture = null;
-      if (capture) {
-        await capture.terminal(status.status === "success" ? "success" : "failure", {
-          outcomeKind: status.status === "failure" ? "render-failed" : null,
-        });
-      }
-    }
     if (status.status === "running") renderTimer = globalThis.setTimeout(refreshRenderStatus, 2000);
   } catch {
     if (renderStatus) renderStatus.textContent = renderLabels.idle;
   }
+}
+
+function statusObstacles() {
+  return [globalUndo, actionStatus].flatMap((node) => {
+    if (!node || node.hidden || !node.getBoundingClientRect) return [];
+    const rect = node.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return [];
+    return [{ top: rect.top, left: rect.left, width: rect.width, height: rect.height }];
+  });
+}
+
+function undoneNotice(next) {
+  const label = next?.undoneLabel;
+  const target = next?.undoneTarget;
+  if (!label) return "Последнее изменение отменено.";
+  if (Number.isInteger(target?.displayFrameNumber)) {
+    const panel = Number.isInteger(target.panelIndex) ? `, панель ${target.panelIndex + 1}` : "";
+    return `Отменено: ${label} · кадр ${target.displayFrameNumber}${panel}`;
+  }
+  return `Отменено: ${label}`;
 }
 
 function syncGlobalUndo(next) {
@@ -2381,42 +2501,84 @@ function syncGlobalUndo(next) {
 }
 
 globalUndo?.addEventListener("click", () => {
+  const pendingLabel = visual?.undoLabel || null;
   runProductResearchAction({
     semanticAction: "storyboard_undo",
     submittedText: null,
     commandTarget: createEmptyCommandTarget("storyboard"),
+    contextOverrides: {
+      storyboardVersionId: visual?.storyboardVersionId || null,
+    },
     busyMessage: "Отменяю последнее изменение…",
     async operation() {
-      const next = await fetchJson("/api/visual/storyboard/undo", { method: "POST" });
+      const next = await fetchJson("/api/visual/storyboard/undo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
       if (next?.status === "ready") applyVisual(next);
-      showActionNotice("Последнее изменение отменено.");
+      const label = next?.undoneLabel || pendingLabel;
+      showActionNotice(undoneNotice({ ...next, undoneLabel: label }), "success");
       return next;
     },
   });
 });
 
-let renderCapture = null;
+function selectedTransition() {
+  return renderTransition?.value === "cross-dissolve" ? "cross-dissolve" : "hard-cut";
+}
+
+function syncExportRuntime() {
+  if (!renderRuntime) return;
+  const frames = (visual?.frames || []).map((frame) => ({
+    kind: frame.frameKind === "text" ? "text" : (frame.frameKind || "image"),
+    durationFrames: frame.durationFrames || 36,
+  }));
+  if (!frames.length) {
+    renderRuntime.textContent = "";
+    return;
+  }
+  const timeline = compileTransitionTimeline(frames, selectedTransition());
+  renderRuntime.textContent = timeline.ok
+    ? formatExportRuntime({
+      totalDurationFrames: timeline.totalDurationFrames,
+      nominalDurationFrames: timeline.nominalDurationFrames,
+      mode: timeline.mode,
+      overlapFrames: timeline.overlapFrames,
+    })
+    : "";
+}
+
+renderTransition?.addEventListener("change", () => {
+  syncExportRuntime();
+});
 
 startRender?.addEventListener("click", async () => {
   if (renderError) renderError.hidden = true;
-  renderCapture = beginProductResearchCapture({
-    semanticAction: "render_start",
-    submittedText: null,
-    commandTarget: createEmptyCommandTarget("storyboard"),
-  });
-  await renderCapture.start();
+  const versionBefore = visual?.storyboardVersionId || null;
   try {
-    const started = await runBusy("Запускаю сборку видео…", () => fetchJson("/api/visual/render", { method: "POST" }));
+    const started = await runBusy("Запускаю сборку видео…", () => fetchJson("/api/visual/render", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ transition: selectedTransition() }),
+    }));
+    if (visual?.storyboardVersionId && versionBefore && visual.storyboardVersionId !== versionBefore) {
+      showActionNotice("Сборка не должна менять раскадровку.", "error");
+    }
     if (started?.status === "running") {
       if (renderStatus) renderStatus.textContent = renderLabels.running;
+      if (started.totalDurationFrames && renderRuntime) {
+        renderRuntime.textContent = formatExportRuntime({
+          totalDurationFrames: started.totalDurationFrames,
+          nominalDurationFrames: started.nominalDurationFrames || started.totalDurationFrames,
+          mode: started.transition || selectedTransition(),
+          overlapFrames: started.overlapFrames || 0,
+        });
+      }
       renderTimer = globalThis.setTimeout(refreshRenderStatus, 1000);
-      return;
     }
-    await renderCapture.terminal("failure", { outcomeKind: "render-failed" });
-    renderCapture = null;
-  } catch (error) {
-    await renderCapture?.terminal("failure", { outcomeKind: error?.kind || "request-failed" });
-    renderCapture = null;
+  } catch {
+    if (renderStatus) renderStatus.textContent = renderLabels.failure;
   }
 });
 

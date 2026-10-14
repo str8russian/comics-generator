@@ -36,16 +36,18 @@ test("the asset picker shows thumbnails, the current asset, and disk upload", ()
     onSelect: (asset) => selected.push(asset.id),
     onUpload: () => uploads.push(true),
   });
-  const items = popover.children[0].children;
+  assert.equal(popover.children[0].textContent, "Загрузить с диска…");
+  const items = popover.children[1].children;
   assert.equal(items.length, 2);
   assert.match(items[0].className, /is-current/);
   assert.equal(items[0].children[0].src, "/api/visual/assets/asset-1");
-  assert.match(items[1].children[1].textContent, /Кадр 30×40 · кадр 2/);
+  assert.equal(/×|Ш /.test(items[1].children[1].textContent), false);
+  assert.match(items[1].children[1].textContent, /кадр 2/);
+  assert.match(items[0].children[1].textContent, /текущее/);
   items[1].listeners.click();
   assert.deepEqual(selected, ["asset-2"]);
-  popover.children[1].listeners.click();
+  popover.children[0].listeners.click();
   assert.deepEqual(uploads, [true]);
-  assert.equal(popover.children[1].textContent, "Загрузить с диска…");
 });
 
 test("operations keep the submitted prompt from the start or the terminal snapshot", () => {
