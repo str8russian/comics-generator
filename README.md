@@ -15,7 +15,10 @@ action.
 
 Set `DATABASE_URL`, `BASE_URL`, and `CONTEST_API_TOKEN` as for the existing application. Text calls
 use `CONTEST_MODEL`; image calls default to `gemini-3-pro-image-preview` and can be overridden with
-`IMAGE_MODEL`. `IMAGE_TIMEOUT_MS` controls the image request timeout.
+`IMAGE_MODEL`. `IMAGE_TIMEOUT_MS` controls the image request timeout. Image reference
+transport defaults to `IMAGE_REFERENCE_STRATEGY=budgeted` with
+`IMAGE_REQUEST_BUDGET_BYTES=850000`. Set the strategy to `passthrough` and restart to
+send the historical request body without resizing or omission.
 
 ## The one structural decision
 

@@ -32,6 +32,7 @@ const structureInstruction = document.querySelector("#structure-instruction");
 const structureResult = document.querySelector("#structure-result");
 const actionStatus = document.querySelector("#action-status");
 const detailFrameNumber = document.querySelector("#detail-frame-number");
+const detailGenerationStatus = document.querySelector("#detail-generation-status");
 const renderTransition = document.querySelector("#render-transition");
 const renderRuntime = document.querySelector("#render-runtime");
 const charactersWorkspace = document.querySelector("#characters-workspace");
@@ -1026,6 +1027,11 @@ export function openResearchDetail(index) {
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
 closeDetail.addEventListener("click", () => detail.close());
 detail.addEventListener("close", () => {
+  if (detailGenerationStatus) {
+    detailGenerationStatus.hidden = true;
+    detailGenerationStatus.textContent = "";
+    delete detailGenerationStatus.dataset.kind;
+  }
   syncResearchCommandTargets();
 });
 nextFrame.addEventListener("click", async () => {
@@ -1038,6 +1044,18 @@ nextFrame.addEventListener("click", async () => {
   }
   await generateFrame(frame.id, nextFrame, index);
 });
+
+function presentDetailGeneration(text, kind = "success") {
+  if (!detailGenerationStatus) return;
+  detailGenerationStatus.hidden = false;
+  detailGenerationStatus.dataset.kind = kind === "info" ? "running" : kind;
+  detailGenerationStatus.textContent = text;
+  const assertive = kind === "error";
+  if (typeof detailGenerationStatus.setAttribute === "function") {
+    detailGenerationStatus.setAttribute("aria-live", assertive ? "assertive" : "polite");
+    detailGenerationStatus.setAttribute("role", assertive ? "alert" : "status");
+  }
+}
 
 function showActionNotice(text, kind = "success") {
   if (!actionStatus) {
@@ -1104,6 +1122,8 @@ export function actionMessage(kind) {
     "invalid-request": "Не удалось прочитать запрос. Проверьте файл или формулировку правки и попробуйте ещё раз.",
     "visual-incomplete": "Сначала создайте изображения для всех панелей.",
     timeout: "Генерация заняла слишком много времени. Попробуйте ещё раз.",
+    "reference-payload-too-large": "Подготовка запроса остановлена: изображения-ориентиры не помещаются в безопасный размер. Генерация не отправлялась.",
+    "provider-payload-too-large": "Провайдер отклонил запрос как слишком большой (413).",
     provider: "Провайдер не завершил генерацию. Уже готовые результаты сохранены.",
     "invalid-output": "Провайдер не вернул пригодное изображение.",
     database: "Не удалось сохранить результат. Попробуйте ещё раз.",
@@ -1811,6 +1831,8 @@ function renderPanelControls(frame) {
     regenerate.addEventListener("click", async () => {
       const panelInstruction = instruction.value;
       const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
+      const busyText = `Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`;
+      const successText = `Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`;
       const panelTarget = createEmptyCommandTarget("panel", {
         displayFrameNumber,
         displayFrameId: typeof frame.id === "string" ? frame.id : null,
@@ -1820,40 +1842,48 @@ function renderPanelControls(frame) {
         panelId: panel.id,
       });
       const priorAssetId = typeof panel.assetId === "string" ? panel.assetId : null;
-      await runProductResearchAction({
-        semanticAction: "panel_generate",
-        submittedText: panelInstruction,
-        commandTarget: panelTarget,
-        contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
-        busyMessage: `Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`,
-        async operation() {
-          const file = performance.files?.[0];
-          const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
-          try {
-            const next = await fetchJson(
-              `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
-              {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ instruction: panelInstruction, performanceImageDataUrl }),
-              },
-            );
-            applyVisual(next);
-            showActionNotice(`Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`);
-            return next;
-          } catch (error) {
-            console.error("[visual] panel generation failed", {
-              kind: error?.kind || "request-failed",
-              frameId: frame.id,
-              panelIndex,
-            });
-            if (priorAssetId) {
-              error.outcomeFlags = { retainedLastGoodImage: true };
+      regenerate.disabled = true;
+      presentDetailGeneration(busyText, "running");
+      try {
+        await runProductResearchAction({
+          semanticAction: "panel_generate",
+          submittedText: panelInstruction,
+          commandTarget: panelTarget,
+          contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
+          busyMessage: busyText,
+          async operation() {
+            const file = performance.files?.[0];
+            const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
+            try {
+              const next = await fetchJson(
+                `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
+                {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ instruction: panelInstruction, performanceImageDataUrl }),
+                },
+              );
+              applyVisual(next);
+              showActionNotice(successText);
+              presentDetailGeneration(successText, "success");
+              return next;
+            } catch (error) {
+              console.error("[visual] panel generation failed", {
+                kind: error?.kind || "request-failed",
+                frameId: frame.id,
+                panelIndex,
+              });
+              presentDetailGeneration(actionMessage(error?.kind || "provider"), "error");
+              if (priorAssetId) {
+                error.outcomeFlags = { retainedLastGoodImage: true };
+              }
+              throw error;
             }
-            throw error;
-          }
-        },
-      });
+          },
+        });
+      } finally {
+        regenerate.disabled = false;
+      }
     });
     section.append(title, description);
     if (lineageCopy) section.append(lineageCopy);

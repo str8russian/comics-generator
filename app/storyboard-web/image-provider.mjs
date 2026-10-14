@@ -4,6 +4,10 @@ import { inspectImage } from "./image-info.mjs";
 
 const IMAGE_MODEL = "gemini-3-pro-image-preview";
 
+export function resolveImageModel(env = process.env) {
+  return String(env.IMAGE_MODEL ?? IMAGE_MODEL).trim();
+}
+
 function failure(kind, httpStatus = 502, diagnostics = {}) {
   return { ok: false, status: "failed", kind, httpStatus, diagnostics };
 }
@@ -147,10 +151,17 @@ function http1Fetch(url, init = {}) {
   });
 }
 
-export async function generateImage({ prompt, images, aspectRatio, env = process.env, fetchImpl = http1Fetch }) {
+export async function generateImage({
+  prompt,
+  images,
+  aspectRatio,
+  serializedBody,
+  env = process.env,
+  fetchImpl = http1Fetch,
+}) {
   const baseUrl = String(env.BASE_URL ?? "").trim();
   const token = String(env.CONTEST_API_TOKEN ?? "").trim();
-  const model = String(env.IMAGE_MODEL ?? IMAGE_MODEL).trim();
+  const model = resolveImageModel(env);
   const timeoutMs = Number(env.IMAGE_TIMEOUT_MS || env.CONTEST_TIMEOUT_MS || 180000);
   if (!baseUrl || !token || !model || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return failure("configuration", 500);
@@ -158,6 +169,9 @@ export async function generateImage({ prompt, images, aspectRatio, env = process
   if (!prompt || !Array.isArray(images) || images.length > 3 || !["4:5", "5:4", "16:9", "21:9"].includes(aspectRatio)) {
     return failure("invalid-request", 400);
   }
+  const body = typeof serializedBody === "string"
+    ? serializedBody
+    : JSON.stringify(buildImageRequest({ prompt, images, aspectRatio, model }));
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
@@ -169,13 +183,17 @@ export async function generateImage({ prompt, images, aspectRatio, env = process
         "content-type": "application/json",
         accept: "application/json",
       },
-      body: JSON.stringify(buildImageRequest({ prompt, images, aspectRatio, model })),
+      body,
       signal: controller.signal,
     });
     const providerStatus = response.status;
+    const text = await response.text();
+    if (providerStatus === 413) {
+      return failure("provider-payload-too-large", 502, { providerStatus, latencyMs: Date.now() - started });
+    }
     let payload;
     try {
-      payload = JSON.parse(await response.text());
+      payload = JSON.parse(text);
     } catch {
       return failure("invalid-output", 502, { providerStatus, latencyMs: Date.now() - started });
     }

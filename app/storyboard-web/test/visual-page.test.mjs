@@ -225,6 +225,14 @@ test("captureResearchContext keeps distinct display and structure frame identity
   assert.match(appJs, /getContext:\s*captureResearchContext/);
 });
 
+test("frame detail keeps a local generation status inside the dialog", () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const dialog = html.slice(html.indexOf("<dialog id=\"detail\">"), html.indexOf("</dialog>"));
+  assert.match(dialog, /id="detail-generation-status"/);
+  assert.match(dialog, /aria-live="polite"/);
+  assert.match(dialog, /id="detail-frame-number"/);
+});
+
 test("research context keeps frame identity null when no detail frame is active", async () => {
   const page = await loadVisualPage();
   page.setResearchDetailState([

@@ -1953,3 +1953,113 @@ test("cross dissolve is sent with render and does not post a storyboard operatio
   assert.equal(renderPost.body.transition, "cross-dissolve");
   assert.equal(productPosts.some((entry) => entry.path === "/api/visual/operations"), false);
 });
+
+function panelRegenerateButton() {
+  const section = document.querySelector("#detail-panel-controls").children[0];
+  return [...section.querySelectorAll("button")].find((button) => /Переделать|Создать/i.test(button.textContent));
+}
+
+async function flushTicks(count = 8) {
+  for (let index = 0; index < count; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+test("detail dialog shows panel generation states without closing", async () => {
+  await ensurePage();
+  page.setResearchVisualState(readyVisual(), 0);
+  page.openResearchDetail(0);
+  const detail = document.querySelector("#detail");
+  assert.equal(detail.open, true);
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
+  const original = fetchImpl;
+  let release = () => {};
+  let started = false;
+  fetchImpl = async (url, init = {}) => {
+    const path = new URL(url, "http://127.0.0.1").pathname;
+    if (/\/panels\/\d+\/generate$/.test(path)) {
+      started = true;
+      await new Promise((resolve) => { release = resolve; });
+      return jsonResponse(200, readyVisual());
+    }
+    return original(url, init);
+  };
+  try {
+    const button = panelRegenerateButton();
+    button.dispatchEvent({ type: "click" });
+    for (let index = 0; index < 10 && !started; index += 1) await flushTicks(1);
+    const running = document.querySelector("#detail-generation-status");
+    assert.equal(detail.open, true);
+    assert.equal(running.hidden, false);
+    assert.equal(running.dataset.kind, "running");
+    assert.match(running.textContent, /Создаю панель 1 кадра 1/);
+    assert.equal(running.getAttribute("aria-live"), "polite");
+    assert.equal(button.disabled, true);
+    assert.equal(document.querySelector("#action-status").dataset.kind, "running");
+    release();
+    await flushTicks(12);
+    const success = document.querySelector("#detail-generation-status");
+    assert.equal(detail.open, true);
+    assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
+    assert.equal(success.hidden, false);
+    assert.equal(success.dataset.kind, "success");
+    assert.match(success.textContent, /Панель 1 кадра 1 готова/);
+    assert.equal(panelRegenerateButton().disabled, false);
+    assert.equal(document.body.dataset.busy, undefined);
+    assert.equal(document.querySelector("#action-status").dataset.kind, "success");
+  } finally {
+    fetchImpl = original;
+  }
+
+  for (const [kind, pattern] of [
+    ["reference-payload-too-large", /не помещаются|не отправлялась/],
+    ["provider-payload-too-large", /413/],
+    ["provider", /Провайдер не завершил/],
+    ["timeout", /слишком много времени/],
+  ]) {
+    fetchImpl = async (url, init = {}) => {
+      const path = new URL(url, "http://127.0.0.1").pathname;
+      if (/\/panels\/\d+\/generate$/.test(path)) return jsonResponse(422, { status: "failed", kind });
+      return original(url, init);
+    };
+    page.openResearchDetail(0);
+    panelRegenerateButton().dispatchEvent({ type: "click" });
+    await flushTicks(12);
+    const status = document.querySelector("#detail-generation-status");
+    assert.equal(detail.open, true, kind);
+    assert.equal(status.hidden, false, kind);
+    assert.equal(status.dataset.kind, "error", kind);
+    assert.match(status.textContent, pattern, kind);
+    assert.equal(status.getAttribute("aria-live"), "assertive", kind);
+    assert.equal(panelRegenerateButton().disabled, false, kind);
+    assert.equal(document.querySelector("#action-status").dataset.kind, "error", kind);
+    fetchImpl = original;
+  }
+});
+
+test("page-level status still reports outside the frame detail dialog", async () => {
+  await ensurePage();
+  page.setResearchVisualState(readyVisual({ canUndo: true, undoLabel: "кадр" }), -1);
+  document.querySelector("#detail").close();
+  const original = fetchImpl;
+  fetchImpl = async (url, init = {}) => {
+    const path = new URL(url, "http://127.0.0.1").pathname;
+    if (path === "/api/visual/storyboard/undo") return jsonResponse(500, { status: "failed", kind: "database" });
+    return original(url, init);
+  };
+  try {
+    const undo = document.querySelector("#global-undo");
+    undo.disabled = false;
+    undo.dispatchEvent({ type: "click" });
+    await flushTicks(12);
+    const pageStatus = document.querySelector("#action-status");
+    const localStatus = document.querySelector("#detail-generation-status");
+    assert.equal(document.querySelector("#detail").open, false);
+    assert.equal(pageStatus.hidden, false);
+    assert.equal(pageStatus.dataset.kind, "error");
+    assert.match(statusText(), /Не удалось сохранить|Не удалось выполнить/);
+    assert.equal(localStatus.hidden, true);
+  } finally {
+    fetchImpl = original;
+  }
+});

@@ -14,7 +14,13 @@ import { draftInputError, createProjectStore } from "./project-store.mjs";
 import { createRenderController } from "./render-service.mjs";
 import { stageStoryboard } from "./stage.mjs";
 import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
-import { generateImage } from "./image-provider.mjs";
+import { generateImage, resolveImageModel } from "./image-provider.mjs";
+import {
+  executeImageRequest,
+  loadImageReferenceConfig,
+  toReference,
+  transportLogFields,
+} from "./image-reference-strategy.mjs";
 import { editStoryboard } from "./storyboard-edit.mjs";
 import { compileVideoSpec } from "./video-spec.mjs";
 import { createEmptyContext, createEmptyCommandTarget } from "./public/research-dock.mjs";
@@ -1090,8 +1096,58 @@ async function handleVisualIdentity(req, res, { runtime, characterName, logger, 
   await sendVisualState(res, runtime, { logger, request });
 }
 
-function imageInput(asset) {
-  return asset ? { mime: asset.mime, bytes: asset.bytes } : null;
+function promptFlags(references, assembled = {}) {
+  const roles = new Set(references.map((ref) => ref.role));
+  const omittedStyle = Boolean(assembled.roles?.has?.("style")) && !roles.has("style");
+  const hasCurrent = roles.has("previous") || roles.has("current");
+  return {
+    hasPrevious: hasCurrent,
+    hasPerformance: roles.has("performance"),
+    hasStyle: omittedStyle ? false : Boolean(assembled.hasStyle),
+    identityAlsoStyle: omittedStyle ? false : assembled.identityAlsoStyle === true,
+    previousDropped: assembled.previousDropped === true && !hasCurrent,
+  };
+}
+
+function referenceGenerationMode(assembled = {}) {
+  if (assembled.hasPerformance) return "performance";
+  if (assembled.hasPrevious) return "revision";
+  return "initial";
+}
+
+async function deliverPreparedImage({
+  slots,
+  generationMode,
+  assembled,
+  compile,
+  aspectRatio,
+  imageGenerator,
+  env,
+  fetchImpl,
+}) {
+  const sourceEnv = env ?? process.env;
+  const config = loadImageReferenceConfig(sourceEnv);
+  if (!config.ok) {
+    return {
+      ok: false,
+      status: "failed",
+      kind: "configuration",
+      httpStatus: 500,
+      diagnostics: { strategy: "invalid" },
+    };
+  }
+  return executeImageRequest({
+    strategy: config.strategy,
+    budgetBytes: config.budgetBytes,
+    references: (slots || []).filter((slot) => slot?.asset).map((slot) => toReference(slot.role, slot.asset)),
+    generationMode,
+    compilePrompt: (references) => compile(promptFlags(references, assembled)),
+    aspectRatio,
+    model: resolveImageModel(sourceEnv),
+    imageGenerator,
+    env: sourceEnv,
+    fetchImpl,
+  });
 }
 
 async function handleVisualAnchor(req, res, {
@@ -1143,20 +1199,24 @@ async function handleVisualAnchor(req, res, {
     style: pending.style,
   });
   const providerStarted = Date.now();
-  const result = await imageGenerator({
-    prompt: anchorPrompt({
+  const result = await deliverPreparedImage({
+    slots: assembled.slots,
+    generationMode: "anchor",
+    assembled,
+    compile: (flags) => anchorPrompt({
       characterName,
       identityComment: pending.identityComment,
       instruction: pending.instruction,
-      hasPrevious: assembled.hasPrevious,
-      hasStyle: assembled.hasStyle,
+      hasPrevious: flags.hasPrevious,
+      hasStyle: flags.hasStyle,
     }),
-    images: assembled.images.map(imageInput),
     aspectRatio: "4:5",
+    imageGenerator,
     env,
     fetchImpl,
   });
   logVisual(logger, request, "visual-anchor-provider", {
+    ...transportLogFields(result?.diagnostics),
     status: result?.ok ? "ok" : "failed",
     kind: result?.ok ? undefined : safeKind(result?.kind),
     providerStatus: Number.isInteger(result?.diagnostics?.providerStatus)
@@ -1275,7 +1335,6 @@ async function generateOnePanel({
   const constrained = usesConstrainedPanelPrompt(pending.frame, panelIndex);
   const assembled = assemblePanelReferences({ ...pending.refs, panelReady: constrained });
   const providerStarted = Date.now();
-  let prompt;
   let diagnosticFields = {};
   let intent = null;
   if (constrained) {
@@ -1288,35 +1347,32 @@ async function generateOnePanel({
       hasPerformance: assembled.hasPerformance,
       partnerName: pending.frame?.panels?.[panelIndex === 0 ? 1 : 0]?.subject ?? null,
     });
-    prompt = compilePanelReadyPrompt(intent, {
-      hasPrevious: assembled.hasPrevious,
-      hasPerformance: assembled.hasPerformance,
-      hasStyle: assembled.hasStyle,
-      identityAlsoStyle: assembled.identityAlsoStyle === true,
-      previousDropped: assembled.previousDropped === true,
-    });
     diagnosticFields = panelReadyDiagnosticFields(intent, pending.refs, assembled);
-  } else {
-    prompt = panelPrompt({
-      characterName: pending.subject,
-      description: pending.panel.description,
-      instruction: pending.instruction,
-      layout: pending.frame.layout,
-      panelIndex,
-      speakerPanel: pending.frame.speakerPanel,
-      hasPrevious: assembled.hasPrevious,
-      hasPerformance: assembled.hasPerformance,
-      hasStyle: assembled.hasStyle,
-    });
   }
-  const result = await imageGenerator({
-    prompt,
-    images: assembled.images.map(imageInput),
+  const result = await deliverPreparedImage({
+    slots: assembled.slots,
+    generationMode: referenceGenerationMode(assembled),
+    assembled,
+    compile: (flags) => (constrained
+      ? compilePanelReadyPrompt(intent, flags)
+      : panelPrompt({
+        characterName: pending.subject,
+        description: pending.panel.description,
+        instruction: pending.instruction,
+        layout: pending.frame.layout,
+        panelIndex,
+        speakerPanel: pending.frame.speakerPanel,
+        hasPrevious: flags.hasPrevious,
+        hasPerformance: flags.hasPerformance,
+        hasStyle: flags.hasStyle,
+      })),
     aspectRatio: aspectRatioForFrame(pending.frame),
+    imageGenerator,
     env,
     fetchImpl,
   });
   logVisual(logger, request, "visual-panel-provider", {
+    ...transportLogFields(result?.diagnostics),
     status: result?.ok ? "ok" : "failed",
     kind: result?.ok ? undefined : safeKind(result?.kind),
     providerStatus: Number.isInteger(result?.diagnostics?.providerStatus)

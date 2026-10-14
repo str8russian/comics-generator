@@ -655,6 +655,7 @@ export function assembleAnchorReferences({ identity, previous = null, style = nu
     roles.has("style") || (previousId != null && previousId === styleId)
   );
   return {
+    slots: slots.map((slot) => ({ role: slot.role, asset: slot.asset })),
     images: slots.map((slot) => slot.asset),
     roles,
     hasPrevious: roles.has("previous"),
@@ -679,6 +680,7 @@ function assembleHistoricalPanelReferences({
   if (styleDistinct && slots.length < 3) slots.push({ role: "style", asset: style });
   const roles = new Set(slots.map((slot) => slot.role));
   return {
+    slots: slots.map((slot) => ({ role: slot.role, asset: slot.asset })),
     images: slots.map((slot) => slot.asset),
     roles,
     hasPrevious: roles.has("previous"),
@@ -707,6 +709,7 @@ function assemblePanelReadyReferences({
   const roles = new Set(slots.map((slot) => slot.role));
   const previousDropped = Boolean(previous) && !previousIncluded;
   return {
+    slots: slots.map((slot) => ({ role: slot.role, asset: slot.asset })),
     images: slots.map((slot) => slot.asset),
     roles,
     hasPrevious: roles.has("previous"),

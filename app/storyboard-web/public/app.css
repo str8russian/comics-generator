@@ -674,6 +674,27 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   font-weight: 700;
 }
 
+.detail-generation-status {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid #1d2428;
+  background: #fff8e8;
+  font-weight: 700;
+}
+
+.detail-generation-status[hidden] {
+  display: none;
+}
+
+.detail-generation-status[data-kind="success"] {
+  background: #e7f3ea;
+}
+
+.detail-generation-status[data-kind="error"] {
+  background: #fde8e8;
+  color: #8f2828;
+}
+
 .asset-picker {
   width: min(600px, calc(100vw - 16px));
   max-height: min(420px, calc(100vh - 24px));
