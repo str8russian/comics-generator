@@ -23,8 +23,9 @@ import {
   assemblePanelReferences,
   compilePanelReadyIntent,
   compilePanelReadyPrompt,
-  isEligiblePanelReadyDialogueFrame,
   panelPrompt,
+  usesConstrainedPanelPrompt,
+  validateCharacterGeneration,
   validatePanelReadyAuthorities,
 } from "./visual-model.mjs";
 import { createResearchStore } from "./research-store.mjs";
@@ -43,6 +44,7 @@ export const routes = [
   { method: "GET", path: "/frame-renderer.mjs", file: "prototypes/storyboard-viewer/frame-renderer.mjs" },
   { method: "GET", path: "/viewer.css", file: "prototypes/storyboard-viewer/viewer.css" },
   { method: "GET", path: "/visual-anchors.mjs", file: "app/storyboard-web/public/visual-anchors.mjs" },
+  { method: "GET", path: "/asset-picker.mjs", file: "app/storyboard-web/public/asset-picker.mjs" },
   { method: "GET", path: "/character-anchors/putin.png", file: "app/storyboard-web/public/character-anchors/putin.png" },
   { method: "GET", path: "/character-anchors/durov.png", file: "app/storyboard-web/public/character-anchors/durov.png" },
   { method: "GET", path: "/character-anchors/peskov.png", file: "app/storyboard-web/public/character-anchors/peskov.png" },
@@ -1150,7 +1152,7 @@ async function generateOnePanel({
     const visual = await runtime.visualStore.load();
     const frame = visual?.frames?.find((entry) => entry.id === frameId);
     const preflight = frame
-      ? validatePanelReadyAuthorities({
+      ? validateCharacterGeneration({
         frame,
         characters: visual.characters,
         styleSeedAssetId: visual.styleSeedAssetId,
@@ -1190,12 +1192,12 @@ async function generateOnePanel({
     });
     return pending;
   }
-  const panelReady = isEligiblePanelReadyDialogueFrame(pending.frame);
-  const assembled = assemblePanelReferences({ ...pending.refs, panelReady });
+  const constrained = usesConstrainedPanelPrompt(pending.frame, panelIndex);
+  const assembled = assemblePanelReferences({ ...pending.refs, panelReady: constrained });
   const providerStarted = Date.now();
   let prompt;
   let diagnosticFields = {};
-  if (panelReady) {
+  if (constrained) {
     const intent = compilePanelReadyIntent({
       frame: pending.frame,
       panelIndex,

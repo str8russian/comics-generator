@@ -235,6 +235,44 @@ function gazeInstruction(gaze) {
   );
 }
 
+export function isManualCharacterTarget(frame, panelIndex) {
+  const panel = frame?.panels?.[panelIndex];
+  if (!panel) return false;
+  if (typeof panel.manualSubject === "string" && panel.manualSubject.trim()) return true;
+  if (frame?.origin === "derived" || frame?.frameKind === "image") return true;
+  if (!String(panel.description || "").trim()) return true;
+  return false;
+}
+
+export function usesConstrainedPanelPrompt(frame, panelIndex) {
+  return isEligiblePanelReadyDialogueFrame(frame) || isManualCharacterTarget(frame, panelIndex);
+}
+
+export function validateCharacterGeneration({
+  frame,
+  characters = [],
+  styleSeedAssetId = null,
+  panelIndex = null,
+} = {}) {
+  if (isEligiblePanelReadyDialogueFrame(frame)) {
+    return validatePanelReadyAuthorities({ frame, characters, styleSeedAssetId, panelIndex });
+  }
+  if (!Number.isInteger(panelIndex) || !isManualCharacterTarget(frame, panelIndex)) return null;
+  const panel = frame.panels[panelIndex];
+  const subject = (typeof panel.manualSubject === "string" && panel.manualSubject.trim())
+    ? panel.manualSubject.trim()
+    : (panel.subject || null);
+  if (!subject) return { ok: false, status: "failed", kind: "subject-required", httpStatus: 409 };
+  const character = (characters || []).find((entry) => entry?.name === subject);
+  if (!character?.approvedAnchorId) {
+    return { ok: false, status: "failed", kind: "anchor-required", httpStatus: 409 };
+  }
+  if (!styleSeedAssetId) {
+    return { ok: false, status: "failed", kind: "style-required", httpStatus: 409 };
+  }
+  return { ok: true };
+}
+
 export function isEligiblePanelReadyDialogueFrame(frame) {
   if (!frame || frame.layout !== "split2") return false;
   if (!Array.isArray(frame.panels) || frame.panels.length !== 2) return false;

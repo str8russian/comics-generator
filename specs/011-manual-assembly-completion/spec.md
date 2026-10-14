@@ -83,6 +83,16 @@ The storyboard page shows a build marker that comes from the running server. A D
 - **FR-014**: The build marker MUST be served by the running process and MUST NOT be a hard-coded client string. Missing git metadata MUST fall back to a build-time source fingerprint, then `dev`. The page shows `unknown` only when that request fails.
 - **FR-015**: These operations MUST make zero image-provider calls.
 
+## Owner corrections
+
+- A frame with one assigned panel and one empty panel shows the assigned image immediately and a placeholder for the missing panel.
+- One anchored picker assigns a reusable thumbnail or a disk upload in the same step.
+- Either panel of a `split2` frame can be deleted. Deleting the speaking panel requires an explicit confirmation that the exact dialogue stays and ownership moves to the surviving panel.
+- Reorder controls say what they do and are disabled at the ends. A panel note is labeled as a note that is not used for generation.
+- The current visible asset is one choice. A later successful generation replaces an earlier upload or reuse. Failure keeps the last-good image. The current image is the revision reference. A manual panel without an explicit cast subject cannot generate.
+- Every accepted storyboard-content change is one persisted undo step. Undo walks backward and survives reload. Redo is out of scope.
+- Operations shows each owner action and the submitted instruction text.
+
 ## Out of Scope
 
 - Block C base-image redesign, speaking/listening renditions, and performance-reference transfer.

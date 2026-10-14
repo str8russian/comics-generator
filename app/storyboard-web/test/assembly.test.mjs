@@ -73,12 +73,25 @@ test("single becomes split2 and split2 can return to single without replacing th
   assert.equal(removed.frames[1].panels[0].id, "solo");
 });
 
-test("deleting the speaking panel is rejected and does not change the input", () => {
+test("confirmed speaker deletion keeps the dialogue and moves ownership to the survivor", () => {
+  const result = applyOperation(board(), {
+    op: "deletePanel",
+    panelId: "left",
+    confirmSpeakerTransfer: true,
+  }, { idFactory: ids });
+  assert.equal(result.ok, true);
+  assert.equal(result.frames[0].layout, "single");
+  assert.equal(result.frames[0].panels[0].id, "right");
+  assert.equal(result.frames[0].speakerPanel, 0);
+  assert.equal(result.frames[0].dialogue, "Привет");
+  assert.equal(result.frames[0].sourceItemId, "item-1");
+});
+
+test("deleting the speaking panel without confirmation leaves the frame unchanged", () => {
   const original = board();
   const result = applyOperation(original, { op: "deletePanel", panelId: "left" }, { idFactory: ids });
   assert.equal(result.ok, false);
-  assert.equal(result.kind, "speaker-remains");
-  assert.equal(original.panels?.[0]?.id, undefined);
+  assert.equal(result.kind, "speaker-transfer-required");
   assert.equal(original[0].speakerPanel, 0);
   assert.equal(original[0].dialogue, "Привет");
 });

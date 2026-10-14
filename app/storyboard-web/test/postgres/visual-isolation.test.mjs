@@ -378,8 +378,9 @@ test("manual assembly keeps panel identity and reuses an upload without a genera
     assert.equal(duplicate.ok, true);
     const deduped = await pool.query("SELECT count(*)::int AS count FROM visual_asset");
     assert.equal(deduped.rows[0].count, afterAssets.rows[0].count);
+    const afterDuplicate = await store.load();
 
-    const head = shared.storyboardVersionId;
+    const head = afterDuplicate.storyboardVersionId;
     const rejected = await store.applyOperation({
       op: "batch",
       operations: [
@@ -420,3 +421,66 @@ test("manual assembly keeps panel identity and reuses an upload without a genera
     await pool.end();
   }
 });
+
+test("current image follows assignment then generation, and undo restores each step", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await reset(pool);
+    await seedMaterial(pool);
+    await insertResult(pool, ids.resultA, "2026-10-14T13:00:00Z");
+    const store = createVisualStore(pool);
+    const initial = await store.load();
+    const panelId = initial.frames[0].panels[0].id;
+    const uploaded = await store.applyOperation({
+      op: "uploadAsset",
+      imageDataUrl: `data:image/png;base64,${png.toString("base64")}`,
+      targets: [{ panelId }],
+    });
+    assert.equal(uploaded.ok, true);
+    const assigned = await store.load();
+    const assignedId = assigned.frames[0].panels[0].assetId;
+    assert.equal(typeof assignedId, "string");
+    assert.equal(assigned.canUndo, true);
+    const pending = await store.beginPanelGeneration({
+      frameId: "frame-1",
+      panelIndex: 0,
+      instruction: "измени выражение",
+    });
+    assert.equal(pending.ok, true);
+    assert.equal(pending.refs.previous?.id, assignedId);
+    const generatedPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    const finished = await store.finishPanelGeneration({
+      id: pending.id,
+      result: { ok: true, image: { bytes: generatedPng }, metadata: { test: true } },
+    });
+    assert.equal(finished.ok, true);
+    const visible = await store.load();
+    assert.equal(visible.frames[0].panels[0].assetId, finished.assetId);
+    assert.notEqual(visible.frames[0].panels[0].assetId, assignedId);
+    assert.equal(visible.frames[0].panels[0].assignmentOrigin, "generation");
+    const undoneGeneration = await store.undoStoryboardEdit();
+    assert.equal(undoneGeneration.ok, true);
+    const restoredAssignment = await store.load();
+    assert.equal(restoredAssignment.frames[0].panels[0].assetId, assignedId);
+    const undoneAssignment = await store.undoStoryboardEdit();
+    assert.equal(undoneAssignment.ok, true);
+    const restoredEmpty = await store.load();
+    assert.equal(restoredEmpty.frames[0].panels[0].assetId, null);
+    const assets = await pool.query("SELECT count(*)::int AS count FROM visual_asset");
+    assert.equal(assets.rows[0].count >= 2, true);
+  } finally {
+    await reset(pool).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+

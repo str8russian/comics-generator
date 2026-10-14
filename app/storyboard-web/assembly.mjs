@@ -101,6 +101,7 @@ export function applyOperation(frames, operation = {}, options = {}) {
   if (op === "setDuration") return setDuration(next, operation);
   if (op === "setTextCard") return setTextCard(next, operation);
   if (op === "setOwnerDescription") return setOwnerDescription(next, operation);
+  if (op === "setManualSubject") return setManualSubject(next, operation);
   return fail("invalid-operation");
 }
 
@@ -184,8 +185,8 @@ function deletePanel(frames, operation) {
       return;
     }
     const dialogue = node === frame ? typedDialogue(frame) : String(node.quote || "");
-    if (dialogue.trim() && node.speakerPanel === index) {
-      error = fail("speaker-remains");
+    if (dialogue.trim() && node.speakerPanel === index && operation.confirmSpeakerTransfer !== true) {
+      error = fail("speaker-transfer-required");
       return;
     }
     const nextPanels = panels.filter((panel) => panel.id !== operation.panelId);
@@ -235,6 +236,29 @@ function setTextCard(frames, operation) {
   frame.textCard = operation.text;
   if (frame.dialogue) frame.dialogue = "";
   return { ok: true, frames, mode: "current" };
+}
+
+function setManualSubject(frames, operation) {
+  const name = typeof operation.characterName === "string" ? operation.characterName.trim() : "";
+  if (typeof operation.panelId !== "string" || !name || name.length > 160) return fail("invalid-request");
+  let found = false;
+  let locked = false;
+  eachUnit(frames, ({ frame, panels }) => {
+    for (const panel of panels || []) {
+      if (panel.id !== operation.panelId) continue;
+      found = true;
+      const described = String(panel.description || "").trim();
+      const manualFrame = frame.origin === "derived" || frame.frameKind === "image";
+      if (described && !manualFrame) {
+        locked = true;
+        return;
+      }
+      panel.manualSubject = name;
+    }
+  });
+  if (locked) return fail("subject-locked");
+  if (!found) return fail("panel-not-found");
+  return { ok: true, frames, mode: "version" };
 }
 
 function setOwnerDescription(frames, operation) {
