@@ -77,8 +77,20 @@ A later, separately authorized check for whether the external gateway limit has 
 npm run spike:image-api:limit-check
 ```
 
-It makes one known-under-limit `anchor + current` control from the 600 px set. Only if that control returns a usable image does it send one historical full-size `anchor + style + current` passthrough request. It never retries, never runs from the test suite, and stops after at most two calls. The gitignored `limit-check-report.json` states one of:
+It makes one known-under-limit `anchor + current` control from the 600 px set. Only if that control returns a usable image does it send one historical full-size `anchor + style + current` passthrough request. It never retries, never runs from the test suite, and stops after at most two real image calls. While a request is in flight it prints connection progress and a heartbeat every 5 seconds. The gitignored `limit-check-report.json` is rewritten after every completed case and states one of:
 
 - the provider is unhealthy, and the legacy probe was not sent;
 - the under-limit control works, but the historical body is still rejected;
 - both work, so the external limit appears to have been relaxed.
+
+## Exact JSON body threshold
+
+```sh
+npm run spike:image-api:payload-threshold
+```
+
+This command is separate from `limit-check`. It does not generate images and does not call the production image serializer. Each request is valid JSON with only `model` and `diagnostic_padding`, and it deliberately omits `messages`, prompts, modalities, and image data so the gateway cannot start an image generation. The measurement is the exact UTF-8 byte length of that serialized HTTP body. It is not a universal maximum source-image size: production requests also carry base64 image data, prompts, and JSON overhead.
+
+The search starts with a small validation baseline, then brackets and binary-searches between `IMAGE_PAYLOAD_THRESHOLD_LOW_BYTES` (default `700000`) and `IMAGE_PAYLOAD_THRESHOLD_HIGH_BYTES` (default `1400000`). Those overrides must be positive integers inside the hard ceiling of `8000000` bytes. The command stops on an inconclusive status, confirms adjacent boundary sizes with separate probes, and will not exceed 64 requests. It prints the same lifecycle progress and five-second heartbeat as `limit-check`, including the current range and target body size.
+
+The gitignored `payload-threshold-report.json` is rewritten after every observation. Production stays on `IMAGE_REFERENCE_STRATEGY=budgeted` and `IMAGE_REQUEST_BUDGET_BYTES=850000`; this experiment does not change them.

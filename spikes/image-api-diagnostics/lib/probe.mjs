@@ -1,10 +1,15 @@
-import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
+import { join } from "node:path";
 import { buildImageRequest, extractGeneratedImage } from "../../../app/storyboard-web/image-provider.mjs";
 import { inspectImage } from "../../../app/storyboard-web/image-info.mjs";
+import {
+  chatCompletionsUrl,
+  postJson,
+  sanitizeTimings,
+  sha256,
+} from "./transport.mjs";
+
+export { sha256 };
 
 export const MAX_LIVE_REQUESTS = 6;
 export const MAX_THRESHOLD_REQUESTS = 2;
@@ -13,23 +18,7 @@ export const MAX_LIMIT_CHECK_REQUESTS = 2;
 
 const UNDER_LIMIT_PROMPT = "Revise the current character image. Image 1 controls identity. Image 2 is the current image and controls composition and style. Make the expression visibly surprised and irritated. No text, borders, or extra people.";
 const REVISION_THREE_PROMPT = "Revise the current character image. Image 1 controls identity. Image 2 controls visual style. Image 3 is the current image and controls composition. Make the expression visibly surprised and irritated. No text, borders, or extra people.";
-const SAFE_HEADERS = ["server", "content-type", "content-length", "x-request-id", "request-id", "x-trace-id", "cf-ray"];
 const SUPPORTED_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp"];
-
-export function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function completionsUrl(baseUrl) {
-  const url = new URL(baseUrl);
-  const path = url.pathname.replace(/\/+$/, "");
-  if (path.endsWith("/chat/completions")) url.pathname = path;
-  else if (path.endsWith("/v1")) url.pathname = `${path}/chat/completions`;
-  else url.pathname = `${path}/v1/chat/completions`;
-  url.search = "";
-  url.hash = "";
-  return url;
-}
 
 function findFixture(root, scale, role) {
   for (const extension of SUPPORTED_EXTENSIONS) {
@@ -84,57 +73,6 @@ function sanitizeError(text, secrets) {
   };
 }
 
-function postJson(url, { token, body, timeoutMs }) {
-  const target = new URL(url);
-  const bytes = Buffer.from(body);
-  const request = target.protocol === "https:" ? httpsRequest : httpRequest;
-  return new Promise((resolve) => {
-    const started = Date.now();
-    const req = request({
-      protocol: target.protocol,
-      hostname: target.hostname,
-      port: target.port || undefined,
-      path: `${target.pathname}${target.search}`,
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "content-type": "application/json",
-        accept: "application/json",
-        "content-length": String(bytes.length),
-      },
-      ALPNProtocols: ["http/1.1"],
-      servername: target.hostname,
-      timeout: timeoutMs,
-    }, (response) => {
-      const chunks = [];
-      response.on("data", (chunk) => chunks.push(chunk));
-      response.on("end", () => {
-        const headers = {};
-        for (const name of SAFE_HEADERS) {
-          const value = response.headers[name];
-          if (value != null) headers[name] = Array.isArray(value) ? value.join(", ") : String(value);
-        }
-        resolve({
-          status: response.statusCode ?? 0,
-          headers,
-          text: Buffer.concat(chunks).toString("utf8"),
-          latencyMs: Date.now() - started,
-          transportError: null,
-        });
-      });
-    });
-    req.on("timeout", () => req.destroy(new Error("timeout")));
-    req.on("error", (error) => resolve({
-      status: 0,
-      headers: {},
-      text: "",
-      latencyMs: Date.now() - started,
-      transportError: error?.message === "timeout" ? "timeout" : "network",
-    }));
-    req.end(bytes);
-  });
-}
-
 function publicInput(role, image) {
   return {
     role,
@@ -152,7 +90,24 @@ function outputExtension(mime) {
   return ".png";
 }
 
-export async function runCase({ id, prompt, roles, fixtures, config, resultsDir, send = postJson }) {
+function forwardProgress(onProgress, event) {
+  if (!onProgress) return;
+  onProgress({
+    type: event.type,
+    elapsedMs: event.elapsedMs,
+    httpStatus: event.httpStatus,
+    timings: sanitizeTimings(event.timings),
+    id: event.id,
+    roles: event.roles,
+    byteLength: event.byteLength,
+    sha256Prefix: event.sha256Prefix,
+    timeoutMs: event.timeoutMs,
+    index: event.index,
+    total: event.total,
+  });
+}
+
+export async function runCase({ id, prompt, roles, fixtures, config, resultsDir, send = postJson, onProgress }) {
   const images = roles.map((role) => fixtures[role]);
   const body = JSON.stringify(buildImageRequest({
     prompt,
@@ -160,10 +115,27 @@ export async function runCase({ id, prompt, roles, fixtures, config, resultsDir,
     aspectRatio: "5:4",
     model: config.model,
   }));
-  const response = await send(completionsUrl(config.baseUrl), {
+  const hash = sha256(body);
+  forwardProgress(onProgress, {
+    type: "before-request",
+    id,
+    roles,
+    byteLength: Buffer.byteLength(body),
+    sha256Prefix: hash.slice(0, 12),
+    timeoutMs: config.timeoutMs,
+  });
+  const response = await send(chatCompletionsUrl(config.baseUrl), {
     token: config.token,
     body,
     timeoutMs: config.timeoutMs,
+    onEvent: (event) => forwardProgress(onProgress, { ...event, id, roles }),
+  });
+  forwardProgress(onProgress, {
+    type: "timings",
+    id,
+    roles,
+    elapsedMs: response.latencyMs,
+    timings: sanitizeTimings(response.timings),
   });
   let output = null;
   if (response.status >= 200 && response.status < 300) {
@@ -192,12 +164,13 @@ export async function runCase({ id, prompt, roles, fixtures, config, resultsDir,
     inputs: roles.map((role) => publicInput(role, fixtures[role])),
     request: {
       byteLength: Buffer.byteLength(body),
-      sha256: sha256(body),
+      sha256: hash,
     },
     response: {
       httpStatus: response.status,
       latencyMs: response.latencyMs,
       transportError: response.transportError,
+      timings: sanitizeTimings(response.timings),
       headers: response.headers,
       error: response.status >= 200 && response.status < 300
         ? (output ? null : { type: "invalid-output", code: null, message: "response did not contain a supported image" })
@@ -265,12 +238,30 @@ export async function runUnderLimit({ config, fixtureRoot, resultsDir, send }) {
   return { requestsAttempted: observations.length, stopped: "under-limit-complete", observations };
 }
 
-export async function runLimitCheck({ config, fixtureRoot, resultsDir, send }) {
+export async function runLimitCheck({ config, fixtureRoot, resultsDir, send, onProgress, onObservation }) {
   const observations = [];
+  const publish = (extra) => {
+    const snapshot = {
+      requestsAttempted: observations.length,
+      stopped: extra.stopped,
+      verdict: extra.verdict ?? null,
+      observations,
+    };
+    onObservation?.(snapshot);
+    return snapshot;
+  };
   const execute = async (input) => {
     if (observations.length >= MAX_LIMIT_CHECK_REQUESTS) throw new Error("limit-check request cap exceeded");
-    const observation = await runCase({ ...input, config, resultsDir, send });
+    const index = observations.length + 1;
+    const observation = await runCase({
+      ...input,
+      config,
+      resultsDir,
+      send,
+      onProgress: (event) => onProgress?.({ ...event, index, total: MAX_LIMIT_CHECK_REQUESTS }),
+    });
     observations.push(observation);
+    publish({ stopped: "running" });
     return observation;
   };
 
@@ -281,12 +272,7 @@ export async function runLimitCheck({ config, fixtureRoot, resultsDir, send }) {
     fixtures: loadFixtureSet(fixtureRoot, "600"),
   });
   if (!controlSucceeded(control)) {
-    return {
-      requestsAttempted: observations.length,
-      stopped: "control-failed",
-      verdict: "provider-unhealthy",
-      observations,
-    };
+    return publish({ stopped: "control-failed", verdict: "provider-unhealthy" });
   }
 
   const legacy = await execute({
@@ -299,12 +285,7 @@ export async function runLimitCheck({ config, fixtureRoot, resultsDir, send }) {
   let verdict = "legacy-failed";
   if (legacyOk) verdict = "limit-relaxed";
   else if (legacy.response.httpStatus === 413) verdict = "legacy-rejected";
-  return {
-    requestsAttempted: observations.length,
-    stopped: "limit-check-complete",
-    verdict,
-    observations,
-  };
+  return publish({ stopped: "limit-check-complete", verdict });
 }
 
 export async function runThresholdConfirmation({ config, fixtureRoot, resultsDir, send }) {

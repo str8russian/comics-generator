@@ -1,8 +1,12 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runLimitCheck } from "./lib/probe.mjs";
+import {
+  bindInterrupt,
+  createIncrementalReport,
+  formatProgressLine,
+} from "./lib/transport.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtureRoot = resolve(process.env.IMAGE_SPIKE_FIXTURE_DIR || resolve(here, "fixtures"));
@@ -24,29 +28,49 @@ const verdictText = {
   "legacy-failed": "The under-limit control succeeded, but the historical request failed for a reason other than payload size.",
 };
 
+const store = createIncrementalReport({
+  resultsDir,
+  filename: "limit-check-report.json",
+  initial: {
+    spike: "image-api-diagnostics-limit-check",
+    live: "RUN",
+    model,
+    status: "running",
+    observations: [],
+  },
+});
+let interrupted = false;
+bindInterrupt(() => {
+  interrupted = true;
+  store.save({ status: "interrupted" });
+});
+
 let report;
 try {
   report = await runLimitCheck({
     config: { baseUrl, token, model, timeoutMs },
     fixtureRoot,
     resultsDir,
+    onProgress: (event) => process.stdout.write(formatProgressLine(event)),
+    onObservation: (snapshot) => {
+      if (!interrupted) store.save({ ...snapshot, model, status: "running" });
+    },
   });
 } catch (error) {
-  process.stderr.write(`IMAGE API LIMIT CHECK NOT RUN: ${String(error?.message || error)}\n`);
+  process.stderr.write(`IMAGE API LIMIT CHECK NOT RUN: ${safeError(error)}\n`);
   process.exit(2);
 }
 
-mkdirSync(resultsDir, { recursive: true });
-const reportPath = resolve(resultsDir, "limit-check-report.json");
-writeFileSync(reportPath, `${JSON.stringify({
-  spike: "image-api-diagnostics-limit-check",
-  live: "RUN",
-  model,
-  ...report,
-}, null, 2)}\n`);
-
+if (!interrupted) store.save({ ...report, model, status: "complete" });
 for (const item of report.observations) {
   process.stdout.write(`${item.id}: HTTP ${item.response.httpStatus}; refs=${item.roles.length}; body=${item.request.byteLength}; latency=${item.response.latencyMs}ms\n`);
 }
 process.stdout.write(`${verdictText[report.verdict] || report.verdict}\n`);
-process.stdout.write(`Report: ${reportPath}\n`);
+process.stdout.write(`Report: ${store.path}\n`);
+
+function safeError(error) {
+  return String(error?.message || "failed")
+    .replace(/https?:\/\/\S+/gi, "[REDACTED]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [REDACTED]")
+    .slice(0, 200);
+}
