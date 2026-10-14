@@ -83,6 +83,20 @@ It makes one known-under-limit `anchor + current` control from the 600 px set. O
 - the under-limit control works, but the historical body is still rejected;
 - both work, so the external limit appears to have been relaxed.
 
+## Image-bearing 200 versus 413 threshold
+
+```sh
+npm run spike:image-api:image-threshold
+```
+
+This command is separate from both `limit-check` and `payload-threshold`. It sends valid production-shaped Chat Completions requests: the configured image model, aspect ratio `5:4`, a fixed short revision instruction, and real PNG references in role order. Successful observations are real, potentially billable image generations. The current authorization cap is 30 image-bearing requests and 30 successful generations. The command enforces both caps, does not retry, and stops on any result other than a valid image or HTTP 413.
+
+`payload-threshold` is only a JSON negative control. It does not measure this image-bearing limit. `limit-check` remains the two-call historical image check and is not part of this search.
+
+The search reports the exact UTF-8 size of the serialized JSON body, plus each reference file size and their sum. A confirmed result requires the successful and HTTP 413 bodies to be at most 10,240 bytes apart, with one extra confirmation request at each end. It then checks whether `anchor + style + current` follows the same body boundary. Production stays on `IMAGE_REFERENCE_STRATEGY=budgeted` and `IMAGE_REQUEST_BUDGET_BYTES=850000`; this command does not change them.
+
+A non-empty `image-threshold-report.json` blocks another run unless `IMAGE_THRESHOLD_RERUN=1` is set explicitly. Do not set that flag for an ordinary measurement. The report and any returned images stay in the gitignored `results/` directory.
+
 ## Exact JSON body threshold
 
 ```sh
