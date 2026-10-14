@@ -42,6 +42,36 @@ export function resolveAnchor(description) {
   };
 }
 
+export function presentFrameForMount(frame, mode) {
+  const panels = Array.isArray(frame?.panels) ? frame.panels : [];
+  const authoritative = panels.some((panel) => (
+    Boolean(panel?.assetId)
+    || panel?.generationStatus != null
+    || panel?.generationError != null
+  ));
+  if (authoritative) {
+    const complete = panels.length > 0 && panels.every((panel) => Boolean(panel?.assetId));
+    return {
+      frame,
+      mode: "visual",
+      source: complete ? "generated" : "partial",
+    };
+  }
+  const pictured = presentVisualFrame(frame);
+  if (pictured) {
+    return {
+      frame: pictured,
+      mode: "visual",
+      source: "demo-anchor",
+    };
+  }
+  return {
+    frame,
+    mode: mode === "visual" ? "visual" : "structure",
+    source: "structure",
+  };
+}
+
 export function presentVisualFrame(frame) {
   if (!frame || !Array.isArray(frame.panels) || frame.panels.length === 0) return null;
   const panels = [];

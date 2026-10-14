@@ -7,7 +7,9 @@ import {
   createEmptyContext,
   createEmptyEditTarget,
 } from "/research-dock.mjs";
-import { presentVisualFrame } from "/visual-anchors.mjs";
+import { openAssetPicker } from "/asset-picker.mjs";
+import { presentFrameForMount } from "/visual-anchors.mjs";
+export { presentFrameForMount };
 
 const form = document.querySelector("#draft-form");
 const draftField = document.querySelector("#draft");
@@ -37,6 +39,7 @@ const approveVisual = document.querySelector("#approve-visual");
 const approvalCopy = document.querySelector("#approval-copy");
 const readyForVideo = document.querySelector("#ready-for-video");
 const buildMarker = document.querySelector("#build-marker");
+const globalUndo = document.querySelector("#global-undo");
 const renderPanel = document.querySelector("#render-panel");
 const renderStatus = document.querySelector("#render-status");
 const startRender = document.querySelector("#start-render");
@@ -505,6 +508,7 @@ function clearBoard() {
   visualApproval.hidden = true;
   readyForVideo.hidden = true;
   if (renderPanel) renderPanel.hidden = true;
+  if (globalUndo) globalUndo.hidden = true;
   document.body.dataset.state = "";
   syncResearchCommandTargets();
 }
@@ -552,38 +556,6 @@ function showTerminal(view) {
   failureKind.hidden = false;
   failureKind.textContent = view.kind || "";
   document.body.dataset.kind = view.kind || "";
-}
-
-function hasGeneratedVisualState(frame) {
-  const panels = Array.isArray(frame?.panels) ? frame.panels : [];
-  return panels.some((panel) => (
-    Boolean(panel?.assetId)
-    || panel?.generationStatus != null
-    || panel?.generationError != null
-  ));
-}
-
-export function presentFrameForMount(frame, mode) {
-  if (hasGeneratedVisualState(frame)) {
-    return {
-      frame,
-      mode: mode ?? (frame.visualReady ? "visual" : "structure"),
-      source: "generated",
-    };
-  }
-  const pictured = presentVisualFrame(frame);
-  if (pictured) {
-    return {
-      frame: pictured,
-      mode: "visual",
-      source: "demo-anchor",
-    };
-  }
-  return {
-    frame,
-    mode: "structure",
-    source: "structure",
-  };
 }
 
 function mountFrame(host, frame, scale, mode) {
@@ -681,7 +653,10 @@ function showReady(frames, state = "ready") {
 }
 
 function frameStatus(frame) {
+  const panels = Array.isArray(frame.panels) ? frame.panels : [];
+  const readyCount = panels.filter((panel) => panel?.assetId).length;
   if (frame.frameKind === "text") return "Текстовая карточка";
+  if (readyCount > 0 && readyCount < panels.length) return "Частично готово";
   if (frame.frameKind === "image" || !String(frame.dialogue || "").trim()) {
     return frame.visualReady ? "Изображение" : "Кадр без реплики";
   }
@@ -719,17 +694,39 @@ function frameAddress(frame) {
   };
 }
 
-async function runAssembly(operation, message) {
-  const next = await runBusy(message, () => fetchJson("/api/visual/operations", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(operation),
-  }));
-  if (next?.status === "ready") {
-    applyVisual(next);
-    showActionNotice("Изменение сохранено.");
-  }
-  return next;
+async function runAssembly(operation, message, { submittedText = null } = {}) {
+  const semanticAction = {
+    insertFrame: "frame_insert",
+    deleteFrame: "frame_delete",
+    reorderFrames: "frame_reorder",
+    addPanel: "panel_add",
+    deletePanel: "panel_delete",
+    reorderPanels: "panel_reorder",
+    setDuration: "frame_duration",
+    setTextCard: "text_card",
+    setOwnerDescription: "panel_note",
+    setManualSubject: "panel_subject",
+    uploadAsset: "asset_assign",
+    assignAsset: "asset_assign",
+  }[operation?.op] || "storyboard_edit";
+  return runProductResearchAction({
+    semanticAction,
+    submittedText,
+    commandTarget: createEmptyCommandTarget("storyboard"),
+    busyMessage: message,
+    async operation() {
+      const next = await fetchJson("/api/visual/operations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(operation),
+      });
+      if (next?.status === "ready") {
+        applyVisual(next);
+        showActionNotice("Изменение сохранено.");
+      }
+      return next;
+    },
+  });
 }
 
 function appendAssemblyControls(card, frame) {
@@ -751,8 +748,14 @@ function appendAssemblyControls(card, frame) {
       op: "setDuration",
       ...address,
       durationFrames: Number(duration.value),
-    }, "Сохраняю длительность…");
+    }, "Сохраняю длительность…", { submittedText: String(duration.value) });
   });
+  const order = structureIdsInOrder(readyFrames);
+  const structureIndex = order.indexOf(address.structureFrameId);
+  const earlier = assemblyButton("Переместить кадр раньше", () => moveStructureFrame(address.structureFrameId, -1));
+  const later = assemblyButton("Переместить кадр позже", () => moveStructureFrame(address.structureFrameId, 1));
+  earlier.disabled = structureIndex <= 0;
+  later.disabled = structureIndex < 0 || structureIndex >= order.length - 1;
   box.append(
     timing,
     duration,
@@ -766,8 +769,8 @@ function appendAssemblyControls(card, frame) {
       afterStructureFrameId: address.structureFrameId,
       kind: "text",
     }, "Добавляю текстовую карточку…")),
-    assemblyButton("Раньше", () => moveStructureFrame(address.structureFrameId, -1)),
-    assemblyButton("Позже", () => moveStructureFrame(address.structureFrameId, 1)),
+    earlier,
+    later,
     assemblyButton("Удалить кадр", () => runAssembly({
       op: "deleteFrame",
       structureFrameId: address.structureFrameId,
@@ -788,7 +791,7 @@ function appendAssemblyControls(card, frame) {
         op: "setTextCard",
         structureFrameId: address.structureFrameId,
         text: text.value,
-      }, "Сохраняю текст карточки…");
+      }, "Сохраняю текст карточки…", { submittedText: text.value });
     });
     box.append(text);
   } else if ((frame.panels || []).length === 1) {
@@ -825,61 +828,96 @@ function appendPanelAssembly(box, frame, panel, panelIndex) {
   const label = document.createElement("span");
   label.className = "assembly-note";
   label.textContent = `Панель ${panelIndex + 1}${panel.subject ? ` · ${panel.subject}` : ""}`;
-  const upload = document.createElement("input");
-  upload.type = "file";
-  upload.accept = "image/png,image/jpeg,image/webp";
-  upload.setAttribute?.("aria-label", `Загрузить изображение для панели ${panelIndex + 1}`);
-  upload.addEventListener("change", () => {
-    const file = upload.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      runAssembly({
-        op: "uploadAsset",
-        imageDataUrl: String(reader.result || ""),
-        targets: [{ panelId: panel.id }],
-      }, "Назначаю загруженное изображение…");
-    };
-    reader.readAsDataURL(file);
+  const choose = assemblyButton("Выбрать изображение…", () => {
+    openAssetPicker({
+      anchor: choose,
+      assets: visual?.reusableAssets || [],
+      currentAssetId: panel.assetId,
+      onSelect: (asset) => {
+        runAssembly({
+          op: "assignAsset",
+          assetId: asset.id,
+          targets: [{ panelId: panel.id }],
+        }, "Назначаю изображение…");
+      },
+      onUpload: () => {
+        const upload = document.createElement("input");
+        upload.type = "file";
+        upload.accept = "image/png,image/jpeg,image/webp";
+        upload.addEventListener("change", () => {
+          const file = upload.files?.[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            runAssembly({
+              op: "uploadAsset",
+              imageDataUrl: String(reader.result || ""),
+              targets: [{ panelId: panel.id }],
+            }, "Назначаю загруженное изображение…");
+          };
+          reader.readAsDataURL(file);
+        });
+        upload.click();
+      },
+    });
   });
-  const reuse = document.createElement("select");
-  reuse.setAttribute?.("aria-label", `Существующее изображение для панели ${panelIndex + 1}`);
-  const blank = document.createElement("option");
-  blank.value = "";
-  blank.textContent = "Существующее изображение";
-  reuse.append(blank);
-  for (const asset of visual?.reusableAssets || []) {
-    const option = document.createElement("option");
-    option.value = asset.id;
-    option.textContent = `${asset.kind === "uploaded-image" ? "Загрузка" : "Кадр"} ${asset.width || "?"}×${asset.height || "?"}`;
-    reuse.append(option);
-  }
+  const noteLabel = document.createElement("label");
+  noteLabel.className = "assembly-note";
+  noteLabel.textContent = "Заметка к панели";
+  const noteHelp = document.createElement("span");
+  noteHelp.className = "assembly-note";
+  noteHelp.textContent = "Не используется при генерации и не меняет замысел.";
   const note = document.createElement("input");
   note.type = "text";
   note.value = panel.ownerDescription || "";
-  note.placeholder = "Своё описание, не меняет замысел";
+  note.setAttribute?.("aria-label", "Заметка к панели");
   note.addEventListener("change", () => {
     runAssembly({
       op: "setOwnerDescription",
       panelId: panel.id,
       ownerDescription: note.value,
-    }, "Сохраняю описание…");
+    }, "Сохраняю заметку…", { submittedText: note.value });
   });
-  box.append(label, upload, reuse, assemblyButton("Назначить", () => {
-    if (!reuse.value) return;
-    runAssembly({
-      op: "assignAsset",
-      assetId: reuse.value,
-      targets: [{ panelId: panel.id }],
-    }, "Назначаю существующее изображение…");
-  }), note);
-  const dialogue = String(frame.dialogue || "").trim();
-  const speakerLocked = Boolean(dialogue) && frame.speakerPanel === panelIndex;
-  if ((frame.panels || []).length === 2 && !speakerLocked) {
-    box.append(assemblyButton("Удалить панель", () => runAssembly({
-      op: "deletePanel",
-      panelId: panel.id,
-    }, "Удаляю панель…")));
+  box.append(label, choose, noteLabel, noteHelp, note);
+  if (panel.subjectEditable) {
+    const subject = document.createElement("select");
+    subject.setAttribute?.("aria-label", `Персонаж панели ${panelIndex + 1}`);
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "Выберите персонажа";
+    subject.append(blank);
+    for (const character of visual?.characters || []) {
+      const option = document.createElement("option");
+      option.value = character.name;
+      option.textContent = character.name;
+      if (panel.manualSubject === character.name || panel.subject === character.name) option.selected = true;
+      subject.append(option);
+    }
+    subject.addEventListener("change", () => {
+      if (!subject.value) return;
+      runAssembly({
+        op: "setManualSubject",
+        panelId: panel.id,
+        characterName: subject.value,
+      }, "Сохраняю персонажа панели…", { submittedText: subject.value });
+    });
+    box.append(subject);
+  }
+  if ((frame.panels || []).length === 2) {
+    box.append(assemblyButton("Удалить панель", () => {
+      const dialogue = String(frame.dialogue || "").trim();
+      const speaking = Boolean(dialogue) && frame.speakerPanel === panelIndex;
+      if (speaking && globalThis.confirm?.(
+        "Реплика останется без изменений. Говорящим станет оставшаяся панель. Удалить эту панель?",
+      ) !== true) return;
+      runAssembly({
+        op: "deletePanel",
+        panelId: panel.id,
+        confirmSpeakerTransfer: speaking,
+      }, "Удаляю панель…", {
+        submittedText: speaking ? "Реплика остаётся у оставшейся панели" : null,
+      });
+    }));
   }
 }
 
@@ -952,7 +990,7 @@ export function actionMessage(kind) {
     "identity-required": "Сначала выберите реальную фотографию персонажа.",
     "anchor-required": "Сначала утвердите базовый образ этого персонажа.",
     "style-required": "Сначала утвердите стиль проекта — без него нельзя создать панели этого кадра.",
-    "subject-required": "Сначала укажите персонажа для каждой панели этого кадра.",
+    "subject-required": "Сначала выберите персонажа для панели.",
     "invalid-image": "Не удалось прочитать изображение. Выберите JPEG, PNG или WebP.",
     "unsupported-image-format": "Этот формат пока не поддерживается. Выберите JPEG, PNG или WebP.",
     "image-too-large": "Файл слишком большой. Выберите фото меньшего размера.",
@@ -1278,6 +1316,7 @@ function applyVisual(next) {
     ? "Текущая версия утверждена."
     : "Просмотрите все кадры и утвердите текущую версию.";
   readyForVideo.hidden = !next.readyForVideo;
+  syncGlobalUndo(next);
   syncResearchCommandTargets();
   if (detail.open && detailIndex >= 0) openDetail(detailIndex);
 }
@@ -2316,18 +2355,68 @@ async function refreshRenderStatus() {
       if (renderPreview && !renderPreview.src.endsWith(encodeURIComponent(status.id))) renderPreview.src = src;
       if (renderDownload) renderDownload.href = src;
     }
+    if (status.status === "success" || status.status === "failure") {
+      const capture = renderCapture;
+      renderCapture = null;
+      if (capture) {
+        await capture.terminal(status.status === "success" ? "success" : "failure", {
+          outcomeKind: status.status === "failure" ? "render-failed" : null,
+        });
+      }
+    }
     if (status.status === "running") renderTimer = globalThis.setTimeout(refreshRenderStatus, 2000);
   } catch {
     if (renderStatus) renderStatus.textContent = renderLabels.idle;
   }
 }
 
+function syncGlobalUndo(next) {
+  if (!globalUndo) return;
+  const available = Boolean(next?.canUndo);
+  globalUndo.hidden = !next || next.status !== "ready";
+  globalUndo.disabled = !available;
+  globalUndo.textContent = available && next.undoLabel
+    ? `Отменить: ${next.undoLabel}`
+    : "Нечего отменять";
+}
+
+globalUndo?.addEventListener("click", () => {
+  runProductResearchAction({
+    semanticAction: "storyboard_undo",
+    submittedText: null,
+    commandTarget: createEmptyCommandTarget("storyboard"),
+    busyMessage: "Отменяю последнее изменение…",
+    async operation() {
+      const next = await fetchJson("/api/visual/storyboard/undo", { method: "POST" });
+      if (next?.status === "ready") applyVisual(next);
+      showActionNotice("Последнее изменение отменено.");
+      return next;
+    },
+  });
+});
+
+let renderCapture = null;
+
 startRender?.addEventListener("click", async () => {
   if (renderError) renderError.hidden = true;
-  const started = await runBusy("Запускаю сборку видео…", () => fetchJson("/api/visual/render", { method: "POST" }));
-  if (started?.status === "running") {
-    if (renderStatus) renderStatus.textContent = renderLabels.running;
-    renderTimer = globalThis.setTimeout(refreshRenderStatus, 1000);
+  renderCapture = beginProductResearchCapture({
+    semanticAction: "render_start",
+    submittedText: null,
+    commandTarget: createEmptyCommandTarget("storyboard"),
+  });
+  await renderCapture.start();
+  try {
+    const started = await runBusy("Запускаю сборку видео…", () => fetchJson("/api/visual/render", { method: "POST" }));
+    if (started?.status === "running") {
+      if (renderStatus) renderStatus.textContent = renderLabels.running;
+      renderTimer = globalThis.setTimeout(refreshRenderStatus, 1000);
+      return;
+    }
+    await renderCapture.terminal("failure", { outcomeKind: "render-failed" });
+    renderCapture = null;
+  } catch (error) {
+    await renderCapture?.terminal("failure", { outcomeKind: error?.kind || "request-failed" });
+    renderCapture = null;
   }
 });
 

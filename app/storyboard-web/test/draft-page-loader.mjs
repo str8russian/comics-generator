@@ -6,6 +6,7 @@ const files = {
   "/draft-autosave.mjs": "app/storyboard-web/public/draft-autosave.mjs",
   "/research-dock.mjs": "app/storyboard-web/public/research-dock.mjs",
   "/visual-anchors.mjs": "app/storyboard-web/public/visual-anchors.mjs",
+  "/asset-picker.mjs": "app/storyboard-web/public/asset-picker.mjs",
   "/app.js": "app/storyboard-web/public/app.js",
 };
 

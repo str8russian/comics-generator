@@ -173,8 +173,9 @@ test("partial generated frame does not fill missing panels with demo anchors", a
     ],
   };
   const presented = page.presentFrameForMount(frame);
-  assert.equal(presented.source, "generated");
-  assert.equal(presented.mode, "structure");
+  assert.equal(presented.source, "partial");
+  assert.equal(presented.mode, "visual");
+  assert.equal(presented.frame.panels[0].asset, "/api/visual/assets/gen-putin");
   assert.equal(presented.frame.panels[1].asset, null);
   assert.equal(String(presented.frame.panels[1].asset || "").includes("/character-anchors/"), false);
   const notice = page.frameAttemptNotice({

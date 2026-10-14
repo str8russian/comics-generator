@@ -173,6 +173,7 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
       durationMs: Object.hasOwn(terminal, "durationMs") ? terminal.durationMs : null,
       localOnly: false,
       historical: false,
+      submittedText: operationSubmittedText(terminal, starts.get(terminal.correlationId)),
       label: formatOperationLabel({
         status,
         semanticAction: terminal.semanticAction,
@@ -229,6 +230,17 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
   }
 
   return items;
+}
+
+function operationSubmittedText(terminal, start) {
+  const fromStart = typeof start?.submittedText === "string" ? start.submittedText : "";
+  if (fromStart.trim()) return fromStart;
+  const fromTerminal = typeof terminal?.submittedText === "string" ? terminal.submittedText : "";
+  if (fromTerminal.trim()) return fromTerminal;
+  const fromSnapshot = typeof terminal?.startSnapshot?.submittedText === "string"
+    ? terminal.startSnapshot.submittedText
+    : "";
+  return fromSnapshot.trim() ? fromSnapshot : "";
 }
 
 function formatOperationLabel({ status, semanticAction, outcomeKind, outcomeFlags = {} }) {
@@ -479,7 +491,10 @@ export function bindResearchDock({
     for (const item of projection) {
       const stamp = formatResearchTimestamp(item.occurredAt);
       const prefix = stamp ? `${stamp} — ` : "";
-      appendTextItem(operationsList, `${prefix}${item.label}`);
+      const prompt = typeof item.submittedText === "string" && item.submittedText.trim()
+        ? ` — ${item.submittedText}`
+        : "";
+      appendTextItem(operationsList, `${prefix}${item.label}${prompt}`);
     }
   }
 

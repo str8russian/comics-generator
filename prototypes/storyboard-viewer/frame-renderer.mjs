@@ -125,6 +125,10 @@ export function render(frame, options) {
       const description = el("p", "panel-description", ownerDocument);
       description.textContent = panel.description || "";
       column.append(description);
+    } else if (!panel.asset) {
+      const placeholder = el("p", "panel-placeholder", ownerDocument);
+      placeholder.textContent = "Нет изображения";
+      column.append(placeholder);
     } else {
       const image = el("img", "panel-asset", ownerDocument);
       image.draggable = false;

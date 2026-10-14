@@ -260,6 +260,21 @@ test("removes the horizontal hairline and keeps the 48px split divider", () => {
   assert.equal(byClass(single, "dialogue-bar").length, 1);
 });
 
+test("a visual frame shows a ready panel beside an empty placeholder", () => {
+  installDocument();
+  const mixed = render({
+    layout: "split2",
+    dialogue: "",
+    panels: [
+      { description: "Есть", asset: "/one.png", subject: "А", role: "Действие", position: "50% 30%", align: "50% 30%", zoom: 1 },
+      { description: "Нет", subject: "Б", role: "Действие" },
+    ],
+  }, { mode: "visual" });
+  assert.equal(byClass(mixed, "panel-asset").length, 1);
+  assert.equal(byClass(mixed, "panel-placeholder")[0].textContent, "Нет изображения");
+  assert.equal(byClass(mixed, "panel")[1].style.borderLeft, `${FRAME_GEOMETRY.panelGutter}px solid #02090b`);
+});
+
 test("text cards render owner text without a dialogue bar", () => {
   installDocument();
   const card = render({

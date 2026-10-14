@@ -4,8 +4,23 @@ import http from "node:http";
 import { register } from "node:module";
 import test from "node:test";
 import { render } from "../../../prototypes/storyboard-viewer/frame-renderer.mjs";
-import { ANCHOR_ASSETS, ANCHOR_GEOMETRY, presentVisualFrame, resolveAnchor } from "../public/visual-anchors.mjs";
+import { ANCHOR_ASSETS, ANCHOR_GEOMETRY, presentFrameForMount, presentVisualFrame, resolveAnchor } from "../public/visual-anchors.mjs";
 import { createServer, routes } from "../server.mjs";
+
+test("a partially assigned frame shows the ready panel in visual mode", () => {
+  const presented = presentFrameForMount({
+    layout: "split2",
+    dialogue: "",
+    panels: [
+      { description: "Путин смотрит", assetId: "asset-1", asset: "/api/visual/assets/asset-1" },
+      { description: "Дуров слушает" },
+    ],
+  });
+  assert.equal(presented.mode, "visual");
+  assert.equal(presented.source, "partial");
+  assert.equal(presented.frame.panels[0].asset, "/api/visual/assets/asset-1");
+  assert.equal(presented.frame.panels[1].asset, undefined);
+});
 
 const note = "Демонстрация с базовыми образами персонажей; эмоции и позы пока не меняются между кадрами.";
 const putinLine = "Значит, Павел Валерьевич, мы решили.";
@@ -353,10 +368,10 @@ test("places the base-anchor note next to the storyboard", () => {
   assert.equal(html.includes(note), true);
   assert.equal(html.indexOf('id="anchor-note"') < html.indexOf('id="storyboard"'), true);
   assert.match(appJs, /from "\/visual-anchors\.mjs"/);
-  assert.match(appJs, /presentVisualFrame\(frame\)/);
   assert.match(appJs, /presentFrameForMount/);
-  assert.match(appJs, /hasGeneratedVisualState/);
-  assert.match(appJs, /source: "demo-anchor"/);
+  assert.match(readFileSync(new URL("../public/visual-anchors.mjs", import.meta.url), "utf8"), /presentVisualFrame\(frame\)/);
+  assert.match(readFileSync(new URL("../public/visual-anchors.mjs", import.meta.url), "utf8"), /hasGeneratedVisualState|authoritative/);
+  assert.match(readFileSync(new URL("../public/visual-anchors.mjs", import.meta.url), "utf8"), /source: "demo-anchor"/);
 });
 
 test("the last stored frame still opens, with structure fallback for an unknown panel", async () => {
