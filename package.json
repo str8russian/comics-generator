@@ -11,7 +11,12 @@
     "mutations": "node tools/mutations.mjs",
     "check": "node tools/build-golden.mjs && node tools/validate.mjs golden/zayavka-full/storyboard.json && node tools/metrics.mjs golden/zayavka-full/storyboard.json",
     "spike:contest-api": "node --test spikes/contest-chat-completions/test/offline.test.mjs",
-    "spike:contest-api:live": "node --env-file-if-exists=.env.local spikes/contest-chat-completions/live.mjs"
+    "spike:contest-api:live": "node --env-file-if-exists=.env.local spikes/contest-chat-completions/live.mjs",
+    "spike:image-api": "node --test spikes/image-api-diagnostics/test/offline.test.mjs",
+    "spike:image-api:live": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/live.mjs",
+    "spike:image-api:threshold": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/threshold.mjs",
+    "spike:image-api:under-limit": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/under-limit.mjs",
+    "spike:image-api:limit-check": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/limit-check.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",

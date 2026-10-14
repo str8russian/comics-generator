@@ -4,6 +4,8 @@ node_modules/
 build-info.json
 .render-output/
 spikes/contest-chat-completions/results/
+spikes/image-api-diagnostics/fixtures/
+spikes/image-api-diagnostics/results/
 
 # One approved Stage artistic baseline. Do not commit the saved candidate.
 app/storyboard-web/eval/stage-artistic/results/
