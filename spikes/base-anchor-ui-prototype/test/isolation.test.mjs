@@ -65,6 +65,7 @@ test("the page is Russian and wires dismiss, escape, and generate without a gene
   assert.match(app, /acceptDraft\(state/);
   assert.match(app, /undoCandidate\(state\)/);
   assert.match(app, /undoDelete\(state\)/);
+  assert.match(app, /generation-basis/);
   assert.equal(app.split("/api/generate").length - 1, 1);
   assert.equal(`${html}\n${app}\n${state}`.includes("Изменить"), false);
   assert.equal(app.includes("/api/visual"), false);

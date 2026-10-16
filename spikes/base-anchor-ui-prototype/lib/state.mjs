@@ -15,7 +15,10 @@ export const LABELS = Object.freeze({
   uploadedCaption: "Загружен как готовый anchor",
   sourcePhoto: "Исходное фото",
   generate: "Сгенерировать",
-  another: "Создать ещё вариант",
+  another: "Создать вариант на основе выбранного",
+  basisSource: "Основа следующего варианта: исходное фото.",
+  basisAnchor: "Основа следующего варианта: текущий принятый образ.",
+  basisIdentity: "Исходное фото по-прежнему определяет личность.",
   accept: "Принять",
   cancel: "Отмена",
   close: "Закрыть",
@@ -586,6 +589,18 @@ function preview(modal) {
   return { dominant: null, secondary: [], note: "" };
 }
 
+function generationBasis(draft) {
+  if (draft.step !== "photo" && draft.step !== "refine") return { text: "", identity: "" };
+  const hasSource = Boolean(draft.source?.dataUrl);
+  const text = draft.candidates.length === 0
+    ? (draft.step === "photo" ? LABELS.basisSource : LABELS.basisAnchor)
+    : `Основа следующего варианта: Вариант ${draft.index + 1}.`;
+  const identity = hasSource && !(draft.step === "photo" && draft.candidates.length === 0)
+    ? LABELS.basisIdentity
+    : "";
+  return { text, identity };
+}
+
 export function view(state) {
   const actions = state.anchor
     ? [
@@ -599,6 +614,7 @@ export function view(state) {
   if (state.modal) {
     const draft = state.modal;
     const generative = draft.step === "photo" || draft.step === "refine";
+    const basis = generationBasis(draft);
     modal = {
       operation: draft.operation,
       step: draft.step,
@@ -618,6 +634,8 @@ export function view(state) {
       error: draft.error ? errorText(draft.error) : "",
       errorCode: draft.error,
       generateLabel: draft.candidates.length > 0 ? LABELS.another : LABELS.generate,
+      basis: basis.text,
+      basisIdentity: basis.identity,
       generateEnabled: canRequest(draft),
       acceptEnabled: !draft.pending && (
         (draft.step === "ready" && Boolean(draft.source?.dataUrl))

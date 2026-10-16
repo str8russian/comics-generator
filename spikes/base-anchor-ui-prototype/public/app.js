@@ -173,12 +173,16 @@ function renderModal(modal, locked) {
       button({ id: "variant-undo", disabled: !modal.canUndo }, "Предыдущий вариант", () => commit(undoCandidate(state))),
       button({ id: "variant-redo", disabled: !modal.canRedo }, "Следующий вариант", () => commit(redoCandidate(state))),
     ]) : null,
-    modal.showInstruction ? instructionField(modal) : null,
-    modal.showGenerate ? button({
-      id: "generate",
-      class: "primary",
-      disabled: !modal.generateEnabled,
-    }, modal.pending ? "Запрос к провайдеру…" : modal.generateLabel, onGenerate) : null,
+    modal.showInstruction || modal.showGenerate ? el("div", { class: "generate-cluster" }, [
+      modal.showInstruction ? instructionField(modal) : null,
+      modal.basis ? el("p", { id: "generation-basis", class: "basis", text: modal.basis }) : null,
+      modal.basisIdentity ? el("p", { id: "generation-basis-identity", class: "basis-identity", text: modal.basisIdentity }) : null,
+      modal.showGenerate ? button({
+        id: "generate",
+        class: "primary",
+        disabled: !modal.generateEnabled,
+      }, modal.pending ? "Запрос к провайдеру…" : modal.generateLabel, onGenerate) : null,
+    ]) : null,
     modal.pending ? el("p", { class: "status", "aria-live": "polite", text: "Идёт один запрос к провайдеру." }) : null,
     modal.error ? el("p", { class: "error", "aria-live": "polite", text: modal.error }) : null,
     el("div", { class: "dialog-actions" }, [
@@ -219,7 +223,7 @@ function instructionField(modal) {
   });
   const hint = modal.instructionRequired
     ? "Для первого варианта нужна инструкция."
-    : "Инструкция необязательна. Пустой запрос всё равно создаёт новый вариант.";
+    : "Инструкция необязательна. Пустой запрос всё равно создаёт следующий вариант на указанной основе.";
   return el("div", { class: "field" }, [
     el("label", { for: "draft-instruction", text: "Инструкция" }),
     area,

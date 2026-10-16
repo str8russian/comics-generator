@@ -264,6 +264,21 @@ button:disabled {
 
 .field { margin: 16px 0; }
 
+.generate-cluster { margin: 8px 0 16px; }
+
+.generate-cluster .field { margin: 0 0 8px; }
+
+.basis,
+.basis-identity {
+  margin: 0 0 8px;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 15px;
+}
+
+.basis { font-weight: 600; }
+
+.basis-identity { color: var(--muted); }
+
 label,
 .file-label {
   display: block;

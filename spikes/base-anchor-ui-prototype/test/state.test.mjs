@@ -144,6 +144,49 @@ test("source-photo candidates stay in history while undo and redo make no provid
   assert.equal(state.modal.candidates.length, 2);
 });
 
+test("basis copy names the selected draft and undo branches from that candidate", () => {
+  let photo = setSelectedImage(choosePath(openCreate(createState()), "photo"), {
+    dataUrl: SOURCE,
+    mime: "image/jpeg",
+  });
+  assert.equal(view(photo).modal.basis, "Основа следующего варианта: исходное фото.");
+  assert.equal(view(photo).modal.basisIdentity, "");
+  assert.equal(view(photo).modal.generateLabel, "Сгенерировать");
+
+  photo = succeed(photo, C1).state;
+  photo = succeed(setInstruction(photo, "второй"), C2).state;
+  photo = succeed(setInstruction(photo, "третий"), C3).state;
+  assert.equal(view(photo).modal.basis, "Основа следующего варианта: Вариант 3.");
+  assert.equal(view(photo).modal.generateLabel, "Создать вариант на основе выбранного");
+  assert.equal(view(photo).modal.basisIdentity, "Исходное фото по-прежнему определяет личность.");
+  photo = undoCandidate(photo);
+  photo = undoCandidate(photo);
+  assert.equal(view(photo).modal.basis, "Основа следующего варианта: Вариант 1.");
+  const branched = requestGenerate(photo);
+  assert.equal(branched.effect.body.previousImage, C1);
+  assert.equal(branched.effect.body.sourceImage, SOURCE);
+  assert.equal(branched.effect.body.anchorImage, null);
+  photo = redoCandidate(photo);
+  assert.equal(view(photo).modal.basis, "Основа следующего варианта: Вариант 2.");
+
+  const uploaded = openRefine(uploadedState());
+  assert.equal(view(uploaded).modal.basis, "Основа следующего варианта: текущий принятый образ.");
+  assert.equal(view(uploaded).modal.basisIdentity, "");
+  assert.equal(view(uploaded).modal.generateLabel, "Сгенерировать");
+
+  let refine = openRefine(generatedState());
+  assert.equal(view(refine).modal.basis, "Основа следующего варианта: текущий принятый образ.");
+  assert.equal(view(refine).modal.basisIdentity, "Исходное фото по-прежнему определяет личность.");
+  refine = succeed(setInstruction(refine, "светлее"), C1).state;
+  refine = succeed(setInstruction(refine, "ещё"), C2).state;
+  refine = undoCandidate(refine);
+  assert.equal(view(refine).modal.basis, "Основа следующего варианта: Вариант 1.");
+  const again = requestGenerate(refine);
+  assert.equal(again.effect.body.previousImage, C1);
+  assert.equal(again.effect.body.anchorImage, ORIGINAL);
+  assert.equal(again.effect.body.sourceImage, SOURCE);
+});
+
 test("refine opens directly and keeps candidates 1-4 when the last instruction is empty", () => {
   const original = generatedState();
   let state = openRefine(original);

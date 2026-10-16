@@ -101,6 +101,8 @@ test("one provider-double call returns provider bytes rather than the source", a
   assert.equal(calls[0].images[0].bytes.equals(SOURCE), true);
   assert.match(calls[0].prompt, new RegExp(PROMPT));
   assert.match(calls[0].prompt, /Do not return this photograph/);
+  assert.match(calls[0].prompt, /muted slate-blue matte/);
+  assert.match(calls[0].prompt, /not a border around the canvas/);
   assert.equal(result.ok, true);
   assert.equal(result.imageDataUrl, dataUrl(OUTPUT));
   const rendered = JSON.stringify(logs);
