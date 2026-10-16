@@ -385,12 +385,25 @@ async function latestAnchor(client, materialStateId, characterName, { approved =
 }
 
 async function approvedAnchor(client, materialStateId, characterName) {
-  const identity = await currentIdentity(client, materialStateId, characterName);
-  if (!identity) return null;
-  return latestAnchor(client, materialStateId, characterName, {
-    approved: true,
-    identityAssetId: identity.current_asset_id,
-  });
+  const head = await client.query(`
+    SELECT character_anchor_version.*
+    FROM character_anchor_head
+    JOIN character_anchor_version
+      ON character_anchor_version.id = character_anchor_head.anchor_version_id
+    WHERE character_anchor_head.material_state_id = $1
+      AND character_anchor_head.character_name = $2
+      AND character_anchor_version.status = 'approved'
+  `, [materialStateId, characterName]);
+  return head.rows[0] ?? null;
+}
+
+async function setAnchorHead(client, materialStateId, characterName, anchorId) {
+  await client.query(`
+    INSERT INTO character_anchor_head (material_state_id, character_name, anchor_version_id)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (material_state_id, character_name)
+    DO UPDATE SET anchor_version_id = EXCLUDED.anchor_version_id
+  `, [materialStateId, characterName, anchorId]);
 }
 
 async function readStyleSeed(client, materialStateId) {
@@ -518,8 +531,15 @@ async function loadVisualWithClient(client) {
       });
       const approved = await approvedAnchor(client, context.result.material_state_id, character.name);
       if (approved) approvedByName.set(character.name, approved.id);
+      const anchorProvenance = approved?.provenance || null;
+      const showSource = Boolean(identity) && anchorProvenance !== "uploaded_as_ready_anchor" && Boolean(approved);
       anchors.push({
         name: character.name,
+        anchorProvenance,
+        sourcePhoto: showSource ? {
+          assetId: identity.current_asset_id,
+          assetUrl: assetUrl(identity.current_asset_id),
+        } : null,
         identity: identity ? {
           assetId: identity.current_asset_id,
           assetUrl: assetUrl(identity.current_asset_id),
@@ -781,6 +801,12 @@ export async function approveAnchor(pool, { characterName, anchorId }) {
         RETURNING id, output_asset_id
       `, [anchorId, context.result.material_state_id, characterName, identity?.current_asset_id ?? null]);
       if (updated.rowCount !== 1) return failed("not-found", 404);
+      await setAnchorHead(
+        client,
+        context.result.material_state_id,
+        characterName,
+        updated.rows[0].id,
+      );
       const seed = await ensureStyleSeedFromApproval(
         client,
         context.result.material_state_id,
@@ -1408,6 +1434,149 @@ export async function applyProductOperation(pool, input) {
     return failed("database", 503);
   }
 }
+const ANCHOR_PROVENANCE = new Set([
+  "generated_from_source",
+  "uploaded_as_ready_anchor",
+  "refined_from_accepted_anchor",
+]);
+
+export async function acceptSessionAnchor(pool, {
+  characterName,
+  provenance,
+  image,
+  sourceImage = null,
+  instruction = "",
+}) {
+  if (!characterName || !ANCHOR_PROVENANCE.has(provenance) || !imageBytes(image)) return failed("invalid-request");
+  if (String(instruction).length > 4000) return failed("invalid-request");
+  if (provenance === "generated_from_source" && !imageBytes(sourceImage)) return failed("invalid-request");
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      const context = await ensureVersion(client);
+      if (!context) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const materialStateId = context.result.material_state_id;
+      const cast = await castFor(client, materialStateId);
+      if (!cast.characters.some((entry) => entry.name === characterName)) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      let identityAssetId = null;
+      if (provenance === "generated_from_source") {
+        identityAssetId = (await insertAsset(client, "identity-reference", sourceImage)).id;
+        await client.query(`
+          INSERT INTO character_identity (material_state_id, character_name, current_asset_id, comment)
+          VALUES ($1, $2, $3, '')
+          ON CONFLICT (material_state_id, character_name)
+          DO UPDATE SET current_asset_id = EXCLUDED.current_asset_id, updated_at = clock_timestamp()
+        `, [materialStateId, characterName, identityAssetId]);
+      } else if (provenance === "refined_from_accepted_anchor") {
+        identityAssetId = (await currentIdentity(client, materialStateId, characterName))?.current_asset_id ?? null;
+      }
+      const output = await insertAsset(client, "base-anchor", image);
+      const id = randomUUID();
+      await client.query(`
+        INSERT INTO character_anchor_version (
+          id, material_state_id, character_name, identity_asset_id, output_asset_id,
+          instruction, status, provenance, approved_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, 'approved', $7, clock_timestamp())
+      `, [id, materialStateId, characterName, identityAssetId, output.id, String(instruction).trim(), provenance]);
+      await setAnchorHead(client, materialStateId, characterName, id);
+      await ensureStyleSeedFromApproval(client, materialStateId, id, output.id);
+      await client.query("COMMIT");
+      return { ok: true, anchorId: id, assetId: output.id };
+    });
+  } catch (error) {
+    if (error?.kind === "invalid-image") return failed("invalid-image");
+    return failed("database", 503);
+  }
+}
+
+export async function retireCurrentAnchor(pool, { characterName }) {
+  if (!characterName) return failed("invalid-request");
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      const context = await ensureVersion(client);
+      if (!context) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const current = await approvedAnchor(client, context.result.material_state_id, characterName);
+      if (!current) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      await client.query(
+        `UPDATE character_anchor_version SET status = 'retired' WHERE id = $1 AND status = 'approved'`,
+        [current.id],
+      );
+      await client.query(`
+        UPDATE character_anchor_head
+        SET anchor_version_id = NULL
+        WHERE material_state_id = $1 AND character_name = $2
+      `, [context.result.material_state_id, characterName]);
+      await client.query("COMMIT");
+      return { ok: true, anchorId: current.id };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+export async function restoreRetiredAnchor(pool, { characterName, anchorId }) {
+  if (!characterName || !anchorId) return failed("invalid-request");
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      const context = await ensureVersion(client);
+      if (!context) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      const current = await approvedAnchor(client, context.result.material_state_id, characterName);
+      if (current) {
+        await client.query("ROLLBACK");
+        return failed("conflict", 409);
+      }
+      const updated = await client.query(`
+        UPDATE character_anchor_version
+        SET status = 'approved', approved_at = clock_timestamp()
+        WHERE id = $1
+          AND material_state_id = $2
+          AND character_name = $3
+          AND status = 'retired'
+          AND output_asset_id IS NOT NULL
+        RETURNING id
+      `, [anchorId, context.result.material_state_id, characterName]);
+      if (updated.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
+      await setAnchorHead(client, context.result.material_state_id, characterName, anchorId);
+      await client.query("COMMIT");
+      return { ok: true, anchorId };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+export async function readAnchorStyle(pool) {
+  try {
+    return await withClient(pool, async (client) => {
+      const context = await ensureVersion(client);
+      if (!context) return null;
+      return projectStyleAsset(client, context.result.material_state_id);
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function createVisualStore(pool) {
   return {
     load: () => loadVisual(pool),
@@ -1415,6 +1584,10 @@ export function createVisualStore(pool) {
     beginAnchor: (input) => beginAnchor(pool, input),
     finishAnchor: (input) => finishAnchor(pool, input),
     approveAnchor: (input) => approveAnchor(pool, input),
+    acceptSessionAnchor: (input) => acceptSessionAnchor(pool, input),
+    retireCurrentAnchor: (input) => retireCurrentAnchor(pool, input),
+    restoreRetiredAnchor: (input) => restoreRetiredAnchor(pool, input),
+    readAnchorStyle: () => readAnchorStyle(pool),
     beginPanelGeneration: (input) => beginPanelGeneration(pool, input),
     finishPanelGeneration: (input) => finishPanelGeneration(pool, input),
     updatePlacement: (input) => updatePlacement(pool, input),

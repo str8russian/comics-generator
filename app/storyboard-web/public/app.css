@@ -6,7 +6,7 @@ body {
 }
 
 .page {
-  max-width: 1120px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 28px 24px 48px;
 }
@@ -298,18 +298,92 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
 
 .character-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 16px;
 }
 
 .character-card {
   display: grid;
   gap: 12px;
+  min-width: 0;
   padding: 16px;
   border: 1px solid #cfcbc1;
   border-radius: 12px;
   background: #faf8f3;
 }
+
+.stable-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 12px;
+  align-items: start;
+}
+
+.stable-anchor img,
+.anchor-dominant img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  object-fit: contain;
+  background: #efe8dc;
+  border-radius: 8px;
+}
+
+.source-card img,
+.anchor-secondary img {
+  width: 96px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.character-card .destructive {
+  border: 0;
+  background: transparent;
+  color: #8d2f2f;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.anchor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(29, 36, 40, 0.46);
+}
+
+.anchor-dialog {
+  width: min(880px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 20px;
+  border-radius: 16px;
+  background: #fffdf8;
+}
+
+.anchor-review {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+}
+
+.generate-actions,
+.variant-nav,
+.path-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.path-list { flex-direction: column; }
+
+.basis { font-weight: 700; }
+
+.candidate-origin,
+.basis-identity { color: #606963; }
 
 .character-card label,
 .panel-control label {
@@ -452,7 +526,7 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   height: min(42vh, calc(100vh - var(--research-dock-inset-bottom) - var(--research-dock-inset-opposite)));
   max-width: calc(100vw - var(--research-dock-inset-right) - var(--research-dock-inset-opposite));
   max-height: calc(100vh - var(--research-dock-inset-bottom) - var(--research-dock-inset-opposite));
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid #7f878c;
   background: #f7f4ee;
   box-shadow: 0 8px 24px rgba(18, 24, 28, 0.18);
@@ -499,6 +573,8 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   gap: 12px;
   padding: 12px;
   overflow: auto;
+  min-height: 0;
+  flex: 1;
 }
 
 #research-dock.research-dock--collapsed {

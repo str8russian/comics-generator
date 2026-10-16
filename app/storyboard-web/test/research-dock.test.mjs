@@ -2955,3 +2955,56 @@ test("large pointer drag exceeds former 720px/42vh caps up to inset-aware viewpo
   assert.ok(RESEARCH_DOCK_MIN_HEIGHT >= 120);
   assert.equal([...html.matchAll(/\bid="research-dock"/g)].length, 1);
 });
+
+test("resize grip stays draggable after toggle collapse, expand, and detail reparenting", async () => {
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
+  assert.match(html, /aria-label="Панель команд"/);
+  assert.match(html, /Команды ▾/);
+  assert.match(html, />Команды</);
+  assert.match(html, />Заметки</);
+  assert.match(html, />История операций</);
+  assert.match(html, /Изменить размер панели команд/);
+  assert.match(css, /\.research-dock-body\s*\{[^}]*overflow:\s*auto/s);
+  assert.match(css, /#research-dock\s*\{[^}]*overflow:\s*hidden/s);
+
+  installDockDocument(html);
+  const { bindResearchDock } = await import("../public/research-dock.mjs");
+  const dock = bindResearchDock({
+    root: document.querySelector("#research-dock"),
+    host: document.querySelector("#research-dock-host"),
+    detail: document.querySelector("#detail"),
+    getContext: () => ({}),
+    fetchImpl: emptyTraceFetch(),
+  });
+  await dock.ready;
+  const root = document.querySelector("#research-dock");
+  const toggle = document.querySelector("#research-dock-toggle");
+  const grip = document.querySelector("#research-dock-resize");
+  root.offsetWidth = 360;
+  root.offsetHeight = 280;
+
+  function cycle() {
+    toggle.dispatchEvent({ type: "click" });
+    assert.match(root.className, /collapsed/);
+    assert.equal(grip.hidden, true);
+    assert.equal(toggle.textContent, "Команды ▴");
+    toggle.dispatchEvent({ type: "click" });
+    assert.equal(/collapsed/.test(root.className), false);
+    assert.equal(grip.hidden, false);
+    assert.equal(grip.style.display || "", "");
+    assert.equal(toggle.textContent, "Команды ▾");
+    const before = Number.parseFloat(root.style.width) || root.offsetWidth;
+    grip.dispatchEvent({ type: "pointerdown", button: 0, pointerId: 7, clientX: 100, clientY: 100 });
+    grip.dispatchEvent({ type: "pointermove", pointerId: 7, clientX: 60, clientY: 70 });
+    grip.dispatchEvent({ type: "pointerup", pointerId: 7, clientX: 60, clientY: 70 });
+    assert.ok(Number.parseFloat(root.style.width) > before);
+  }
+
+  cycle();
+  cycle();
+  dock.enterDetail();
+  cycle();
+  dock.exitDetail();
+  cycle();
+});

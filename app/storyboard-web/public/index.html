@@ -60,7 +60,7 @@
           <h2 id="characters-title">Создайте базовые образы</h2>
         </div>
       </div>
-      <p class="helper">Для каждого персонажа выберите реальную фотографию в формате JPEG, PNG или WebP. HEIC пока не поддерживается. Комментарий и последующие правки можно писать своими словами.</p>
+      <p class="helper">Создайте или уточните базовый образ в отдельном окне. Готовый anchor можно загрузить, а вариант по реальному фото — сгенерировать. HEIC пока не поддерживается.</p>
       <div id="character-cards" class="character-cards"></div>
     </section>
     <section id="visual-heading" class="visual-heading" hidden>
@@ -103,20 +103,20 @@
     </section>
   </main>
   <div id="research-dock-host">
-    <aside id="research-dock" class="research-dock" aria-label="Research workspace">
+    <aside id="research-dock" class="research-dock" aria-label="Панель команд">
       <button
         type="button"
         id="research-dock-resize"
         class="research-dock-resize"
-        aria-label="Изменить размер панели Research"
+        aria-label="Изменить размер панели команд"
         title="Перетащите, чтобы изменить размер"
       ></button>
       <button type="button" id="research-dock-toggle" class="research-dock-toggle" aria-expanded="true" aria-controls="research-dock-body">
-        Research
+        Команды ▾
       </button>
       <div id="research-dock-body" class="research-dock-body">
         <section id="research-commands" class="research-region" aria-labelledby="research-commands-title">
-          <h2 id="research-commands-title">Commands</h2>
+          <h2 id="research-commands-title">Команды</h2>
           <p id="research-commands-target-label" class="research-helper">Действие не выбрано</p>
           <label class="research-label" for="research-commands-target">Действие (ограничивает выполнение)</label>
           <select id="research-commands-target" class="research-commands-target"></select>
@@ -135,7 +135,7 @@
           <ol id="research-commands-history" class="research-history" aria-live="polite"></ol>
         </section>
         <section id="research-notes" class="research-region" aria-labelledby="research-notes-title">
-          <h2 id="research-notes-title">Notes</h2>
+          <h2 id="research-notes-title">Заметки</h2>
           <label class="research-label" for="research-notes-draft">Заметка</label>
           <textarea id="research-notes-draft" class="research-notes-draft" rows="3"></textarea>
           <button type="button" id="research-notes-send" data-research-allow="notes-send">Отправить заметку</button>
@@ -143,7 +143,7 @@
           <ol id="research-notes-history" class="research-history" aria-live="polite"></ol>
         </section>
         <section id="research-operations" class="research-region" aria-labelledby="research-operations-title">
-          <h2 id="research-operations-title">Operations</h2>
+          <h2 id="research-operations-title">История операций</h2>
           <ol id="research-operations-list" class="research-history" aria-live="polite"></ol>
         </section>
       </div>

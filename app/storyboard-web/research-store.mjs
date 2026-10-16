@@ -15,6 +15,8 @@ const SEMANTIC_ACTIONS = new Set([
   "identity_save",
   "anchor_generate",
   "anchor_approve",
+  "anchor_retire",
+  "anchor_restore",
   "frame_generate",
   "panel_generate",
   "placement_commit",

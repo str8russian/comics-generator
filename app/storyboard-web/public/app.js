@@ -7,6 +7,7 @@ import {
   createEmptyContext,
   createEmptyEditTarget,
 } from "/research-dock.mjs";
+import { renderAnchorWorkspace } from "/anchor-session-ui.mjs";
 import { openAssetPicker } from "/asset-picker.mjs";
 import { compileTransitionTimeline, formatExportRuntime } from "/export-timing.mjs";
 import { presentFrameForMount } from "/visual-anchors.mjs";
@@ -1268,159 +1269,15 @@ function fitFrames(frames) {
 }
 
 function renderCharacterCards() {
-  characterCards.replaceChildren();
-  for (const character of visual.characters || []) {
-    const card = document.createElement("article");
-    card.className = "character-card";
-    const heading = document.createElement("div");
-    heading.className = "character-heading";
-    const title = document.createElement("h3");
-    title.textContent = character.name;
-    const badge = document.createElement("span");
-    badge.className = "status-badge";
-    badge.textContent = character.approvedAnchorId ? "Образ утверждён" : "Нужен образ";
-    heading.append(title, badge);
-
-    const media = document.createElement("div");
-    media.className = "anchor-media";
-    if (character.identity?.assetUrl) {
-      const identity = document.createElement("figure");
-      const image = document.createElement("img");
-      image.src = character.identity.assetUrl;
-      image.alt = `Исходная фотография: ${character.name}`;
-      const caption = document.createElement("figcaption");
-      caption.textContent = "Реальное фото";
-      identity.append(image, caption);
-      media.append(identity);
-    }
-    if (character.candidate?.assetUrl) {
-      const candidate = document.createElement("figure");
-      const image = document.createElement("img");
-      image.src = character.candidate.assetUrl;
-      image.alt = `Базовый образ: ${character.name}`;
-      const caption = document.createElement("figcaption");
-      caption.textContent = character.approvedAnchorId === character.candidate.id ? "Утверждённый образ" : "Текущий вариант";
-      candidate.append(image, caption);
-      media.append(candidate);
-    }
-
-    const identityLabel = document.createElement("label");
-    identityLabel.textContent = character.identity ? "Заменить реальное фото" : "Выбрать реальное фото";
-    const identityInput = document.createElement("input");
-    identityInput.type = "file";
-    identityInput.accept = "image/png,image/jpeg,image/jpg,image/webp,.jpg,.jpeg,.png,.webp";
-    identityLabel.append(identityInput);
-    const comment = document.createElement("textarea");
-    comment.placeholder = "Комментарий к внешности и базовому образу";
-    comment.value = character.identity?.comment || "";
-    const saveIdentity = document.createElement("button");
-    saveIdentity.type = "button";
-    saveIdentity.className = "secondary";
-    saveIdentity.textContent = character.identity ? "Сохранить новое фото" : "Сохранить фото";
-    saveIdentity.addEventListener("click", async () => {
-      const file = identityInput.files?.[0];
-      if (!file) {
-        showActionNotice("Выберите локальную фотографию.", "error");
-        return;
-      }
-      const fileKind = identityFileKind(file);
-      if (fileKind) {
-        showActionNotice(actionMessage(fileKind), "error");
-        return;
-      }
-      const identityComment = comment.value;
-      await runProductResearchAction({
-        semanticAction: "identity_save",
-        submittedText: identityComment,
-        commandTarget: createEmptyCommandTarget("character", { characterName: character.name }),
-        contextOverrides: characterActionContextOverrides(character, {
-          imageAssetId: character.identity?.assetId ?? null,
-        }),
-        busyMessage: `Сохраняю фотографию для ${character.name}…`,
-        async operation() {
-          const imageDataUrl = await fileAsDataUrl(file);
-          const next = await fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/identity`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ imageDataUrl, comment: identityComment }),
-          });
-          applyVisual(next);
-          showActionNotice(`Фотография для ${character.name} сохранена.`);
-          return next;
-        },
-      });
-    });
-
-    const instruction = document.createElement("textarea");
-    instruction.placeholder = character.candidate?.assetUrl
-      ? "Что изменить в следующем варианте?"
-      : "Дополнительные пожелания к первому варианту";
-    const generate = document.createElement("button");
-    generate.type = "button";
-    generate.disabled = !character.identity;
-    generate.textContent = character.candidate?.assetUrl ? "Создать новый вариант" : "Создать base anchor";
-    generate.addEventListener("click", async () => {
-      const anchorInstruction = instruction.value;
-      await runProductResearchAction({
-        semanticAction: "anchor_generate",
-        submittedText: anchorInstruction,
-        commandTarget: createEmptyCommandTarget("character", { characterName: character.name }),
-        contextOverrides: characterActionContextOverrides(character, {
-          imageAssetId: character.candidate?.assetId ?? null,
-          anchorVersionId: character.candidate?.id ?? null,
-        }),
-        busyMessage: `Создаю базовый образ для ${character.name}. Это может занять около минуты…`,
-        async operation() {
-          const next = await fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/anchor`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ instruction: anchorInstruction }),
-          });
-          applyVisual(next);
-          showActionNotice(`Новый вариант для ${character.name} готов.`);
-          return next;
-        },
-      });
-    });
-
-    const actions = document.createElement("div");
-    actions.className = "anchor-actions";
-    actions.append(generate);
-    if (character.candidate?.status === "ready" && character.candidate.assetId) {
-      const approve = document.createElement("button");
-      approve.type = "button";
-      approve.className = "primary-soft";
-      approve.textContent = "Утвердить этот образ";
-      approve.addEventListener("click", async () => {
-        const anchorVersionId = character.candidate.id;
-        await runProductResearchAction({
-          semanticAction: "anchor_approve",
-          submittedText: null,
-          commandTarget: createEmptyCommandTarget("character", {
-            characterName: character.name,
-            anchorVersionId,
-          }),
-          contextOverrides: characterActionContextOverrides(character, {
-            imageAssetId: character.candidate?.assetId ?? null,
-            anchorVersionId,
-          }),
-          busyMessage: `Утверждаю образ ${character.name}…`,
-          async operation() {
-            const next = await fetchJson(
-              `/api/visual/characters/${encodeURIComponent(character.name)}/anchors/${encodeURIComponent(anchorVersionId)}/approve`,
-              { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
-            );
-            applyVisual(next);
-            showActionNotice(`Образ ${character.name} утверждён.`);
-            return next;
-          },
-        });
-      });
-      actions.append(approve);
-    }
-    card.append(heading, media, identityLabel, comment, saveIdentity, instruction, actions);
-    characterCards.append(card);
-  }
+  renderAnchorWorkspace({
+    root: characterCards,
+    characters: visual?.characters || [],
+    fetchJson,
+    applyVisual,
+    runProductResearchAction,
+    showActionNotice,
+    characterActionContextOverrides,
+  });
 }
 
 export function applyVisual(next) {

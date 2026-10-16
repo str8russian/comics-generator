@@ -419,7 +419,38 @@ async function loadCapturePage() {
     if (/\/api\/visual\/frames\/[^/]+\/panels\/\d+\/placement$/.test(path)) {
       return jsonResponse(200, readyVisual());
     }
+    if (/\/anchor-session$/.test(path)) {
+      return jsonResponse(200, { status: "ready", imageDataUrl: "data:image/png;base64,aGVsbG8=", mime: "image/png" });
+    }
+    if (/\/anchor-accept$/.test(path)) {
+      return jsonResponse(200, readyVisual({
+        characters: [{
+          name: "Путин",
+          approvedAnchorId: "anchor-2",
+          approvedAssetId: "anchor-asset-2",
+          approvedAssetUrl: "/a2.png",
+          anchorProvenance: "refined_from_accepted_anchor",
+          sourcePhoto: { assetId: "identity-asset-1", assetUrl: "/id.png" },
+          identity: { assetId: "identity-asset-1", assetUrl: "/id.png", comment: "" },
+        }],
+      }));
+    }
     if (/\/identity$/.test(path)) return jsonResponse(200, readyVisual());
+    if (/\/anchor-session$/.test(path)) {
+      return jsonResponse(200, { status: "ready", imageDataUrl: "data:image/png;base64,YQ==", mime: "image/png" });
+    }
+    if (/\/anchor-accept$/.test(path)) {
+      return jsonResponse(200, readyVisual({
+        characters: [{
+          name: "Путин",
+          approvedAnchorId: "anchor-1",
+          approvedAssetId: "anchor-asset-1",
+          approvedAssetUrl: "/a.png",
+          anchorProvenance: "refined_from_accepted_anchor",
+          sourcePhoto: { assetId: "identity-asset-1", assetUrl: "/id.png" },
+        }],
+      }));
+    }
     if (/\/anchor$/.test(path)) {
       return jsonResponse(200, readyVisual({
         characters: [{
@@ -686,92 +717,44 @@ test("placement_commit records zoom change only; input scrubbing is a non-event"
   assert.equal(placement.start.context.generationId, null);
 });
 
-test("identity_save comment-only; anchor_generate/approve and visual_approve capture targets", async () => {
+test("anchor_generate and anchor_approve capture the accepted session without image payloads", async () => {
   await ensurePage();
-  page.setResearchVisualState(readyVisual(), -1);
-  let card = document.querySelector("#character-cards").children[0];
-  assert.ok(card);
-  const comment = card.querySelectorAll("textarea")[0];
-  const saveIdentity = card.querySelectorAll("button").find((button) => /Сохранить фото|Сохранить новое фото/.test(button.textContent));
-  const identityInput = card.querySelector("input");
-  comment.value = "только комментарий идентичности";
-  identityInput.files = [{ name: "face.png", type: "image/png", size: 128 }];
-  saveIdentity.dispatchEvent({ type: "click" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  const identity = researchPair("identity_save");
-  assert.equal(identity.start.submittedText, "только комментарий идентичности");
-  assert.equal(identity.start.commandTarget.kind, "character");
-  assert.equal(identity.start.commandTarget.characterName, "Путин");
-  assertFixedContextKeys(identity.start.context);
-  assert.equal(identity.start.context.characterName, "Путин");
-  assert.equal(identity.start.context.imageAssetId, "identity-asset-1");
-  assert.equal(identity.start.context.anchorVersionId, null);
-  assert.equal(identity.start.context.generationId, null);
-  assert.equal(JSON.stringify(identity.start).includes("imageDataUrl"), false);
-  assert.equal(JSON.stringify(identity.start).includes("data:image"), false);
-
-  researchPosts.length = 0;
-  page.setResearchVisualState(readyVisual(), -1);
-  card = document.querySelector("#character-cards").children[0];
-  const textareas = card.querySelectorAll("textarea");
-  const anchorInstruction = textareas[1] || textareas[0];
-  const generateAnchor = card.querySelectorAll("button").find((button) => /base anchor|новый вариант|Создать/.test(button.textContent));
-  assert.ok(generateAnchor);
-  anchorInstruction.value = "сделай строже";
-  generateAnchor.disabled = false;
-  generateAnchor.dispatchEvent({ type: "click" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  page.setResearchVisualState(readyVisual({
+    characters: [{
+      name: "Путин",
+      identity: { assetId: "identity-asset-1", assetUrl: "/id.png", comment: "исходный" },
+      sourcePhoto: { assetId: "identity-asset-1", assetUrl: "/id.png" },
+      approvedAnchorId: "anchor-1",
+      approvedAssetId: "anchor-asset-1",
+      approvedAssetUrl: "/a.png",
+      anchorProvenance: "generated_from_source",
+    }],
+  }), -1);
+  const card = document.querySelector("#character-cards").children[0];
+  const refine = [...card.querySelectorAll("button")].find((button) => button.textContent === "Уточнить образ");
+  assert.ok(refine);
+  refine.dispatchEvent({ type: "click" });
+  const instruction = document.body.querySelector("#draft-instruction");
+  instruction.value = "сделай строже";
+  instruction.dispatchEvent({ type: "input" });
+  document.body.querySelector("#generate").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
   const anchorGen = researchPair("anchor_generate");
   assert.equal(anchorGen.start.submittedText, "сделай строже");
   assert.equal(anchorGen.start.commandTarget.kind, "character");
-  assertFixedContextKeys(anchorGen.start.context);
-  assert.equal(anchorGen.start.context.characterName, "Путин");
+  assert.equal(anchorGen.start.commandTarget.characterName, "Путин");
   assert.equal(anchorGen.start.context.anchorVersionId, "anchor-1");
   assert.equal(anchorGen.start.context.imageAssetId, "anchor-asset-1");
+  assert.equal(JSON.stringify(anchorGen.start).includes("imageDataUrl"), false);
+  assert.equal(JSON.stringify(anchorGen.start).includes("data:image"), false);
 
   researchPosts.length = 0;
-  page.setResearchVisualState(readyVisual({
-    characters: [{
-      name: "Путин",
-      identity: { assetId: "identity-asset-1", assetUrl: "/id.png", comment: "x" },
-      candidate: { id: "anchor-1", assetId: "anchor-asset-1", assetUrl: "/a.png", status: "ready" },
-      approvedAnchorId: null,
-    }],
-  }), -1);
-  const approveAnchor = document.querySelector("#character-cards").children[0].querySelectorAll("button")
-    .find((button) => /Утвердить этот образ/.test(button.textContent));
-  assert.ok(approveAnchor);
-  approveAnchor.dispatchEvent({ type: "click" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  document.body.querySelector("#draft-accept").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
   const anchorApprove = researchPair("anchor_approve");
   assert.equal(anchorApprove.start.submittedText, null);
   assert.equal(anchorApprove.start.commandTarget.characterName, "Путин");
-  assert.equal(anchorApprove.start.commandTarget.anchorVersionId, "anchor-1");
-  assertFixedContextKeys(anchorApprove.start.context);
-  assert.equal(anchorApprove.start.context.characterName, "Путин");
-  assert.equal(anchorApprove.start.context.anchorVersionId, "anchor-1");
-  assert.equal(anchorApprove.start.context.imageAssetId, "anchor-asset-1");
-
-  researchPosts.length = 0;
-  page.setResearchVisualState(readyVisual({
-    characters: [{
-      name: "Путин",
-      identity: { assetUrl: "/id.png", comment: "без assetId" },
-      candidate: { id: "anchor-orphan", assetUrl: "/a.png", status: "ready" },
-      approvedAnchorId: null,
-    }],
-  }), -1);
-  card = document.querySelector("#character-cards").children[0];
-  const orphanComment = card.querySelectorAll("textarea")[0];
-  const orphanSave = card.querySelectorAll("button").find((button) => /Сохранить фото|Сохранить новое фото/.test(button.textContent));
-  const orphanInput = card.querySelector("input");
-  orphanComment.value = "коммент без asset";
-  orphanInput.files = [{ name: "face.png", type: "image/png", size: 128 }];
-  orphanSave.dispatchEvent({ type: "click" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  const identityNullAsset = researchPair("identity_save");
-  assert.equal(identityNullAsset.start.context.characterName, "Путин");
-  assert.equal(identityNullAsset.start.context.imageAssetId, null);
+  assert.equal(JSON.stringify(anchorApprove.start).includes("data:image"), false);
 
   researchPosts.length = 0;
   page.setResearchVisualState(readyVisual(), -1);

@@ -14,6 +14,8 @@ import { draftInputError, createProjectStore } from "./project-store.mjs";
 import { createRenderController } from "./render-service.mjs";
 import { stageStoryboard } from "./stage.mjs";
 import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
+import { assembleAnchorSession } from "./anchor-session-request.mjs";
+import { compilePrototypePrompt } from "./anchor-prompt.mjs";
 import { generateImage, resolveImageModel } from "./image-provider.mjs";
 import {
   executeImageRequest,
@@ -49,6 +51,8 @@ export const routes = [
   { method: "GET", path: "/app.css", file: "app/storyboard-web/public/app.css" },
   { method: "GET", path: "/draft-autosave.mjs", file: "app/storyboard-web/public/draft-autosave.mjs" },
   { method: "GET", path: "/research-dock.mjs", file: "app/storyboard-web/public/research-dock.mjs" },
+  { method: "GET", path: "/anchor-session.mjs", file: "app/storyboard-web/public/anchor-session.mjs" },
+  { method: "GET", path: "/anchor-session-ui.mjs", file: "app/storyboard-web/public/anchor-session-ui.mjs" },
   { method: "GET", path: "/overflow.mjs", file: "app/storyboard-web/overflow.mjs" },
   { method: "GET", path: "/frame-renderer.mjs", file: "prototypes/storyboard-viewer/frame-renderer.mjs" },
   { method: "GET", path: "/viewer.css", file: "prototypes/storyboard-viewer/viewer.css" },
@@ -1150,6 +1154,194 @@ async function deliverPreparedImage({
   });
 }
 
+async function resolveSessionImage(runtime, dataUrl, assetId) {
+  if (dataUrl) {
+    const parsed = parseImageDataUrl(dataUrl);
+    return parsed ? { image: parsed } : { error: "invalid-image" };
+  }
+  if (assetId) {
+    const asset = await runtime.visualStore.readAsset(assetId);
+    if (!asset?.bytes) return { error: "invalid-image" };
+    return { image: { bytes: asset.bytes, mime: asset.mime, width: asset.width, height: asset.height } };
+  }
+  return { image: null };
+}
+
+async function handleAnchorSession(req, res, {
+  runtime,
+  characterName,
+  imageGenerator,
+  env,
+  fetchImpl,
+  logger,
+  nextRequest,
+}) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const request = nextRequest ? nextRequest() : undefined;
+  const body = await readVisualBody(req, res, IDENTITY_MAX_BODY_BYTES * 3);
+  if (body.done) return;
+  if (body.invalid) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const basis = body.payload?.basis;
+  const instruction = typeof body.payload?.instruction === "string" ? body.payload.instruction : "";
+  const source = await resolveSessionImage(runtime, body.payload?.sourceImage, body.payload?.sourceAssetId);
+  const anchor = basis === "from-source"
+    ? { image: null }
+    : await resolveSessionImage(runtime, body.payload?.anchorImage, body.payload?.anchorAssetId);
+  const previous = basis === "from-source"
+    ? { image: null }
+    : await resolveSessionImage(runtime, body.payload?.previousImage, null);
+  if (source.error || anchor.error || previous.error) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-image" });
+    return;
+  }
+  const styleAsset = runtime.visualStore.readAnchorStyle ? await runtime.visualStore.readAnchorStyle() : null;
+  const assembled = assembleAnchorSession({
+    basis,
+    instruction,
+    source: source.image,
+    anchor: anchor.image,
+    previous: previous.image,
+    style: styleAsset?.bytes ? { bytes: styleAsset.bytes, mime: styleAsset.mime } : null,
+  });
+  if (!assembled.ok) {
+    sendJson(res, 400, { status: "failed", kind: assembled.kind || "invalid-request" });
+    return;
+  }
+  const config = loadImageReferenceConfig(env ?? process.env);
+  if (!config.ok) {
+    sendJson(res, 500, { status: "failed", kind: "configuration" });
+    return;
+  }
+  const started = Date.now();
+  const result = await executeImageRequest({
+    strategy: config.strategy,
+    budgetBytes: config.budgetBytes,
+    references: assembled.references.map((ref) => toReference(ref.role, ref)),
+    generationMode: basis === "selected" ? "revision" : "initial",
+    compilePrompt: (prepared) => compilePrototypePrompt(prepared, instruction),
+    aspectRatio: "4:5",
+    model: resolveImageModel(env ?? process.env),
+    imageGenerator,
+    env: env ?? process.env,
+    fetchImpl,
+  });
+  logVisual(logger, request, "anchor-session", {
+    characterName,
+    basis,
+    status: result?.ok ? "ok" : "failed",
+    kind: result?.ok ? undefined : safeKind(result?.kind),
+    referenceCount: assembled.references.length,
+    latencyMs: Date.now() - started,
+  });
+  if (!result?.ok || !result.image?.bytes) {
+    sendJson(res, result?.httpStatus || 502, { status: "failed", kind: safeKind(result?.kind) || "provider" });
+    return;
+  }
+  const sourceBytes = source.image?.bytes;
+  if (sourceBytes && result.image.bytes.equals?.(sourceBytes)) {
+    sendJson(res, 502, { status: "failed", kind: "echoed-source" });
+    return;
+  }
+  sendJson(res, 200, {
+    status: "ready",
+    imageDataUrl: `data:${result.image.mime};base64,${result.image.bytes.toString("base64")}`,
+    mime: result.image.mime,
+  });
+}
+
+async function handleAnchorAccept(req, res, { runtime, characterName, logger, nextRequest }) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const request = nextRequest ? nextRequest() : undefined;
+  const body = await readVisualBody(req, res, IDENTITY_MAX_BODY_BYTES * 3);
+  if (body.done) return;
+  if (body.invalid) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const image = parseImageDataUrl(body.payload?.imageDataUrl);
+  const sourceImage = body.payload?.sourceImageDataUrl ? parseImageDataUrl(body.payload.sourceImageDataUrl) : null;
+  if (!image || (body.payload?.sourceImageDataUrl && !sourceImage)) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-image" });
+    return;
+  }
+  const result = await runtime.visualStore.acceptSessionAnchor({
+    characterName,
+    provenance: body.payload?.provenance,
+    image,
+    sourceImage,
+    instruction: body.payload?.instruction || "",
+  });
+  logVisual(logger, request, "anchor-accept", {
+    characterName,
+    provenance: body.payload?.provenance,
+    status: result?.ok ? "ok" : "failed",
+    kind: result?.ok ? undefined : safeKind(result?.kind),
+  });
+  if (!result?.ok) {
+    sendVisualFailure(res, result);
+    return;
+  }
+  await sendVisualState(res, runtime, { logger, request });
+}
+
+async function handleAnchorRetire(req, res, { runtime, characterName, logger, nextRequest }) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const request = nextRequest ? nextRequest() : undefined;
+  req.resume();
+  const result = await runtime.visualStore.retireCurrentAnchor({ characterName });
+  logVisual(logger, request, "anchor-retire", {
+    characterName,
+    status: result?.ok ? "ok" : "failed",
+    kind: result?.ok ? undefined : safeKind(result?.kind),
+    anchorId: result?.anchorId,
+  });
+  if (!result?.ok) {
+    sendVisualFailure(res, result);
+    return;
+  }
+  const visual = await sendVisualState(res, runtime, { logger, request, extra: { retiredAnchorId: result.anchorId } });
+  return visual;
+}
+
+async function handleAnchorRestore(req, res, { runtime, target, logger, nextRequest }) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const request = nextRequest ? nextRequest() : undefined;
+  req.resume();
+  const result = await runtime.visualStore.restoreRetiredAnchor({
+    characterName: target.characterName,
+    anchorId: target.anchorId,
+  });
+  logVisual(logger, request, "anchor-restore", {
+    characterName: target.characterName,
+    status: result?.ok ? "ok" : "failed",
+    kind: result?.ok ? undefined : safeKind(result?.kind),
+  });
+  if (!result?.ok) {
+    sendVisualFailure(res, result);
+    return;
+  }
+  await sendVisualState(res, runtime, { logger, request });
+}
+
 async function handleVisualAnchor(req, res, {
   runtime,
   characterName,
@@ -1938,6 +2130,49 @@ async function handle(req, res, {
   }
   if (pathname === "/api/visual/approve") {
     await handleVisualSimple(req, res, { runtime, action: "approveVisual" });
+    return;
+  }
+  const anchorSession = pathname.match(/^\/api\/visual\/characters\/([^/]+)\/anchor-session$/);
+  if (anchorSession) {
+    await handleAnchorSession(req, res, {
+      runtime,
+      characterName: decodeURIComponent(anchorSession[1]),
+      imageGenerator,
+      env,
+      fetchImpl,
+      logger,
+      nextRequest,
+    });
+    return;
+  }
+  const anchorAccept = pathname.match(/^\/api\/visual\/characters\/([^/]+)\/anchor-accept$/);
+  if (anchorAccept) {
+    await handleAnchorAccept(req, res, {
+      runtime,
+      characterName: decodeURIComponent(anchorAccept[1]),
+      logger,
+      nextRequest,
+    });
+    return;
+  }
+  const anchorRetire = pathname.match(/^\/api\/visual\/characters\/([^/]+)\/anchor-retire$/);
+  if (anchorRetire) {
+    await handleAnchorRetire(req, res, {
+      runtime,
+      characterName: decodeURIComponent(anchorRetire[1]),
+      logger,
+      nextRequest,
+    });
+    return;
+  }
+  const anchorRestore = pathname.match(/^\/api\/visual\/characters\/([^/]+)\/anchors\/([0-9a-f-]{36})\/restore$/i);
+  if (anchorRestore) {
+    await handleAnchorRestore(req, res, {
+      runtime,
+      target: { characterName: decodeURIComponent(anchorRestore[1]), anchorId: anchorRestore[2] },
+      logger,
+      nextRequest,
+    });
     return;
   }
   const identityCharacter = visualCharacterPath(pathname, "identity");

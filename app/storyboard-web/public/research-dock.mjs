@@ -749,8 +749,6 @@ export function bindResearchDock({
     root.style.maxHeight = `${nextMaxHeight}px`;
     root.style.width = `${nextWidth}px`;
     root.style.height = `${nextHeight}px`;
-    if (typeof root.offsetWidth === "number") root.offsetWidth = nextWidth;
-    if (typeof root.offsetHeight === "number") root.offsetHeight = nextHeight;
     rememberedExpandedSize = {
       width: root.style.width,
       height: root.style.height,
@@ -826,12 +824,17 @@ export function bindResearchDock({
       root.className = classes.join(" ");
     }
     if (!collapsed) {
+      if (root) root.scrollTop = 0;
       applyRememberedExpandedSize();
     }
     syncResizeGripVisibility();
+    if (resizeGrip && !collapsed) {
+      resizeGrip.hidden = false;
+      if (resizeGrip.style) resizeGrip.style.display = "";
+    }
     if (toggle) {
       setElementAttribute(toggle, "aria-expanded", collapsed ? "false" : "true");
-      toggle.textContent = collapsed ? "Research ▴" : "Research ▾";
+      toggle.textContent = collapsed ? "Команды ▴" : "Команды ▾";
     }
   }
 

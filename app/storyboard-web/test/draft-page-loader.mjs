@@ -5,6 +5,8 @@ const files = {
   "/frame-renderer.mjs": "prototypes/storyboard-viewer/frame-renderer.mjs",
   "/draft-autosave.mjs": "app/storyboard-web/public/draft-autosave.mjs",
   "/research-dock.mjs": "app/storyboard-web/public/research-dock.mjs",
+  "/anchor-session.mjs": "app/storyboard-web/public/anchor-session.mjs",
+  "/anchor-session-ui.mjs": "app/storyboard-web/public/anchor-session-ui.mjs",
   "/visual-anchors.mjs": "app/storyboard-web/public/visual-anchors.mjs",
   "/asset-picker.mjs": "app/storyboard-web/public/asset-picker.mjs",
   "/export-timing.mjs": "app/storyboard-web/public/export-timing.mjs",
