@@ -364,6 +364,37 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   background: #fffdf8;
 }
 
+.anchor-confirm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.anchor-confirm-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(29, 36, 40, 0.35);
+}
+
+.anchor-confirm {
+  position: relative;
+  z-index: 1;
+  width: min(420px, 100%);
+  padding: 18px;
+  border-radius: 14px;
+  background: #fffdf8;
+  box-shadow: 0 16px 40px rgba(29, 36, 40, 0.24);
+}
+
+.instruction-hint {
+  margin: 0;
+  color: #3c4549;
+  line-height: 1.4;
+}
+
 .anchor-review {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

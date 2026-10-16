@@ -110,3 +110,121 @@ test("accept promotes only through the explicit draft accept path", () => {
   assert.equal(state.anchor.provenance, "generated_from_source");
   assert.equal(state.anchor.source.dataUrl, SOURCE);
 });
+
+function refineFromSource() {
+  const first = requestGenerate(photoReady());
+  const created = resolveGenerate(first.state, { ok: true, requestId: first.effect.requestId, dataUrl: ANCHOR });
+  return openRefine(acceptDraft(created));
+}
+
+test("the first photo screen does not add a second source action", () => {
+  const photo = photoReady();
+  assert.equal(view(photo).modal.showGenerateFromSource, false);
+  assert.equal(view(photo).modal.generateLabel, "Сгенерировать");
+  assert.equal(requestGenerateFromSource(photo).blocked, "source-unavailable");
+});
+
+test("initial refine with a retained source shows both actions immediately", () => {
+  const opened = refineFromSource();
+  const blank = view(opened).modal;
+  assert.equal(blank.generateLabel, "Создать вариант с уточнением");
+  assert.equal(blank.showGenerateFromSource, true);
+  assert.equal(blank.generateEnabled, false);
+  assert.equal(blank.basis, "Для варианта с уточнением основа — текущий принятый образ.");
+  assert.equal(blank.instructionHint, "Для уточнения принятого образа инструкция обязательна. Вариант от исходного фото можно создать без инструкции.");
+  assert.equal(/Основа следующего варианта/.test(blank.basis), false);
+
+  const whitespace = setInstruction(opened, " \n\t ");
+  assert.equal(view(whitespace).modal.generateEnabled, false);
+  assert.equal(view(whitespace).modal.showGenerateFromSource, true);
+  assert.equal(requestGenerate(whitespace).blocked, "instruction-required");
+  const emptySource = requestGenerateFromSource(whitespace);
+  assert.equal(emptySource.blocked, null);
+  assert.equal(emptySource.effect.body.basis, "from-source");
+  assert.equal(emptySource.effect.body.instruction, "");
+  assert.equal(emptySource.effect.body.sourceImage, SOURCE);
+  assert.equal(emptySource.effect.body.previousImage, null);
+  assert.equal(emptySource.effect.body.anchorImage, null);
+
+  const typed = setInstruction(opened, "  теплее фон  ");
+  assert.equal(view(typed).modal.generateEnabled, true);
+  const sourced = requestGenerateFromSource(typed);
+  assert.equal(sourced.effect.body.basis, "from-source");
+  assert.equal(sourced.effect.body.instruction, "теплее фон");
+  assert.equal(sourced.effect.body.sourceImage, SOURCE);
+  assert.equal(sourced.effect.body.previousImage, null);
+  assert.equal(sourced.effect.body.anchorImage, null);
+  assert.equal(requestGenerate(sourced.state).blocked, "pending");
+  assert.equal(requestGenerateFromSource(sourced.state).blocked, "pending");
+
+  const primary = requestGenerate(typed);
+  assert.equal(primary.blocked, null);
+  assert.equal(primary.effect.body.basis, "accepted");
+  assert.equal(primary.effect.body.operation, "refine");
+  assert.equal(primary.effect.body.instruction, "теплее фон");
+  assert.equal(primary.effect.body.anchorImage, ANCHOR);
+  assert.equal(primary.effect.body.previousImage, null);
+  assert.equal(primary.effect.body.sourceImage, SOURCE);
+  assert.equal(requestGenerateFromSource(primary.state).blocked, "pending");
+
+  const appended = resolveGenerate(sourced.state, {
+    ok: true,
+    requestId: sourced.effect.requestId,
+    dataUrl: C1,
+  });
+  assert.equal(appended.anchor.dataUrl, ANCHOR);
+  assert.equal(appended.anchor.source.dataUrl, SOURCE);
+  assert.equal(appended.modal.candidates.length, 1);
+  assert.equal(appended.modal.index, 0);
+  assert.equal(appended.modal.candidates[0].origin.kind, "source");
+  assert.equal(view(appended).modal.candidateOrigin, "Этот вариант создан от исходного фото.");
+  assert.equal(view(appended).modal.position, "Вариант 1 из 1");
+});
+
+test("an uploaded ready anchor offers only instructed refinement", () => {
+  const seeded = openRefine(seedReadyAnchor(createState(), { dataUrl: ANCHOR, mime: "image/png" }));
+  const modal = view(seeded).modal;
+  assert.equal(modal.showGenerateFromSource, false);
+  assert.equal(modal.generateLabel, "Создать вариант с уточнением");
+  assert.equal(modal.generateEnabled, false);
+  assert.equal(modal.basis, "Основа следующего варианта: текущий принятый образ.");
+  assert.equal(modal.instructionHint || "", "");
+  assert.equal(requestGenerate(seeded).blocked, "instruction-required");
+  assert.equal(requestGenerateFromSource(seeded).blocked, "source-unavailable");
+  const ready = setInstruction(seeded, "строже");
+  assert.equal(view(ready).modal.generateEnabled, true);
+  assert.equal(requestGenerate(ready).effect.body.basis, "accepted");
+  assert.equal(requestGenerate(ready).effect.body.anchorImage, ANCHOR);
+});
+
+test("later candidates keep the selected basis and the source action separate", () => {
+  let state = setInstruction(refineFromSource(), "строже");
+  const first = requestGenerate(state);
+  state = resolveGenerate(first.state, { ok: true, requestId: first.effect.requestId, dataUrl: C1 });
+  state = setInstruction(state, "   ");
+  const emptyPrimary = requestGenerate(state);
+  assert.equal(emptyPrimary.blocked, null);
+  assert.equal(emptyPrimary.effect.body.basis, "selected");
+  assert.equal(emptyPrimary.effect.body.instruction, "");
+  assert.equal(emptyPrimary.effect.body.previousImage, C1);
+  assert.equal(view(state).modal.generateLabel, "Создать вариант на основе выбранного");
+
+  const second = requestGenerate(setInstruction(state, ""));
+  state = resolveGenerate(second.state, { ok: true, requestId: second.effect.requestId, dataUrl: C2 });
+  state = undoCandidate(state);
+  const later = view(state).modal;
+  assert.equal(later.basis, "Для первой кнопки основа — Вариант 1.");
+  assert.equal(later.showGenerateFromSource, true);
+  assert.equal(/Основа следующего варианта/.test(later.basis), false);
+  assert.match(later.instructionHint, /необязательн/i);
+  assert.match(later.instructionHint, /кнопк/i);
+  const branched = requestGenerate(state);
+  assert.equal(branched.effect.body.basis, "selected");
+  assert.equal(branched.effect.body.previousImage, C1);
+  const fresh = requestGenerateFromSource(state);
+  assert.equal(fresh.effect.body.basis, "from-source");
+  assert.equal(fresh.effect.body.sourceImage, SOURCE);
+  assert.equal(fresh.effect.body.previousImage, null);
+  assert.equal(fresh.effect.body.anchorImage, null);
+  assert.equal(state.anchor.dataUrl, ANCHOR);
+});

@@ -15,12 +15,16 @@ export const LABELS = Object.freeze({
   uploadedCaption: "Загружен как готовый anchor",
   sourcePhoto: "Исходное фото",
   generate: "Сгенерировать",
+  refineVariant: "Создать вариант с уточнением",
   another: "Создать вариант на основе выбранного",
   fromSource: "Создать вариант от исходного фото",
   originSource: "Этот вариант создан от исходного фото.",
   originAnchor: "Этот вариант создан от текущего принятого образа.",
   basisSource: "Основа следующего варианта: исходное фото.",
   basisAnchor: "Основа следующего варианта: текущий принятый образ.",
+  basisRefine: "Для варианта с уточнением основа — текущий принятый образ.",
+  hintRefineSource: "Для уточнения принятого образа инструкция обязательна. Вариант от исходного фото можно создать без инструкции.",
+  hintOptionalActions: "Инструкция необязательна. Каждая кнопка использует основу, названную в её подписи.",
   basisIdentity: "Исходное фото по-прежнему определяет личность.",
   accept: "Принять",
   cancel: "Отмена",
@@ -317,11 +321,17 @@ export function requestGenerate(state) {
   return beginGenerate(state, body, originForSelectedRevision(modal));
 }
 
+function sourceActionAvailable(modal) {
+  if (!modal?.source?.dataUrl) return false;
+  if (modal.step === "refine") return true;
+  return modal.step === "photo" && modal.candidates.length > 0;
+}
+
 export function requestGenerateFromSource(state) {
   const guard = guardGenerate(state);
   if (guard.blocked) return { state, effect: null, blocked: guard.blocked };
   const modal = state.modal;
-  if (!modal.candidates.length || !modal.source?.dataUrl) {
+  if (!sourceActionAvailable(modal)) {
     return { state, effect: null, blocked: "source-unavailable" };
   }
   return beginGenerate(state, {
@@ -401,12 +411,12 @@ function isDirty(modal) {
   return false;
 }
 
-export function requestDismiss(state) {
+export function requestDismiss(state, triggerId = "draft-close") {
   if (state.notice?.type === "delete") return cancelDelete(state);
   const modal = state.modal;
   if (!modal) return state;
-  if (modal.pending) return { ...state, notice: { type: "pending" } };
-  if (isDirty(modal)) return { ...state, notice: { type: "discard" } };
+  if (modal.pending) return { ...state, notice: { type: "pending", triggerId } };
+  if (isDirty(modal)) return { ...state, notice: { type: "discard", triggerId } };
   return closeModal(state);
 }
 
@@ -422,10 +432,10 @@ export function dismissNotice(state) {
   return state;
 }
 
-export function escapeKey(state) {
+export function escapeKey(state, triggerId = "draft-close") {
   if (state.notice?.type === "discard" || state.notice?.type === "pending") return dismissNotice(state);
   if (state.notice?.type === "delete") return cancelDelete(state);
-  return requestDismiss(state);
+  return requestDismiss(state, triggerId);
 }
 
 export function acceptDraft(state) {
@@ -651,15 +661,26 @@ function originCopy(candidate) {
 }
 
 function generationBasis(draft) {
-  if (draft.step !== "photo" && draft.step !== "refine") return { text: "", identity: "" };
+  if (draft.step !== "photo" && draft.step !== "refine") return { text: "", identity: "", hint: "" };
   const hasSource = Boolean(draft.source?.dataUrl);
-  const text = draft.candidates.length === 0
-    ? (draft.step === "photo" ? LABELS.basisSource : LABELS.basisAnchor)
-    : `Основа следующего варианта: Вариант ${draft.index + 1}.`;
+  const both = sourceActionAvailable(draft);
+  let text = "";
+  let hint = "";
+  if (both && draft.candidates.length === 0) {
+    text = LABELS.basisRefine;
+    hint = LABELS.hintRefineSource;
+  } else if (both) {
+    text = `Для первой кнопки основа — Вариант ${draft.index + 1}.`;
+    hint = LABELS.hintOptionalActions;
+  } else if (draft.candidates.length === 0) {
+    text = draft.step === "photo" ? LABELS.basisSource : LABELS.basisAnchor;
+  } else {
+    text = `Основа следующего варианта: Вариант ${draft.index + 1}.`;
+  }
   const identity = hasSource && !(draft.step === "photo" && draft.candidates.length === 0)
     ? LABELS.basisIdentity
     : "";
-  return { text, identity };
+  return { text, identity, hint };
 }
 
 export function view(state) {
@@ -694,14 +715,14 @@ export function view(state) {
       pending: draft.pending,
       error: draft.error ? errorText(draft.error) : "",
       errorCode: draft.error,
-      generateLabel: draft.candidates.length > 0 ? LABELS.another : LABELS.generate,
-      showGenerateFromSource: generative
-        && !draft.pending
-        && draft.candidates.length > 0
-        && Boolean(draft.source?.dataUrl),
+      generateLabel: draft.candidates.length > 0
+        ? LABELS.another
+        : (draft.step === "refine" ? LABELS.refineVariant : LABELS.generate),
+      showGenerateFromSource: sourceActionAvailable(draft),
       fromSourceLabel: LABELS.fromSource,
       basis: basis.text,
       basisIdentity: basis.identity,
+      instructionHint: basis.hint,
       candidateOrigin: originCopy(selectedCandidate(draft)),
       generateEnabled: canRequest(draft),
       acceptEnabled: !draft.pending && (

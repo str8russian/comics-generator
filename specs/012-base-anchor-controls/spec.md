@@ -14,13 +14,13 @@ A character card is either `NO_BASE_ANCHOR` or `ANCHOR_AVAILABLE`.
 
 Creation and replacement both offer **Загрузить готовый anchor** and **Создать из реального фото**. A ready upload is the candidate and makes no provider call. A generated anchor keeps its real source photo as secondary context. An uploaded ready anchor has no invented source photo.
 
-The accepted anchor stays visible until **Принять**. Cancel leaves it unchanged. Draft candidates and instructions die when the modal closes or the page reloads. Undo and Redo move through candidates and never call the provider. Escape does not discard a dirty draft. A pending request cannot be closed away. The first refinement requires an instruction; later empty instructions still create the next candidate.
+The accepted anchor stays visible until **Принять**. Cancel leaves it unchanged. Draft candidates and instructions die when the modal closes or the page reloads. Undo and Redo move through candidates and never call the provider. Escape on a dirty draft opens one confirmation centered over the dimmed, inert draft; Escape again dismisses only that confirmation. A pending request cannot be closed away. On the initial Refine screen, **Создать вариант с уточнением** requires an instruction and uses the accepted anchor. After a candidate exists, **Создать вариант на основе выбранного** may use an empty instruction and follows the candidate selected by Undo.
 
 ## Generation
 
-**Создать вариант на основе выбранного** revises the selected candidate, including the candidate chosen by Undo, and keeps the source photo and accepted anchor as identity and continuity authorities.
+**Создать вариант с уточнением** is the initial Refine action. It revises the accepted anchor, keeps a retained source photo as identity authority, and requires a non-empty instruction. After a candidate exists, that primary action becomes **Создать вариант на основе выбранного**: it revises the selected candidate, including the candidate chosen by Undo, and keeps the source photo and accepted anchor as identity and continuity authorities. An empty instruction is then allowed.
 
-**Создать вариант от исходного фото** appears only after a candidate exists and a real source photo is retained. It sends that photograph, not the selected candidate and not the accepted stylized anchor. A project style image may be included only as style, never as identity or the revision draft. Each explicit click makes one provider call and appends the result.
+**Создать вариант от исходного фото** is shown immediately on the initial Refine screen when a real source photo is retained, and it stays available after candidates exist. It does not appear for a ready anchor without a real source photo, and the first photo-generation screen does not add a second copy of it. It sends that photograph, not the selected candidate and not the accepted stylized anchor. An instruction is optional and is sent when present. A project style image may be included only as style, never as identity or the revision draft. Each explicit click makes one provider call and appends the result. Basis copy names the action it belongs to.
 
 The next-action basis and the displayed candidate's origin are separate. Origin is stored on the candidate.
 

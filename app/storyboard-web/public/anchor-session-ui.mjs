@@ -259,15 +259,61 @@ function readDataUrl(file) {
   });
 }
 
+function removeNode(node) {
+  if (!node) return;
+  if (typeof node.remove === "function") {
+    node.remove();
+    return;
+  }
+  const parent = node.parentNode;
+  if (!parent?.children) return;
+  const index = parent.children.indexOf(node);
+  if (index >= 0) parent.children.splice(index, 1);
+  node.parentNode = null;
+}
+
+function removeOverlay() {
+  const node = document.getElementById?.("anchor-session-overlay")
+    ?? document.body?.querySelector?.("#anchor-session-overlay");
+  removeNode(node);
+}
+
+function byId(id) {
+  if (!id) return null;
+  if (typeof document.getElementById === "function") return document.getElementById(id);
+  return document.body?.querySelector?.(`#${id}`) ?? null;
+}
+
+function launchDomId(focusRestoreId, name) {
+  const action = String(focusRestoreId || "").replace(/^launch-/, "");
+  if (!action || !name) return "";
+  return `launch-${action}-${cssName(name)}`;
+}
+
+function finishClosed() {
+  const launchId = launchDomId(session?.state?.focusRestoreId, session?.characterName);
+  session = null;
+  render();
+  byId(launchId)?.focus?.();
+}
+
+function dismissDraft(triggerId) {
+  const next = requestDismiss(session.state, triggerId);
+  if (!next.modal && !next.notice) {
+    finishClosed();
+    return;
+  }
+  session = { ...session, state: next };
+  render();
+}
+
 function renderModal(model, deps) {
   const modal = model.modal;
-  const body = el("div", { inert: Boolean(model.notice) }, [
+  const body = el("div", {}, [
     el("div", { class: "dialog-header" }, [
-      el("h2", { id: "anchor-dialog-title", text: modal?.title || model.notice?.title || "" }),
-      button({ class: "close", "aria-label": "Закрыть" }, "×", () => {
-        session = { ...session, state: requestDismiss(session.state) };
-        if (!session.state.modal && !session.state.notice) session = null;
-        render();
+      el("h2", { id: "anchor-dialog-title", text: modal?.title || "" }),
+      button({ id: "draft-close", class: "close", "aria-label": "Закрыть" }, "×", () => {
+        dismissDraft("draft-close");
       }),
     ]),
     modal?.preview?.note ? el("p", { class: "note", text: modal.preview.note }) : null,
@@ -302,6 +348,7 @@ function renderModal(model, deps) {
       }),
     ]) : null,
     modal?.showInstruction ? instructionControl(modal) : null,
+    modal?.instructionHint ? el("p", { id: "instruction-hint", class: "instruction-hint", text: modal.instructionHint }) : null,
     modal?.basis ? el("p", { id: "generation-basis", class: "basis", text: modal.basis }) : null,
     modal?.basisIdentity ? el("p", { class: "basis-identity", text: modal.basisIdentity }) : null,
     el("div", { class: "generate-actions" }, [
@@ -309,18 +356,18 @@ function renderModal(model, deps) {
         id: "generate",
         class: "primary",
         disabled: !modal.generateEnabled,
+        "aria-describedby": modal.basis ? "generation-basis" : null,
       }, modal.pending ? "Запрос к провайдеру…" : modal.generateLabel, () => onGenerate(requestGenerate, deps)) : null,
       modal?.showGenerateFromSource ? button({
         id: "generate-from-source",
         class: "secondary",
+        disabled: modal.pending,
       }, modal.fromSourceLabel, () => onGenerate(requestGenerateFromSource, deps)) : null,
     ]),
     modal?.error ? el("p", { class: "error", role: "status", text: modal.error }) : null,
     modal ? el("div", { class: "dialog-actions" }, [
       button({ id: "draft-cancel", class: "secondary" }, "Отмена", () => {
-        session = { ...session, state: requestDismiss(session.state) };
-        if (!session.state.modal && !session.state.notice) session = null;
-        render();
+        dismissDraft("draft-cancel");
       }),
       modal.step !== "choose" ? button({
         id: "draft-accept",
@@ -329,37 +376,55 @@ function renderModal(model, deps) {
       }, "Принять", () => onAccept(deps)) : null,
     ]) : null,
   ]);
-  const notice = model.notice ? el("div", { class: "notice", role: "alertdialog", "aria-labelledby": "anchor-notice-title" }, [
-    el("h3", { id: "anchor-notice-title", text: model.notice.title }),
-    el("p", { text: model.notice.text }),
-    el("div", { class: "dialog-actions" }, [
-      model.notice.dismissLabel ? button({ id: "notice-dismiss", class: "secondary" }, model.notice.dismissLabel, () => {
-        if (model.notice.type === "delete") {
-          session = { ...session, state: cancelDelete(session.state) };
-          if (!session.state.notice) session = null;
-        } else session = { ...session, state: dismissNotice(session.state) };
-        render();
-      }) : null,
-      model.notice.confirmLabel ? button({
-        id: "notice-confirm",
-        class: model.notice.type === "delete" ? "danger" : "secondary",
-      }, model.notice.confirmLabel, () => {
-        if (model.notice.type === "delete") onConfirmDelete(deps);
-        if (model.notice.type === "discard") {
-          session = null;
-          render();
-        }
-      }) : null,
-    ]),
-  ]) : null;
+  const dialog = modal ? el("div", {
+    class: "anchor-dialog",
+    role: "dialog",
+    inert: Boolean(model.notice),
+    "aria-modal": model.notice ? "false" : "true",
+    "aria-labelledby": "anchor-dialog-title",
+    "data-anchor-focus": "true",
+  }, [body]) : null;
   return el("div", { class: "anchor-overlay" }, [
+    dialog,
+    confirmationLayer(model, deps),
+  ]);
+}
+
+function confirmationLayer(model, deps) {
+  const notice = model.notice;
+  if (!notice) return null;
+  return el("div", { class: "anchor-confirm-layer", "data-anchor-notice": "true" }, [
+    el("div", { class: "anchor-confirm-scrim", "aria-hidden": "true" }),
     el("div", {
-      class: "anchor-dialog",
-      role: "dialog",
+      class: "anchor-confirm",
+      role: "alertdialog",
       "aria-modal": "true",
-      "aria-labelledby": modal ? "anchor-dialog-title" : "anchor-notice-title",
-      "data-anchor-focus": "true",
-    }, [body, notice]),
+      "aria-labelledby": "anchor-notice-title",
+      "aria-describedby": "anchor-notice-text",
+    }, [
+      el("h3", { id: "anchor-notice-title", text: notice.title }),
+      el("p", { id: "anchor-notice-text", text: notice.text }),
+      el("div", { class: "dialog-actions" }, [
+        notice.dismissLabel ? button({ id: "notice-dismiss", class: "secondary" }, notice.dismissLabel, () => {
+          if (notice.type === "delete") {
+            session = { ...session, state: cancelDelete(session.state) };
+            if (!session.state.notice) session = null;
+            render();
+            return;
+          }
+          const triggerId = session.state.notice?.triggerId || "draft-close";
+          session = { ...session, state: dismissNotice(session.state) };
+          render(triggerId);
+        }) : null,
+        notice.confirmLabel ? button({
+          id: "notice-confirm",
+          class: notice.type === "delete" ? "danger" : "secondary",
+        }, notice.confirmLabel, () => {
+          if (notice.type === "delete") onConfirmDelete(deps);
+          if (notice.type === "discard") finishClosed();
+        }) : null,
+      ]),
+    ]),
   ]);
 }
 
@@ -457,43 +522,82 @@ function renderCards(characters, deps) {
   }
 }
 
+function confirmationControls() {
+  const layer = document.querySelector?.("[data-anchor-notice]");
+  if (!layer?.querySelectorAll) return [];
+  return [...layer.querySelectorAll("button")].filter((node) => !node.disabled);
+}
+
 function onKeyDown(event) {
   if (!session) return;
-  if (event.key === "Escape") {
+  if (event.key === "Tab" && session.state.notice) {
+    const controls = confirmationControls();
+    if (!controls.length) return;
     event.preventDefault();
-    const next = escapeKey(session.state);
-    session = next.modal || next.notice ? { ...session, state: next } : null;
-    render();
+    const current = controls.indexOf(document.activeElement);
+    const delta = event.shiftKey ? -1 : 1;
+    const next = controls[(current + delta + controls.length) % controls.length];
+    next?.focus?.();
+    return;
   }
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  const notice = session.state.notice;
+  const returning = notice?.type === "discard" || notice?.type === "pending";
+  const returnId = notice?.triggerId || "draft-close";
+  const triggerId = document.activeElement?.id === "draft-cancel" ? "draft-cancel" : "draft-close";
+  const next = escapeKey(session.state, triggerId);
+  if (!next.modal && !next.notice) {
+    finishClosed();
+    return;
+  }
+  session = { ...session, state: next };
+  render(returning ? returnId : "");
 }
 
 let listening = false;
 
 let currentDeps = null;
 
-function render() {
+function render(focusId = "") {
   if (!host || !currentDeps) return;
   const active = document.activeElement;
   const activeId = active?.id || "";
   const selectionStart = active && "selectionStart" in active ? active.selectionStart : null;
   const selectionEnd = active && "selectionEnd" in active ? active.selectionEnd : null;
+  const previousScroll = document.querySelector?.(".anchor-dialog")?.scrollTop || 0;
   renderCards(currentDeps.characters || [], currentDeps);
-  document.getElementById?.("anchor-session-overlay")?.remove?.();
+  removeOverlay();
   if (session?.state && (session.state.modal || session.state.notice) && document.body && typeof document.body.append === "function") {
     const overlay = renderModal(view(session.state), currentDeps);
     overlay.id = "anchor-session-overlay";
     document.body.append(overlay);
+    const scrolled = document.querySelector(".anchor-dialog");
+    if (scrolled && previousScroll) scrolled.scrollTop = previousScroll;
   }
   if (typeof document.querySelector !== "function") return;
+  const noticeLayer = document.querySelector("[data-anchor-notice]");
+  if (noticeLayer) {
+    (noticeLayer.querySelector("#notice-dismiss") || noticeLayer.querySelector("button"))?.focus?.();
+    return;
+  }
+  if (focusId) {
+    const target = byId(focusId);
+    if (target) {
+      target.focus?.();
+      return;
+    }
+  }
   const dialog = document.querySelector("[data-anchor-focus]");
   if (!dialog) return;
-  const kept = activeId ? dialog.querySelector(`#${CSS.escape(activeId)}`) : null;
+  const escapedId = activeId && globalThis.CSS?.escape ? CSS.escape(activeId) : activeId;
+  const kept = escapedId ? dialog.querySelector(`#${escapedId}`) : null;
   if (kept) {
-    kept.focus();
+    kept.focus?.();
     if (selectionStart != null && kept.setSelectionRange) kept.setSelectionRange(selectionStart, selectionEnd);
     return;
   }
-  dialog.querySelector("#notice-dismiss, #path-ready, #draft-instruction, #draft-file, button")?.focus();
+  dialog.querySelector("#path-ready, #draft-instruction, #draft-file, button")?.focus?.();
 }
 
 export function renderAnchorWorkspace(deps) {
