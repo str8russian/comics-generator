@@ -18,7 +18,8 @@
     "spike:image-api:under-limit": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/under-limit.mjs",
     "spike:image-api:limit-check": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/limit-check.mjs",
     "spike:image-api:payload-threshold": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/payload-threshold.mjs",
-    "spike:image-api:image-threshold": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/image-threshold.mjs"
+    "spike:image-api:image-threshold": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/image-threshold.mjs",
+    "spike:base-anchor-ui": "node --test spikes/base-anchor-ui-prototype/test/*.test.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",
