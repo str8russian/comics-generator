@@ -25,7 +25,7 @@ test("compiles persisted placement, order, text, and duration into one video spe
       layout: "single",
       panels: [],
     }],
-  }, { assetOrigin: "http://127.0.0.1:4173" });
+  }, { assetOrigin: "http://127.0.0.1:4173/api/projects/00000000-0000-4000-8000-000000000001" });
   assert.equal(compiled.ok, true);
   assert.equal(compiled.spec.project.width, 1920);
   assert.equal(compiled.spec.project.height, 1080);
@@ -38,7 +38,15 @@ test("compiles persisted placement, order, text, and duration into one video spe
   assert.equal(compiled.spec.frames[0].panels[0].mirrored, true);
   assert.equal(compiled.spec.frames[0].panels[0].zoom, 1.4);
   assert.equal(compiled.spec.frames[0].panels[0].positionX, 41);
-  assert.equal(compiled.spec.frames[0].panels[0].asset, "http://127.0.0.1:4173/api/visual/assets/asset-right");
+  assert.equal(
+    compiled.spec.frames[0].panels[0].asset,
+    "http://127.0.0.1:4173/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-right",
+  );
+  assert.equal(
+    compiled.spec.frames[0].panels[1].asset,
+    "http://127.0.0.1:4173/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-left",
+  );
+  assert.equal(JSON.stringify(compiled.spec).includes("/api/visual/assets/"), false);
   assert.equal(compiled.spec.frames[1].kind, "text");
   assert.equal(compiled.spec.frames[1].textCard, "Пояснение");
   assert.equal(compiled.spec.frames[1].dialogue, "");

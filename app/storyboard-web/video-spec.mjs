@@ -39,7 +39,7 @@ export function compileVideoSpec(visual, { assetOrigin = "", transition = "hard-
         subject: panel.subject || "",
         assetId: panel.assetId || null,
         asset: panel.assetId && assetOrigin
-          ? `${assetOrigin}/api/visual/assets/${panel.assetId}`
+          ? `${assetOrigin}/visual/assets/${panel.assetId}`
           : (typeof panel.asset === "string" ? panel.asset : null),
         position: panel.position,
         align: panel.align,

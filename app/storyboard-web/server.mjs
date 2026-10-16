@@ -961,8 +961,9 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
     sendJson(res, 500, { status: "failed", kind: "configuration" });
     return;
   }
+  const projectId = requireProjectId();
   const compiled = compileVideoSpec(visual, {
-    assetOrigin: `http://127.0.0.1:${port}`,
+    assetOrigin: `http://127.0.0.1:${port}/api/projects/${projectId}`,
     transition,
   });
   if (!compiled.ok) {
@@ -981,7 +982,6 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
     transitionMode: transition,
     transitionOverlapFrames: overlapFrames,
   });
-  const projectId = requireProjectId();
   const started = controller.start(compiled.spec, {
     onStart: async () => {
       try {
