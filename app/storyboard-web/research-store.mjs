@@ -398,6 +398,13 @@ function deriveTerminalFlags(clientFlags, { incomplete }) {
 
 function createMemoryStore() {
   const events = [];
+
+  function remember(event, input) {
+    event.projectId = input?.projectId ?? null;
+    events.push(event);
+    const { projectId, ...rest } = event;
+    return rest;
+  }
   let seq = 0;
 
   async function appendNote(input) {
@@ -421,8 +428,7 @@ function createMemoryStore() {
       outcomeFlags: {},
       durationMs: null,
     };
-    events.push(event);
-    return { ok: true, event };
+    return { ok: true, event: remember(event, input) };
   }
 
   async function appendEvent(input) {
@@ -453,8 +459,7 @@ function createMemoryStore() {
         outcomeFlags: {},
         durationMs: null,
       };
-      events.push(event);
-      return { ok: true, event };
+      return { ok: true, event: remember(event, input) };
     }
 
     if (events.some((event) => (
@@ -502,8 +507,7 @@ function createMemoryStore() {
         outcomeFlags,
         durationMs,
       };
-      events.push(event);
-      return { ok: true, event };
+      return { ok: true, event: remember(event, input) };
     }
 
     if (!validated.startSnapshot) return failed("invalid-request");
@@ -527,16 +531,19 @@ function createMemoryStore() {
       outcomeFlags,
       durationMs: null,
     };
-    events.push(event);
-    return { ok: true, event };
+    event.projectId = input.projectId ?? null;
+    return { ok: true, event: remember(event, input) };
   }
 
-  async function listTrace({ kind, surface } = {}) {
-    let listed = events.slice();
+  async function listTrace({ kind, surface, projectId = null } = {}) {
+    let listed = events.filter((event) => (event.projectId ?? null) === (projectId ?? null));
     if (kind != null) listed = listed.filter((event) => event.eventKind === kind);
     if (surface != null) listed = listed.filter((event) => event.surface === surface);
     listed.sort((a, b) => a.seq - b.seq);
-    return { ok: true, events: listed };
+    return {
+      ok: true,
+      events: listed.map(({ projectId, ...event }) => event),
+    };
   }
 
   return { appendNote, appendEvent, listTrace };
@@ -559,19 +566,20 @@ function createPgStore(pool) {
   async function insertRow(client, row) {
     const result = await client.query(`
       INSERT INTO research_event (
-        id, occurred_at, event_kind, semantic_action, correlation_id, surface,
+        id, project_id, occurred_at, event_kind, semantic_action, correlation_id, surface,
         submitted_text, command_target, edit_target, context,
         outcome, outcome_flags, outcome_kind, duration_ms
       ) VALUES (
-        $1::uuid, COALESCE($2::timestamptz, clock_timestamp()), $3, $4, $5::uuid, $6,
-        $7, $8::jsonb, $9::jsonb, $10::jsonb,
-        $11, $12::jsonb, $13, $14
+        $1::uuid, $2::uuid, COALESCE($3::timestamptz, clock_timestamp()), $4, $5, $6::uuid, $7,
+        $8, $9::jsonb, $10::jsonb, $11::jsonb,
+        $12, $13::jsonb, $14, $15
       )
       RETURNING seq, id, occurred_at, event_kind, semantic_action, correlation_id, surface,
                 submitted_text, command_target, edit_target, context,
                 outcome, outcome_flags, outcome_kind, duration_ms
     `, [
       row.id,
+      row.projectId,
       row.occurredAt ?? null,
       row.eventKind,
       row.semanticAction,
@@ -592,10 +600,12 @@ function createPgStore(pool) {
   async function appendNote(input) {
     const validated = validateNoteInput(input);
     if (!validated.ok) return validated;
+    if (typeof input?.projectId !== "string") return failed("invalid-request");
     try {
       return await withClient(pool, async (client) => {
         const event = await insertRow(client, {
           id: validated.id,
+          projectId: input.projectId,
           eventKind: "note",
           semanticAction: "note",
           correlationId: null,
@@ -620,11 +630,13 @@ function createPgStore(pool) {
   async function appendEvent(input) {
     const validated = validateEventInput(input);
     if (!validated.ok) return validated;
+    if (typeof input?.projectId !== "string") return failed("invalid-request");
     try {
       return await withClient(pool, async (client) => {
         if (validated.eventKind === "action_start") {
           const event = await insertRow(client, {
             id: validated.id,
+            projectId: input.projectId,
             eventKind: "action_start",
             semanticAction: validated.semanticAction,
             correlationId: validated.correlationId,
@@ -646,9 +658,9 @@ function createPgStore(pool) {
                  submitted_text, command_target, edit_target, context,
                  outcome, outcome_flags, outcome_kind, duration_ms
           FROM research_event
-          WHERE correlation_id = $1::uuid AND event_kind = 'action_start'
+          WHERE correlation_id = $1::uuid AND event_kind = 'action_start' AND project_id = $2::uuid
           LIMIT 1
-        `, [validated.correlationId]);
+        `, [validated.correlationId, input.projectId]);
         const startRaw = startResult.rows[0] ?? null;
         const startRow = startRaw ? mapRow(startRaw) : null;
 
@@ -695,6 +707,7 @@ function createPgStore(pool) {
 
         const event = await insertRow(client, {
           id: validated.id,
+          projectId: input.projectId,
           occurredAt,
           eventKind: "action_terminal",
           semanticAction: identity.semanticAction,
@@ -717,11 +730,12 @@ function createPgStore(pool) {
     }
   }
 
-  async function listTrace({ kind, surface } = {}) {
+  async function listTrace({ kind, surface, projectId } = {}) {
+    if (typeof projectId !== "string") return failed("invalid-request");
     try {
       return await withClient(pool, async (client) => {
-        const clauses = [];
-        const params = [];
+        const clauses = ["project_id = $1::uuid"];
+        const params = [projectId];
         if (kind != null) {
           params.push(kind);
           clauses.push(`event_kind = $${params.length}`);

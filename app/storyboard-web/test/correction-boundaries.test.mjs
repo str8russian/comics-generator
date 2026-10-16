@@ -1,3 +1,4 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAssetPicker } from "../public/asset-picker.mjs";
@@ -30,8 +31,8 @@ test("the asset picker shows thumbnails, the current asset, and disk upload", ()
     document: { createElement },
     currentAssetId: "asset-1",
     assets: [
-      { id: "asset-1", url: "/api/visual/assets/asset-1", kind: "uploaded-image", width: 10, height: 20 },
-      { id: "asset-2", url: "/api/visual/assets/asset-2", kind: "panel-image", width: 30, height: 40, provenance: "кадр 2" },
+      { id: "asset-1", url: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-1", kind: "uploaded-image", width: 10, height: 20 },
+      { id: "asset-2", url: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-2", kind: "panel-image", width: 30, height: 40, provenance: "кадр 2" },
     ],
     onSelect: (asset) => selected.push(asset.id),
     onUpload: () => uploads.push(true),
@@ -40,7 +41,7 @@ test("the asset picker shows thumbnails, the current asset, and disk upload", ()
   const items = popover.children[1].children;
   assert.equal(items.length, 2);
   assert.match(items[0].className, /is-current/);
-  assert.equal(items[0].children[0].src, "/api/visual/assets/asset-1");
+  assert.equal(items[0].children[0].src, "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-1");
   assert.equal(/×|Ш /.test(items[1].children[1].textContent), false);
   assert.match(items[1].children[1].textContent, /кадр 2/);
   assert.match(items[0].children[1].textContent, /текущее/);

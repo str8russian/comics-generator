@@ -20,7 +20,7 @@ function close(server) {
   });
 }
 
-function send(port, { method = "PUT", path = "/api/draft", headers = {}, body } = {}) {
+function send(port, { method = "PUT", path = "/api/projects/00000000-0000-4000-8000-000000000001/draft", headers = {}, body } = {}) {
   return new Promise((resolve, reject) => {
     const payload = body == null ? null : body;
     const req = http.request({
@@ -177,7 +177,7 @@ test("material-state logs and the HTTP body omit the draft, names, and aliases",
     const port = await listen(server);
     const response = await send(port, {
       method: "POST",
-      path: "/api/material-states",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/material-states",
       headers: {
         "content-type": "application/json",
         authorization: "Bearer super-secret",
@@ -273,7 +273,7 @@ test("storyboard-persist logs and the 502 body omit dialogue, provider text, and
     const port = await listen(server);
     const response = await send(port, {
       method: "POST",
-      path: "/api/storyboard-results",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/storyboard-results",
       headers: {
         "content-type": "application/json",
         authorization: "Bearer super-secret",
@@ -330,7 +330,7 @@ test("storyboard-persist logs and the 504 body omit dialogue, exception text, an
     const port = await listen(server);
     const response = await send(port, {
       method: "POST",
-      path: "/api/storyboard-results",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/storyboard-results",
       headers: {
         "content-type": "application/json",
         authorization: "Bearer super-secret",
@@ -364,12 +364,12 @@ test("research note protected-content rejection never echoes secrets in body or 
   });
   try {
     const port = await listen(server);
-    const before = await send(port, { method: "GET", path: "/api/research/trace" });
+    const before = await send(port, { method: "GET", path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
     assert.equal(before.status, 200);
     const beforeCount = JSON.parse(before.body).events.length;
     const response = await send(port, {
       method: "POST",
-      path: "/api/research/notes",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/notes",
       headers: { "content-type": "application/json" },
       body: json({
         submittedText: secret,
@@ -394,7 +394,7 @@ test("research note protected-content rejection never echoes secrets in body or 
     const captured = [...logs, response.body].join("\n");
     assert.equal(captured.includes(secret), false);
     assert.equal(captured.includes("redaction-research-canary-token"), false);
-    const after = await send(port, { method: "GET", path: "/api/research/trace" });
+    const after = await send(port, { method: "GET", path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
     assert.equal(JSON.parse(after.body).events.length, beforeCount);
   } finally {
     await close(server);

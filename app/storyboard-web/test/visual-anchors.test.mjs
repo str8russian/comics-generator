@@ -1,3 +1,4 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import http from "node:http";
@@ -12,13 +13,13 @@ test("a partially assigned frame shows the ready panel in visual mode", () => {
     layout: "split2",
     dialogue: "",
     panels: [
-      { description: "Путин смотрит", assetId: "asset-1", asset: "/api/visual/assets/asset-1" },
+      { description: "Путин смотрит", assetId: "asset-1", asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-1" },
       { description: "Дуров слушает" },
     ],
   });
   assert.equal(presented.mode, "visual");
   assert.equal(presented.source, "partial");
-  assert.equal(presented.frame.panels[0].asset, "/api/visual/assets/asset-1");
+  assert.equal(presented.frame.panels[0].asset, "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-1");
   assert.equal(presented.frame.panels[1].asset, undefined);
 });
 
@@ -336,7 +337,7 @@ test("the visual adapter source makes no provider request", () => {
   const source = readFileSync(new URL("../public/visual-anchors.mjs", import.meta.url), "utf8");
   assert.equal(source.includes("fetch"), false);
   assert.equal(source.includes("provider"), false);
-  assert.equal(source.includes("/api/"), false);
+  assert.equal(source.includes("/api/projects/00000000-0000-4000-8000-000000000001/"), false);
   const calls = [];
   const previous = globalThis.fetch;
   globalThis.fetch = (...args) => {
@@ -488,15 +489,17 @@ test("the last stored frame still opens, with structure fallback for an unknown 
     const detailCells = byClass(document.querySelector("#detail-frame"), "dialogue-cell");
     assert.equal(byClass(detailCells[1], "dialogue-text")[0].textContent, durovLine);
     assert.equal(byClass(document.querySelector("#detail-frame"), "frame-canvas")[0].style.width, "1920px");
-    assert.equal(requests.every((path) => (
-      path === "/api/project"
-      || path === "/api/visual"
+    const allowed = (path) => (
+      path === "/api/projects/00000000-0000-4000-8000-000000000001"
+      || path === "/api/projects/00000000-0000-4000-8000-000000000001/visual"
       || path === "/api/build"
-      || path === "/api/visual/render"
-      || path.startsWith("/api/research/")
-    )), true);
+      || path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/render"
+      || path === "/api/projects/00000000-0000-4000-8000-000000000001/open"
+      || path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/")
+    );
+    assert.deepEqual(requests.filter((path) => !allowed(path)), []);
     assert.equal(requests.some((path) => path.includes("/generate")), false);
-    assert.equal(requests.filter((path) => path === "/api/project").length >= 1, true);
+    assert.equal(requests.filter((path) => path === "/api/projects/00000000-0000-4000-8000-000000000001").length >= 1, true);
   } finally {
     globalThis.fetch = previousFetch;
     await close(server);

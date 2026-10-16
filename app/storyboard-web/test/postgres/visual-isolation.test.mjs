@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPool } from "../../db/pool.mjs";
 import { migrate } from "../../db/migrate.mjs";
+import { enterProject, SEEDED_PROJECT_ID } from "../../project-scope.mjs";
 import { createVisualStore } from "../../visual-store.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
@@ -64,11 +65,14 @@ async function reset(pool) {
 }
 
 async function seedMaterial(pool) {
-  await pool.query("INSERT INTO source_revision (id, text) VALUES ($1, 'test')", [ids.source]);
+  await pool.query(
+    "INSERT INTO source_revision (id, project_id, text) VALUES ($1, $2, 'test')",
+    [ids.source, SEEDED_PROJECT_ID],
+  );
   await pool.query(`
-    INSERT INTO reading (id, draft_text, draft_revision_token, status)
-    VALUES ($1, 'test', '10000000-0000-4000-8000-000000000008', 'ready')
-  `, [ids.reading]);
+    INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status)
+    VALUES ($1, $2, 'test', '10000000-0000-4000-8000-000000000008', 'ready')
+  `, [ids.reading, SEEDED_PROJECT_ID]);
   await pool.query(`
     INSERT INTO interpretation (id, source_revision_id, reading_id)
     VALUES ($1, $2, $3)
@@ -84,8 +88,8 @@ async function seedMaterial(pool) {
   await pool.query(`
     UPDATE project
     SET active_source_revision_id = $1, active_material_state_id = $2
-    WHERE singleton = true
-  `, [ids.source, ids.material]);
+    WHERE id = $3
+  `, [ids.source, ids.material, SEEDED_PROJECT_ID]);
 }
 
 async function insertResult(pool, id, createdAt, payloadFrames = frames()) {
@@ -98,6 +102,7 @@ async function insertResult(pool, id, createdAt, payloadFrames = frames()) {
 test("panel assignments stay isolated between storyboard results with the same frame and panel keys", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
 }, async () => {
+  enterProject(SEEDED_PROJECT_ID);
   const url = new URL(databaseUrl);
   assert.equal(url.pathname, "/comics_test");
   const pool = createPool(databaseUrl);
@@ -181,6 +186,7 @@ test("panel assignments stay isolated between storyboard results with the same f
 test("placement zoom, pan, and mirror persist across reload and copy-forward without a new asset", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
 }, async () => {
+  enterProject(SEEDED_PROJECT_ID);
   const url = new URL(databaseUrl);
   assert.equal(url.pathname, "/comics_test");
   const split = [{
@@ -276,6 +282,7 @@ test("placement zoom, pan, and mirror persist across reload and copy-forward wit
 test("manual assembly keeps panel identity and reuses an upload without a generation attempt", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
 }, async () => {
+  enterProject(SEEDED_PROJECT_ID);
   const url = new URL(databaseUrl);
   assert.equal(url.pathname, "/comics_test");
   const split = [{
@@ -425,6 +432,7 @@ test("manual assembly keeps panel identity and reuses an upload without a genera
 test("current image follows assignment then generation, and undo restores each step", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
 }, async () => {
+  enterProject(SEEDED_PROJECT_ID);
   const pool = createPool(databaseUrl);
   const guard = await pool.connect();
   try {

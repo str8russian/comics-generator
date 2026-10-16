@@ -1,3 +1,4 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { register } from "node:module";
@@ -75,7 +76,7 @@ test("failed replacement keeps retained previous copy and asset id visible", asy
     generationStatus: "failed",
     generationError: "timeout",
     assetId: "prev-ready",
-    asset: "/api/visual/assets/prev-ready",
+    asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/prev-ready",
   });
   assert.equal(attempt.retained, true);
   assert.equal(attempt.retainedAssetId, "prev-ready");
@@ -128,13 +129,13 @@ test("generated ready assets take precedence over reusable demo anchors", async 
       {
         description: "Путин за столом",
         assetId: "gen-putin",
-        asset: "/api/visual/assets/gen-putin",
+        asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/gen-putin",
         generationStatus: "ready",
       },
       {
         description: "Дуров напротив",
         assetId: "gen-durov",
-        asset: "/api/visual/assets/gen-durov",
+        asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/gen-durov",
         generationStatus: "ready",
       },
     ],
@@ -143,8 +144,8 @@ test("generated ready assets take precedence over reusable demo anchors", async 
   assert.equal(presented.source, "generated");
   assert.equal(presented.mode, "visual");
   assert.deepEqual(presented.frame.panels.map((panel) => panel.asset), [
-    "/api/visual/assets/gen-putin",
-    "/api/visual/assets/gen-durov",
+    "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/gen-putin",
+    "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/gen-durov",
   ]);
   assert.equal(presented.frame.panels.some((panel) => String(panel.asset || "").includes("/character-anchors/")), false);
 });
@@ -160,7 +161,7 @@ test("partial generated frame does not fill missing panels with demo anchors", a
       {
         description: "Путин за столом",
         assetId: "gen-putin",
-        asset: "/api/visual/assets/gen-putin",
+        asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/gen-putin",
         generationStatus: "ready",
       },
       {
@@ -175,7 +176,7 @@ test("partial generated frame does not fill missing panels with demo anchors", a
   const presented = page.presentFrameForMount(frame);
   assert.equal(presented.source, "partial");
   assert.equal(presented.mode, "visual");
-  assert.equal(presented.frame.panels[0].asset, "/api/visual/assets/gen-putin");
+  assert.equal(presented.frame.panels[0].asset, "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/gen-putin");
   assert.equal(presented.frame.panels[1].asset, null);
   assert.equal(String(presented.frame.panels[1].asset || "").includes("/character-anchors/"), false);
   const notice = page.frameAttemptNotice({

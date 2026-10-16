@@ -457,18 +457,18 @@ test("storyboard and manually assigned panels share one strategy boundary", asyn
   const server = transportServer({ env, calls, logs, mode: "storyboard" });
   const port = await listen(server);
   try {
-    const storyboard = await request(port, { path: "/api/visual/frames/f-story/panels/0/generate", body: { instruction: "CANARY-PROMPT-991" } });
+    const storyboard = await request(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f-story/panels/0/generate", body: { instruction: "CANARY-PROMPT-991" } });
     assert.equal(storyboard.status, 200);
     const manualServer = transportServer({ env, calls, logs, mode: "manual" });
     const manualPort = await listen(manualServer);
     try {
-      const manual = await request(manualPort, { path: "/api/visual/frames/f-manual/panels/0/generate", body: { instruction: "CANARY-PROMPT-991" } });
+      const manual = await request(manualPort, { path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f-manual/panels/0/generate", body: { instruction: "CANARY-PROMPT-991" } });
       assert.equal(manual.status, 200);
     } finally {
       await close(manualServer);
     }
     const anchor = await request(port, {
-      path: `/api/visual/characters/${encodeURIComponent("Аня")}/anchor`,
+      path: `/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/${encodeURIComponent("Аня")}/anchor`,
       body: { instruction: "CANARY-PROMPT-991" },
     });
     assert.equal(anchor.status, 200);
@@ -511,7 +511,7 @@ test("invalid transport configuration fails before provider I/O", async () => {
   });
   const port = await listen(server);
   try {
-    const response = await request(port, { path: "/api/visual/frames/f-story/panels/0/generate", body: {} });
+    const response = await request(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f-story/panels/0/generate", body: {} });
     assert.equal(response.status, 500);
     assert.equal(response.body.kind, "configuration");
     assert.equal(calls.length, 0);
@@ -525,7 +525,7 @@ test("invalid transport configuration fails before provider I/O", async () => {
   });
   const budgetPort = await listen(invalidBudget);
   try {
-    const response = await request(budgetPort, { path: "/api/visual/frames/f-story/panels/0/generate", body: {} });
+    const response = await request(budgetPort, { path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f-story/panels/0/generate", body: {} });
     assert.equal(response.status, 500);
     assert.equal(response.body.kind, "configuration");
     assert.equal(calls.length, 0);

@@ -1,3 +1,4 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { register } from "node:module";
@@ -347,7 +348,7 @@ async function loadCapturePage() {
         body = init.body;
       }
     }
-    if (path.startsWith("/api/research/events") && method === "POST") {
+    if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/events") && method === "POST") {
       researchPosts.push(body);
       return jsonResponse(201, {
         event: {
@@ -358,9 +359,9 @@ async function loadCapturePage() {
         },
       });
     }
-    if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-    if (path.startsWith("/api/research/notes")) return jsonResponse(201, { event: { eventKind: "note" } });
-    if (path === "/api/project") {
+    if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+    if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/notes")) return jsonResponse(201, { event: { eventKind: "note" } });
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001") {
       return jsonResponse(200, {
         draft: {
           text: "",
@@ -368,17 +369,17 @@ async function loadCapturePage() {
         },
       });
     }
-    if (path === "/api/draft") {
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/draft") {
       return jsonResponse(200, {
         revisionToken: "22222222-2222-4222-8222-222222222222",
         text: typeof body?.text === "string" ? body.text : (document.querySelector("#draft")?.value || ""),
       });
     }
-    if (path === "/api/visual") return jsonResponse(200, { status: "missing" });
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/visual") return jsonResponse(200, { status: "missing" });
 
     productPosts.push({ path, method, body, headers: init.headers || {} });
 
-    if (path === "/api/readings" && method === "POST") {
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/readings" && method === "POST") {
       return jsonResponse(200, {
         status: "ready",
         id: "reading-1",
@@ -389,10 +390,10 @@ async function loadCapturePage() {
         findings: [],
       });
     }
-    if (path === "/api/confirmations" && method === "POST") {
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/confirmations" && method === "POST") {
       return jsonResponse(200, { materialStateId: "material-1" });
     }
-    if (path === "/api/storyboard-results" && method === "POST") {
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/storyboard-results" && method === "POST") {
       return jsonResponse(200, {
         status: "checked",
         frames: readyVisual().frames,
@@ -400,10 +401,10 @@ async function loadCapturePage() {
         readyEligible: true,
       });
     }
-    if (path === "/api/visual/storyboard/edit") {
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit") {
       return jsonResponse(200, readyVisual({ canUndo: true, undoLabel: "вставку кадра" }));
     }
-    if (path === "/api/visual/storyboard/undo") {
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo") {
       return jsonResponse(200, readyVisual({
         canUndo: false,
         undoLabel: null,
@@ -411,7 +412,7 @@ async function loadCapturePage() {
         undoneTarget: { displayFrameNumber: 2, op: "insertFrame" },
       }));
     }
-    if (path === "/api/visual/approve") return jsonResponse(200, readyVisual({ approved: true, readyForVideo: true }));
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/approve") return jsonResponse(200, readyVisual({ approved: true, readyForVideo: true }));
     if (/\/api\/visual\/frames\/[^/]+\/generate$/.test(path)) return jsonResponse(200, readyVisual());
     if (/\/api\/visual\/frames\/[^/]+\/panels\/\d+\/generate$/.test(path)) {
       return jsonResponse(200, readyVisual());
@@ -471,10 +472,10 @@ async function loadCapturePage() {
         }],
       }));
     }
-    if (path.startsWith("/api/readings/") && path.endsWith("/cast") && method === "PUT") {
+    if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/readings/") && path.endsWith("/cast") && method === "PUT") {
       return jsonResponse(200, { ok: true });
     }
-    if (path === "/api/material-states" && method === "POST") {
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/material-states" && method === "POST") {
       return jsonResponse(200, { materialStateId: "material-1" });
     }
     return jsonResponse(404, { kind: "not-found" });
@@ -508,7 +509,7 @@ test("reading submit captures full draft with commandTarget.kind=none", async ()
   assert.equal(start.commandTarget.kind, "none");
   assert.equal(start.editTarget, null);
   assert.equal(terminal.outcome, "success");
-  assert.ok(productPosts.some((entry) => entry.path === "/api/readings"));
+  assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/readings"));
 });
 
 test("confirm_material and stage_storyboard capture without submitted text", async () => {
@@ -580,7 +581,7 @@ test("structure_edit and global undo capture storyboard targets on product contr
   assert.equal(undo.start.submittedText, null);
   assert.equal(undo.start.commandTarget.kind, "storyboard");
   assert.equal(undo.terminal.outcome, "success");
-  const request = productPosts.find((entry) => entry.path === "/api/visual/storyboard/undo");
+  const request = productPosts.find((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo");
   assert.deepEqual(request.body, {});
   assert.match(JSON.stringify(request.headers).toLowerCase(), /application\/json/);
   assert.match(statusText(), /Отменено: вставку кадра · кадр 2/);
@@ -793,9 +794,9 @@ test("cast_edit covers all editKind × castPhase combinations with value-only ed
     assert.equal(JSON.stringify(pair.start).includes("sourceItems"), false);
     assert.equal(JSON.stringify(pair.start).includes('"characters"'), false);
     if (mode === "reading") {
-      assert.ok(productPosts.some((entry) => entry.method === "PUT" && entry.path === "/api/readings/reading-1/cast"));
+      assert.ok(productPosts.some((entry) => entry.method === "PUT" && entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/readings/reading-1/cast"));
     } else {
-      assert.ok(productPosts.some((entry) => entry.method === "POST" && entry.path === "/api/material-states"));
+      assert.ok(productPosts.some((entry) => entry.method === "POST" && entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/material-states"));
     }
   }
 
@@ -819,9 +820,9 @@ test("cast_edit covers all editKind × castPhase combinations with value-only ed
     });
     assert.equal(JSON.stringify(pair.start).includes("sourceItems"), false);
     if (mode === "reading") {
-      assert.ok(productPosts.some((entry) => entry.method === "PUT" && entry.path === "/api/readings/reading-1/cast"));
+      assert.ok(productPosts.some((entry) => entry.method === "PUT" && entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/readings/reading-1/cast"));
     } else {
-      assert.ok(productPosts.some((entry) => entry.method === "POST" && entry.path === "/api/material-states"));
+      assert.ok(productPosts.some((entry) => entry.method === "POST" && entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/material-states"));
     }
   }
 
@@ -845,9 +846,9 @@ test("cast_edit covers all editKind × castPhase combinations with value-only ed
     });
     assert.equal(JSON.stringify(pair.start).includes("sourceQuote"), false);
     if (mode === "reading") {
-      assert.ok(productPosts.some((entry) => entry.method === "PUT" && entry.path === "/api/readings/reading-1/cast"));
+      assert.ok(productPosts.some((entry) => entry.method === "PUT" && entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/readings/reading-1/cast"));
     } else {
-      assert.ok(productPosts.some((entry) => entry.method === "POST" && entry.path === "/api/material-states"));
+      assert.ok(productPosts.some((entry) => entry.method === "POST" && entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/material-states"));
     }
   }
 
@@ -871,7 +872,7 @@ test("structure_edit research text keeps exact whitespace while product still re
   const edit = researchPair("structure_edit");
   assert.equal(edit.start.submittedText, exact);
   assert.notEqual(edit.start.submittedText, exact.trim());
-  const product = productPosts.find((entry) => entry.path === "/api/visual/storyboard/edit");
+  const product = productPosts.find((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit");
   assert.ok(product);
   assert.equal(product.body.instruction, exact.trim());
 
@@ -881,7 +882,7 @@ test("structure_edit research text keeps exact whitespace while product still re
   document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(researchPosts.length, 0);
-  assert.equal(productPosts.filter((entry) => entry.path === "/api/visual/storyboard/edit").length, 0);
+  assert.equal(productPosts.filter((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit").length, 0);
 });
 
 test("failed cast save never claims cast_edit success terminal", async () => {
@@ -889,7 +890,7 @@ test("failed cast save never claims cast_edit success terminal", async () => {
   const original = fetchImpl;
   fetchImpl = async (url, init = {}) => {
     const path = new URL(url, "http://127.0.0.1").pathname;
-    if (path.startsWith("/api/readings/") && path.endsWith("/cast")) {
+    if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/readings/") && path.endsWith("/cast")) {
       return jsonResponse(500, { status: "failed" });
     }
     return original(url, init);
@@ -933,7 +934,7 @@ test("navigation after start does not relabel terminal; incomplete startSnapshot
   let researchCalls = 0;
   fetchImpl = async (url, init = {}) => {
     const path = new URL(url, "http://127.0.0.1").pathname;
-    if (path === "/api/research/events") {
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
       researchCalls += 1;
       const body = JSON.parse(init.body);
       if (body.eventKind === "action_start") return jsonResponse(500, { status: "failed" });
@@ -990,7 +991,7 @@ test("panel action-specific context stays frozen after navigation in startSnapsh
   let researchCalls = 0;
   fetchImpl = async (url, init = {}) => {
     const path = new URL(url, "http://127.0.0.1").pathname;
-    if (path === "/api/research/events") {
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
       researchCalls += 1;
       const body = JSON.parse(init.body);
       if (body.eventKind === "action_start") return jsonResponse(500, { status: "failed" });
@@ -1039,7 +1040,7 @@ test("T028 product success with failed terminal research write reports local evi
   try {
     fetchImpl = async (url, init = {}) => {
       const path = new URL(url, "http://127.0.0.1").pathname;
-      if (path === "/api/research/events") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         const body = JSON.parse(init.body);
         if (body.eventKind === "action_start") {
           startPosts += 1;
@@ -1056,7 +1057,7 @@ test("T028 product success with failed terminal research write reports local evi
     document.querySelector("#structure-instruction").value = "правка при сбое evidence";
     document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.ok(productPosts.some((entry) => entry.path === "/api/visual/storyboard/edit"));
+    assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit"));
     assert.equal(startPosts, 1);
     assert.equal(terminalPosts, 1);
     assert.equal(researchPosts.some((event) => (
@@ -1244,7 +1245,7 @@ test("T028 incomplete startSnapshot terminal carries evidenceIncomplete and null
   try {
     fetchImpl = async (url, init = {}) => {
       const path = new URL(url, "http://127.0.0.1").pathname;
-      if (path === "/api/research/events") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         researchCalls += 1;
         const body = JSON.parse(init.body);
         if (body.eventKind === "action_start") return jsonResponse(500, { status: "failed" });
@@ -1294,7 +1295,7 @@ test("product_control start evidence save failure while product pending uses sta
   try {
     fetchImpl = async (url, init = {}) => {
       const path = new URL(url, "http://127.0.0.1").pathname;
-      if (path === "/api/research/events") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         const body = JSON.parse(init.body);
         if (body.eventKind === "action_start") {
           startPosts += 1;
@@ -1313,7 +1314,7 @@ test("product_control start evidence save failure while product pending uses sta
           },
         });
       }
-      if (path === "/api/visual/storyboard/edit") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit") {
         productPosts.push({ path, method: init.method ?? "POST", body: init.body ? JSON.parse(init.body) : null });
         await editPending;
         return jsonResponse(200, readyVisual({ canUndo: true }));
@@ -1343,7 +1344,7 @@ test("product_control start evidence save failure while product pending uses sta
     assert.equal(/выполнен|успех/i.test(startFail.label), false);
     assert.equal(startPosts, 1);
     assert.equal(terminalPosts, 0);
-    assert.ok(productPosts.some((entry) => entry.path === "/api/visual/storyboard/edit"));
+    assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit"));
 
     resolveEdit();
     for (let i = 0; i < 40; i += 1) {
@@ -1386,7 +1387,7 @@ test("product_control terminal evidence save failure after product success keeps
   try {
     fetchImpl = async (url, init = {}) => {
       const path = new URL(url, "http://127.0.0.1").pathname;
-      if (path === "/api/research/events") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         const body = JSON.parse(init.body);
         if (body.eventKind === "action_start") {
           startPosts += 1;
@@ -1404,7 +1405,7 @@ test("product_control terminal evidence save failure after product success keeps
     document.querySelector("#structure-instruction").value = "правка при сбое terminal";
     document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.ok(productPosts.some((entry) => entry.path === "/api/visual/storyboard/edit"));
+    assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit"));
     assert.equal(startPosts, 1);
     assert.equal(terminalPosts, 1);
     assert.ok(correlationId);
@@ -1567,7 +1568,7 @@ function placementVisual() {
         description: "слева",
         subject: "Путин",
         assetId: "asset-1",
-        asset: "/api/visual/assets/asset-1",
+        asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-1",
         zoom: 1.4,
         positionX: 41,
         positionY: 22,
@@ -1578,7 +1579,7 @@ function placementVisual() {
         description: "справа",
         subject: "Дуров",
         assetId: "asset-2",
-        asset: "/api/visual/assets/asset-2",
+        asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-2",
         zoom: 1.1,
         positionX: 70,
         positionY: 55,
@@ -1826,7 +1827,7 @@ test("insert then undo removes the frame, and undo after delete restores it", as
     frames: [baseFrame, extraFrame],
   });
   page.applyVisual(base);
-  globalThis.__visualScript = [{ path: "/api/visual/operations", body: inserted }];
+  globalThis.__visualScript = [{ path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations", body: inserted }];
   const insert = [...document.querySelector("#storyboard").querySelectorAll("button")]
     .find((button) => button.textContent === "Кадр с изображением после");
   insert.dispatchEvent({ type: "click" });
@@ -1834,7 +1835,7 @@ test("insert then undo removes the frame, and undo after delete restores it", as
   assert.equal(document.querySelector("#storyboard").querySelectorAll(".story-card").length, 2);
 
   globalThis.__visualScript = [{
-    path: "/api/visual/storyboard/undo",
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo",
     body: { ...base, undoneLabel: "вставку кадра", undoneTarget: { displayFrameNumber: 2, op: "insertFrame" } },
   }];
   document.querySelector("#global-undo").dispatchEvent({ type: "click" });
@@ -1845,7 +1846,7 @@ test("insert then undo removes the frame, and undo after delete restores it", as
 
   page.applyVisual(inserted);
   globalThis.__visualScript = [{
-    path: "/api/visual/operations",
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
     body: readyVisual({ ...base, canUndo: true, undoLabel: "удаление кадра", storyboardVersionId: "version-3" }),
   }];
   const remove = [...document.querySelector("#storyboard").querySelectorAll("button")]
@@ -1854,7 +1855,7 @@ test("insert then undo removes the frame, and undo after delete restores it", as
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(document.querySelector("#storyboard").querySelectorAll(".story-card").length, 1);
   globalThis.__visualScript = [{
-    path: "/api/visual/storyboard/undo",
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo",
     body: {
       ...inserted,
       undoneLabel: "удаление кадра",
@@ -1881,7 +1882,7 @@ test("action status stays visible when the edited card is offscreen", async () =
     }],
   }));
   globalThis.__visualScript = [{
-    path: "/api/visual/operations",
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
     body: readyVisual({ changed: false }),
   }];
   const duration = [...document.querySelector("#storyboard").querySelectorAll("input")]
@@ -1917,9 +1918,9 @@ test("cross dissolve is sent with render and does not post a storyboard operatio
   select.value = "cross-dissolve";
   select.dispatchEvent({ type: "change" });
   assert.match(document.querySelector("#render-runtime").textContent, /Cross dissolve 6/);
-  assert.equal(productPosts.some((entry) => entry.path === "/api/visual/operations"), false);
+  assert.equal(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations"), false);
   globalThis.__visualScript = [{
-    path: "/api/visual/render",
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/render",
     status: 202,
     body: {
       status: "running",
@@ -1932,9 +1933,9 @@ test("cross dissolve is sent with render and does not post a storyboard operatio
   }];
   document.querySelector("#start-render").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 20));
-  const renderPost = productPosts.find((entry) => entry.path === "/api/visual/render");
+  const renderPost = productPosts.find((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/render");
   assert.equal(renderPost.body.transition, "cross-dissolve");
-  assert.equal(productPosts.some((entry) => entry.path === "/api/visual/operations"), false);
+  assert.equal(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations"), false);
 });
 
 function panelRegenerateButton() {
@@ -2027,7 +2028,7 @@ test("page-level status still reports outside the frame detail dialog", async ()
   const original = fetchImpl;
   fetchImpl = async (url, init = {}) => {
     const path = new URL(url, "http://127.0.0.1").pathname;
-    if (path === "/api/visual/storyboard/undo") return jsonResponse(500, { status: "failed", kind: "database" });
+    if (path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo") return jsonResponse(500, { status: "failed", kind: "database" });
     return original(url, init);
   };
   try {

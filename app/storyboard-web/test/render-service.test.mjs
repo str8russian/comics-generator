@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { createRenderController, isSafeResultPath, safeRenderMessage } from "../render-service.mjs";
 
+const projectId = "00000000-0000-4000-8000-000000000001";
+
 const spec = {
   schemaVersion: "storyboard-video-spec-1",
   project: { totalDurationFrames: 36 },
@@ -31,16 +33,20 @@ test("only one render runs, and success exposes only the known output file", asy
       await writeFile(outputFile, Buffer.from("mp4"));
     },
   });
-  const started = controller.start(spec);
+  const started = controller.start(spec, {}, projectId);
   assert.equal(started.status, "running");
-  assert.equal(controller.start(spec).kind, "render-busy");
-  assert.equal(controller.status().status, "running");
-  assert.equal(controller.resultFile(), null);
+  assert.equal(controller.start(spec, {}, projectId).kind, "render-busy");
+  const other = "00000000-0000-4000-8000-000000000099";
+  assert.equal(controller.start(spec, {}, other).status, "running");
+  assert.equal(controller.status(projectId).status, "running");
+  assert.equal(controller.status(other).status, "running");
+  assert.equal(controller.resultFile(projectId), null);
   gate.resolve();
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(controller.status().status, "success");
-  assert.equal(controller.resultFile(), path.join(directory, "current.mp4"));
-  assert.equal(isSafeResultPath(directory, path.join(directory, "..", "current.mp4")), false);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(controller.status(projectId).status, "success");
+  assert.equal(controller.status(other).status, "success");
+  assert.equal(controller.resultFile(projectId), path.join(directory, projectId, "current.mp4"));
+  assert.equal(isSafeResultPath(directory, path.join(directory, "..", "current.mp4"), projectId), false);
 });
 
 test("failure keeps a short safe reason and does not publish a file", async () => {
@@ -53,9 +59,9 @@ test("failure keeps a short safe reason and does not publish a file", async () =
       throw error;
     },
   });
-  controller.start(spec);
+  controller.start(spec, {}, projectId);
   await new Promise((resolve) => setTimeout(resolve, 20));
-  const status = controller.status();
+  const status = controller.status(projectId);
   assert.equal(status.status, "failure");
   assert.equal(status.message, "Не удалось собрать видео.");
   assert.equal(controller.resultFile(), null);

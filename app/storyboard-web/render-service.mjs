@@ -3,13 +3,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PROJECT_ID_PATTERN } from "./project-scope.mjs";
 
 const remotionRoot = fileURLToPath(new URL("../../prototypes/remotion-rough/", import.meta.url));
 const renderScript = path.join(remotionRoot, "tools", "render-spec.mjs");
 
-export function isSafeResultPath(directory, file) {
+export function isSafeResultPath(directory, file, projectId) {
+  if (!PROJECT_ID_PATTERN.test(String(projectId ?? ""))) return false;
   if (typeof file !== "string" || !file) return false;
-  return path.resolve(file) === path.resolve(directory, "current.mp4");
+  return path.resolve(file) === path.resolve(directory, projectId, "current.mp4");
 }
 
 export function safeRenderMessage(error) {
@@ -27,19 +29,29 @@ export function createRenderController({
   logger = null,
 } = {}) {
   const directory = outputDir || path.join(process.cwd(), ".render-output");
-  let current = {
-    status: "idle",
-    id: null,
-    message: null,
-    file: null,
-    transition: null,
-    overlapFrames: null,
-    totalDurationFrames: null,
-    nominalDurationFrames: null,
-  };
+  const currents = new Map();
   let chain = Promise.resolve();
 
-  function view() {
+  function idle() {
+    return {
+      status: "idle",
+      id: null,
+      message: null,
+      file: null,
+      transition: null,
+      overlapFrames: null,
+      totalDurationFrames: null,
+      nominalDurationFrames: null,
+    };
+  }
+
+  function slot(projectId) {
+    if (!currents.has(projectId)) currents.set(projectId, idle());
+    return currents.get(projectId);
+  }
+
+  function view(projectId) {
+    const current = slot(projectId);
     return {
       status: current.status,
       id: current.id,
@@ -52,16 +64,25 @@ export function createRenderController({
   }
 
   return {
-    status: () => view(),
-    resultFile() {
-      if (current.status !== "success" || !isSafeResultPath(directory, current.file)) return null;
+    status: (projectId) => view(projectId),
+    readyProjectIds() {
+      return [...currents.entries()]
+        .filter(([, current]) => current.status === "success")
+        .map(([projectId]) => projectId);
+    },
+    resultFile(projectId) {
+      const current = slot(projectId);
+      if (current.status !== "success" || !isSafeResultPath(directory, current.file, projectId)) return null;
       return path.resolve(current.file);
     },
-    start(spec, hooks = {}) {
+    start(spec, hooks = {}, projectId) {
+      if (!PROJECT_ID_PATTERN.test(String(projectId ?? ""))) {
+        return { ok: false, kind: "invalid-request", httpStatus: 400 };
+      }
       if (!spec || spec.schemaVersion !== "storyboard-video-spec-1") {
         return { ok: false, kind: "invalid-request", httpStatus: 400 };
       }
-      if (current.status === "running") return { ok: false, kind: "render-busy", httpStatus: 409 };
+      if (slot(projectId).status === "running") return { ok: false, kind: "render-busy", httpStatus: 409 };
       const id = randomUUID();
       const transition = spec.project?.exportTransition?.mode || "hard-cut";
       const overlapFrames = spec.project?.exportTransition?.overlapFrames ?? 0;
@@ -71,21 +92,24 @@ export function createRenderController({
         totalDurationFrames: spec.project?.totalDurationFrames ?? null,
         nominalDurationFrames: spec.project?.nominalDurationFrames ?? null,
       };
-      current = { status: "running", id, message: null, file: null, ...timing };
-      const output = path.join(directory, "current.mp4");
+      currents.set(projectId, { status: "running", id, message: null, file: null, ...timing });
+      const projectDir = path.join(directory, projectId);
+      const output = path.join(projectDir, "current.mp4");
       const execute = runRender || defaultRunRender;
       let settled = false;
       chain = chain.then(async () => {
-        if (current.id !== id) return;
-        await hooks.onStart?.({ id, spec });
-        if (current.id !== id || settled) return;
-        const temporary = path.join(directory, `${id}.mp4`);
+        if (slot(projectId).id !== id) return;
+        await hooks.onStart?.({ id, spec, projectId });
+        if (slot(projectId).id !== id || settled) return;
+        const temporary = path.join(projectDir, `${id}.mp4`);
         let outcome = "success";
         try {
-          await mkdir(directory, { recursive: true });
+          await mkdir(projectDir, { recursive: true });
           await execute(spec, temporary);
           await rename(temporary, output);
-          if (current.id === id) current = { status: "success", id, message: null, file: output, ...timing };
+          if (slot(projectId).id === id) {
+            currents.set(projectId, { status: "success", id, message: null, file: output, ...timing });
+          }
         } catch (error) {
           outcome = "failure";
           await rm(temporary, { force: true }).catch(() => {});
@@ -95,11 +119,13 @@ export function createRenderController({
             id,
             detail: String(error?.detail || error?.message || message).slice(0, 2000),
           });
-          if (current.id === id) current = { status: "failure", id, message, file: null, ...timing };
+          if (slot(projectId).id === id) {
+            currents.set(projectId, { status: "failure", id, message, file: null, ...timing });
+          }
         }
-        if (settled || current.id !== id) return;
+        if (settled || slot(projectId).id !== id) return;
         settled = true;
-        await hooks.onTerminal?.({ id, status: outcome, spec });
+        await hooks.onTerminal?.({ id, status: outcome, spec, projectId });
       });
       return { ok: true, status: "running", id };
     },

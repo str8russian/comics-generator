@@ -1,3 +1,4 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import test from "node:test";

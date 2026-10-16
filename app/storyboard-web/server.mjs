@@ -11,6 +11,7 @@ import { loadConfig } from "./config.mjs";
 import { isEmptyDraft } from "./fidelity.mjs";
 import { interpretDraft } from "./interpret.mjs";
 import { draftInputError, createProjectStore } from "./project-store.mjs";
+import { requireProjectId, withProject } from "./project-scope.mjs";
 import { createRenderController } from "./render-service.mjs";
 import { stageStoryboard } from "./stage.mjs";
 import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
@@ -45,8 +46,12 @@ import { createVisualStore } from "./visual-store.mjs";
 export const DEFAULT_MAX_BODY_BYTES = 262144;
 export const IMAGE_MAX_BODY_BYTES = IDENTITY_MAX_BODY_BYTES;
 
+const WORKSPACE_FILE = "app/storyboard-web/public/index.html";
+
 export const routes = [
-  { method: "GET", path: "/", file: "app/storyboard-web/public/index.html" },
+  { method: "GET", path: "/", file: "app/storyboard-web/public/projects.html" },
+  { method: "GET", path: "/projects.js", file: "app/storyboard-web/public/projects.js" },
+  { method: "GET", path: "/project-api.mjs", file: "app/storyboard-web/public/project-api.mjs" },
   { method: "GET", path: "/app.js", file: "app/storyboard-web/public/app.js" },
   { method: "GET", path: "/app.css", file: "app/storyboard-web/public/app.css" },
   { method: "GET", path: "/draft-autosave.mjs", file: "app/storyboard-web/public/draft-autosave.mjs" },
@@ -68,7 +73,7 @@ const routesByPath = new Map(routes.map((route) => [route.path, route]));
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 function defaultRead(filePath) {
-  if (!routes.some((route) => route.file === filePath)) {
+  if (filePath !== WORKSPACE_FILE && !routes.some((route) => route.file === filePath)) {
     throw new Error("file is not on the storyboard route map");
   }
   return readFileSync(join(repoRoot, filePath));
@@ -586,6 +591,11 @@ async function handleProject(req, res, { logger, nextRequest, runtime }) {
   }
   try {
     const project = await runtime.projectStore.loadProject();
+    if (project?.missing) {
+      logLine(logger, { request, status: "failed", kind: "not-found", http: 404 });
+      sendJson(res, 404, { status: "failed", kind: "not-found" });
+      return;
+    }
     if (!project) {
       logLine(logger, { request, status: "failed", kind: "database", http: 503 });
       sendJson(res, 503, { status: "failed", kind: "database" });
@@ -915,7 +925,7 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
   const controller = runtime.ensureRender();
   if (method === "GET") {
     req.resume();
-    sendJson(res, 200, controller.status());
+    sendJson(res, 200, controller.status(requireProjectId()));
     return;
   }
   const request = nextRequest();
@@ -971,6 +981,7 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
     transitionMode: transition,
     transitionOverlapFrames: overlapFrames,
   });
+  const projectId = requireProjectId();
   const started = controller.start(compiled.spec, {
     onStart: async () => {
       try {
@@ -983,6 +994,7 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
           commandTarget: createEmptyCommandTarget("storyboard"),
           editTarget: null,
           context: renderContext,
+          projectId,
         });
       } finally {
         resolveStarted();
@@ -995,9 +1007,10 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
         outcome: status === "success" ? "success" : "failure",
         outcomeKind: status === "success" ? null : "render-failed",
         outcomeFlags: {},
+        projectId,
       });
     },
-  });
+  }, projectId);
   if (!started.ok) {
     resolveStarted();
     logVisual(logger, request, "render", { status: "failed", kind: safeKind(started.kind), http: started.httpStatus || 409 });
@@ -1027,7 +1040,7 @@ async function handleRenderResult(req, res, { runtime }) {
     req.resume();
     return;
   }
-  const file = runtime.ensureRender().resultFile();
+  const file = runtime.ensureRender().resultFile(requireProjectId());
   if (!file) {
     sendEmpty(res, 404);
     return;
@@ -1912,7 +1925,7 @@ async function handleResearchNotes(req, res, { maxBodyBytes, logger, nextRequest
     sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
-  const result = await runtime.researchStore.appendNote(body.payload);
+  const result = await runtime.researchStore.appendNote({ ...body.payload, projectId: requireProjectId() });
   if (!result.ok) {
     logLine(logger, {
       request,
@@ -1947,7 +1960,7 @@ async function handleResearchEvents(req, res, { maxBodyBytes, logger, nextReques
     sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
-  const result = await runtime.researchStore.appendEvent(body.payload);
+  const result = await runtime.researchStore.appendEvent({ ...body.payload, projectId: requireProjectId() });
   if (!result.ok) {
     logLine(logger, {
       request,
@@ -1993,7 +2006,7 @@ async function handleResearchTrace(req, res, { logger, nextRequest, runtime }) {
     sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
-  const result = await runtime.researchStore.listTrace({ kind, surface });
+  const result = await runtime.researchStore.listTrace({ kind, surface, projectId: requireProjectId() });
   if (!result.ok) {
     logLine(logger, {
       request,
@@ -2009,7 +2022,167 @@ async function handleResearchTrace(req, res, { logger, nextRequest, runtime }) {
   sendJson(res, 200, { events: result.events });
 }
 
-async function handle(req, res, {
+const PROJECT_NOT_FOUND_HTML = `<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Проект не найден</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="page">
+    <h1>Проект не найден</h1>
+    <p>Такого проекта нет.</p>
+    <p><a href="/">Проекты</a></p>
+  </main>
+</body>
+</html>`;
+
+function sendHtml(res, html) {
+  const body = Buffer.from(html);
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": body.length,
+    "Cache-Control": "no-store",
+  });
+  res.end(body);
+}
+
+function serveKnownFile(res, load, file) {
+  let bytes;
+  try {
+    bytes = load(file);
+  } catch {
+    sendEmpty(res, 404);
+    return;
+  }
+  const body = Buffer.isBuffer(bytes) ? bytes : Buffer.from(String(bytes));
+  res.writeHead(200, {
+    "Content-Type": contentType(file),
+    "Content-Length": body.length,
+    "Cache-Control": "no-store",
+  });
+  res.end(body);
+}
+
+async function handleProjectCollection(req, res, { runtime }) {
+  const method = req.method || "GET";
+  if (!runtime.projectStore?.listProjects || !runtime.projectStore?.createProject) {
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    req.resume();
+    return;
+  }
+  if (method === "GET") {
+    req.resume();
+    const ready = runtime.renderController?.readyProjectIds?.() ?? [];
+    const listed = await runtime.projectStore.listProjects({ renderReadyProjectIds: ready });
+    if (!listed?.ok) {
+      sendJson(res, listed?.httpStatus || 503, { status: "failed", kind: listed?.kind || "database" });
+      return;
+    }
+    sendJson(res, 200, { projects: listed.projects, continueProjectId: listed.continueProjectId });
+    return;
+  }
+  if (method === "POST") {
+    req.resume();
+    const created = await runtime.projectStore.createProject();
+    if (!created?.ok) {
+      sendJson(res, created?.httpStatus || 503, { status: "failed", kind: created?.kind || "database" });
+      return;
+    }
+    sendJson(res, 201, created.project);
+    return;
+  }
+  sendEmpty(res, 405, { Allow: "GET, POST" });
+  req.resume();
+}
+
+async function handleProjectRename(req, res, { runtime, maxBodyBytes }) {
+  if ((req.method || "GET") !== "PATCH") {
+    sendEmpty(res, 405, { Allow: "PATCH" });
+    req.resume();
+    return;
+  }
+  const body = await readJsonBody(req, res, maxBodyBytes);
+  if (body.done) return;
+  if (body.invalid || !runtime.projectStore?.renameProject) {
+    sendJson(res, body.invalid ? 400 : 503, { status: "failed", kind: body.invalid ? "invalid-request" : "database" });
+    return;
+  }
+  const result = await runtime.projectStore.renameProject(requireProjectId(), body.payload?.title);
+  if (!result.ok) {
+    sendJson(res, result.httpStatus || 400, { status: "failed", kind: result.kind || "invalid-request" });
+    return;
+  }
+  sendJson(res, 200, { id: result.id, title: result.title, updatedAt: result.updatedAt });
+}
+
+async function handleProjectOpen(req, res, { runtime }) {
+  if ((req.method || "GET") !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  req.resume();
+  if (!runtime.projectStore?.markOpened) {
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  const result = await runtime.projectStore.markOpened(requireProjectId());
+  if (!result.ok) {
+    sendJson(res, result.httpStatus || 404, { status: "failed", kind: result.kind || "not-found" });
+    return;
+  }
+  sendJson(res, 200, { id: result.id, lastOpenedAt: result.lastOpenedAt, updatedAt: result.updatedAt });
+}
+
+async function handle(req, res, options) {
+  const pathname = pathnameOf(req.url);
+  const method = req.method || "GET";
+  if (pathname == null) {
+    sendEmpty(res, 404);
+    return;
+  }
+  const workspace = pathname.match(/^\/projects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i);
+  if (workspace) {
+    serveKnownFile(res, options.load, WORKSPACE_FILE);
+    req.resume();
+    return;
+  }
+  if (pathname.startsWith("/projects/")) {
+    sendHtml(res, PROJECT_NOT_FOUND_HTML);
+    req.resume();
+    return;
+  }
+  if (pathname === "/api/projects") {
+    await handleProjectCollection(req, res, options);
+    return;
+  }
+  const scoped = pathname.match(/^\/api\/projects\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/.*)?$/i);
+  if (scoped) {
+    const projectId = scoped[1];
+    const rest = scoped[2] || "";
+    if (rest === "/open") {
+      await withProject(projectId, () => handleProjectOpen(req, res, options));
+      return;
+    }
+    if ((rest === "" || rest === "/") && method === "PATCH") {
+      await withProject(projectId, () => handleProjectRename(req, res, options));
+      return;
+    }
+    const inner = rest === "" || rest === "/" ? "/api/project" : `/api${rest}`;
+    await withProject(projectId, () => routeProduct(req, res, options, inner));
+    return;
+  }
+  if (pathname.startsWith("/api/") && pathname !== "/api/build" && pathname !== "/api/storyboard") {
+    sendEmpty(res, 404);
+    req.resume();
+    return;
+  }
+  await routeProduct(req, res, options, pathname);
+}
+
+async function routeProduct(req, res, {
   load,
   maxBodyBytes,
   env,
@@ -2019,13 +2192,8 @@ async function handle(req, res, {
   enableLegacyStoryboardRoute,
   runtime,
   imageGenerator,
-}) {
-  const pathname = pathnameOf(req.url);
+}, pathname) {
   const method = req.method || "GET";
-  if (pathname == null) {
-    sendEmpty(res, 404);
-    return;
-  }
   if (pathname === "/api/research/notes") {
     await handleResearchNotes(req, res, { maxBodyBytes, logger, nextRequest, runtime });
     return;

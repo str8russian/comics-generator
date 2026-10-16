@@ -11,6 +11,7 @@ import {
   reviseMaterialState,
   saveDraft,
 } from "../../project-store.mjs";
+import { enterProject, SEEDED_PROJECT_ID } from "../../project-scope.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
 const TEST_LOCK = "90210002026008";
@@ -115,6 +116,7 @@ async function resetProject(pool) {
 test("confirmation is atomic and a mapping correction versions only the material state", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
 }, async () => {
+  enterProject(SEEDED_PROJECT_ID);
   const url = new URL(databaseUrl);
   assert.equal(url.pathname, "/comics_test");
   const previous = process.env.DATABASE_URL;

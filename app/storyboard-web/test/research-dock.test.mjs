@@ -1,3 +1,4 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -279,13 +280,13 @@ test("Notes draft send posts fixed-key context and renders one timestamped histo
       const path = new URL(url, "http://127.0.0.1").pathname + (new URL(url, "http://127.0.0.1").search || "");
       const body = init.body == null ? null : JSON.parse(init.body);
       requests.push({ path, method: init.method ?? "GET", body });
-      if (path === "/api/research/trace?kind=note") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?kind=note") {
         return jsonResponse(200, { events: [] });
       }
-      if (path === "/api/research/trace") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace") {
         return jsonResponse(200, { events: [] });
       }
-      if (path === "/api/research/notes" && init.method === "POST") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes" && init.method === "POST") {
         return jsonResponse(201, {
           event: {
             eventKind: "note",
@@ -308,7 +309,7 @@ test("Notes draft send posts fixed-key context and renders one timestamped histo
   await dock.ready;
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  const notePost = requests.find((entry) => entry.path === "/api/research/notes");
+  const notePost = requests.find((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes");
   assert.ok(notePost);
   assert.equal(notePost.method, "POST");
   assert.equal(notePost.body.submittedText, "наблюдение владельца");
@@ -341,10 +342,10 @@ test("failed Notes save retains draft and reports failure without automatic retr
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) {
         return jsonResponse(200, { events: [] });
       }
-      if (path === "/api/research/notes" && init.method === "POST") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes" && init.method === "POST") {
         notePosts += 1;
         return jsonResponse(500, { status: "failed", kind: "database" });
       }
@@ -381,8 +382,8 @@ test("notes-send remains usable while body is busy; product busy latch stays sin
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
       requests.push({ path, method: init.method ?? "GET" });
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/notes") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes") {
         return jsonResponse(201, {
           event: {
             eventKind: "note",
@@ -403,7 +404,7 @@ test("notes-send remains usable while body is busy; product busy latch stays sin
   document.querySelector("#research-notes-draft").value = "во время busy";
   send.dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(requests.some((entry) => entry.path === "/api/research/notes"));
+  assert.ok(requests.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes"));
   assert.equal(document.body.dataset.busy, "true");
 
   const appJs = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
@@ -481,8 +482,8 @@ test("hydrated unmatched action_start is historical interruption evidence and ne
     fetchImpl: async (url) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path === "/api/research/trace?kind=note") return jsonResponse(200, { events: [] });
-      if (path === "/api/research/trace") return jsonResponse(200, { events: [unmatched] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?kind=note") return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace") return jsonResponse(200, { events: [unmatched] });
       return jsonResponse(404, {});
     },
   });
@@ -576,8 +577,8 @@ test("Notes send posts production captureResearchContext display vs structure id
       const path = parsed.pathname + parsed.search;
       const body = init.body == null ? null : JSON.parse(init.body);
       requests.push({ path, method: init.method ?? "GET", body });
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/notes") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes") {
         return jsonResponse(201, {
           event: {
             eventKind: "note",
@@ -602,7 +603,7 @@ test("Notes send posts production captureResearchContext display vs structure id
   document.querySelector("#research-notes-send").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  const notePost = requests.find((entry) => entry.path === "/api/research/notes");
+  const notePost = requests.find((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes");
   assert.ok(notePost);
   assert.equal(notePost.body.context.displayFrameId, "display-2");
   assert.equal(notePost.body.context.structureFrameId, "structure-1");
@@ -623,7 +624,7 @@ test("Notes hydrate from GET trace kind=note after bind", async () => {
     fetchImpl: async (url) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path === "/api/research/trace?kind=note") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?kind=note") {
         return jsonResponse(200, {
           events: [{
             eventKind: "note",
@@ -633,7 +634,7 @@ test("Notes hydrate from GET trace kind=note after bind", async () => {
           }],
         });
       }
-      if (path === "/api/research/trace") return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace") return jsonResponse(200, { events: [] });
       return jsonResponse(404, {});
     },
   });
@@ -649,7 +650,7 @@ function emptyTraceFetch() {
   return async (url) => {
     const parsed = new URL(url, "http://127.0.0.1");
     const path = parsed.pathname + parsed.search;
-    if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+    if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
     return jsonResponse(404, {});
   };
 }
@@ -694,10 +695,10 @@ test("typing or sending Commands never changes Notes draft/history and the rever
       const path = parsed.pathname + parsed.search;
       const body = init.body == null ? null : JSON.parse(init.body);
       requests.push({ path, method: init.method ?? "GET", body });
-      if (path === "/api/research/trace?kind=note") return jsonResponse(200, { events: [] });
-      if (path === "/api/research/trace?surface=dock_commands") return jsonResponse(200, { events: [] });
-      if (path === "/api/research/trace") return jsonResponse(200, { events: [] });
-      if (path === "/api/research/notes" && init.method === "POST") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?kind=note") return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?surface=dock_commands") return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace") return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes" && init.method === "POST") {
         return jsonResponse(201, {
           event: {
             eventKind: "note",
@@ -707,7 +708,7 @@ test("typing or sending Commands never changes Notes draft/history and the rever
           },
         });
       }
-      if (path === "/api/research/events" && init.method === "POST") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events" && init.method === "POST") {
         return jsonResponse(201, {
           event: {
             ...body,
@@ -737,8 +738,8 @@ test("typing or sending Commands never changes Notes draft/history and the rever
 
   assert.equal(notesDraft.value, "заметка до команды");
   assert.equal(document.querySelector("#research-notes-history").children.length, 0);
-  assert.equal(requests.some((entry) => entry.path === "/api/research/notes"), false);
-  assert.ok(productCalls >= 1 || requests.some((entry) => entry.path === "/api/research/events"));
+  assert.equal(requests.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes"), false);
+  assert.ok(productCalls >= 1 || requests.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events"));
 
   const commandsHistoryBeforeNote = document.querySelector("#research-commands-history").children.length;
   notesDraft.value = "только заметка";
@@ -824,8 +825,8 @@ test("panel target is used only after explicit selection with distinct display/s
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         return jsonResponse(201, { event: { ...JSON.parse(init.body), seq: 1, occurredAt: "2026-10-13T07:00:00.000Z" } });
       }
       return jsonResponse(404, {});
@@ -957,8 +958,8 @@ test("stale or unsupported selected target shows honest limitation and makes no 
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
       requests.push({ path, method: init.method ?? "GET", body: init.body == null ? null : JSON.parse(init.body) });
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") return jsonResponse(201, { event: { seq: 1 } });
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") return jsonResponse(201, { event: { seq: 1 } });
       return jsonResponse(404, {});
     },
   });
@@ -991,7 +992,7 @@ test("stale or unsupported selected target shows honest limitation and makes no 
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(productCalls, 0);
-  assert.equal(requests.some((entry) => entry.path === "/api/research/events"), false);
+  assert.equal(requests.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events"), false);
   const status = document.querySelector("#research-commands-status");
   assert.equal(status.hidden, false);
   assert.match(status.textContent, /выбер|действи|недоступ|не поддержи|устарел|unsupported|stale/i);
@@ -1019,8 +1020,8 @@ test("Commands is blocked while product busy including form/keyboard paths; Note
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
       requests.push({ path, method: init.method ?? "GET" });
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/notes") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes") {
         return jsonResponse(201, {
           event: {
             eventKind: "note",
@@ -1030,7 +1031,7 @@ test("Commands is blocked while product busy including form/keyboard paths; Note
           },
         });
       }
-      if (path === "/api/research/events") return jsonResponse(201, { event: { seq: 1 } });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") return jsonResponse(201, { event: { seq: 1 } });
       return jsonResponse(404, {});
     },
   });
@@ -1048,7 +1049,7 @@ test("Commands is blocked while product busy including form/keyboard paths; Note
   document.querySelector("#research-notes-draft").value = "заметка во время busy";
   document.querySelector("#research-notes-send").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(requests.some((entry) => entry.path === "/api/research/notes"));
+  assert.ok(requests.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes"));
   assert.equal(document.querySelector("#research-commands-send").getAttribute("data-research-allow"), null);
 });
 
@@ -1068,7 +1069,7 @@ test("Commands history hydrates from surface=dock_commands and excludes Notes an
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
       hydratedPaths.push(path);
-      if (path === "/api/research/trace?kind=note") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?kind=note") {
         return jsonResponse(200, {
           events: [{
             eventKind: "note",
@@ -1078,7 +1079,7 @@ test("Commands history hydrates from surface=dock_commands and excludes Notes an
           }],
         });
       }
-      if (path === "/api/research/trace?surface=dock_commands") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?surface=dock_commands") {
         return jsonResponse(200, {
           events: [
             {
@@ -1111,7 +1112,7 @@ test("Commands history hydrates from surface=dock_commands and excludes Notes an
           ],
         });
       }
-      if (path === "/api/research/trace") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace") {
         return jsonResponse(200, {
           events: [{
             eventKind: "action_terminal",
@@ -1127,7 +1128,7 @@ test("Commands history hydrates from surface=dock_commands and excludes Notes an
     },
   });
   await dock.ready;
-  assert.ok(hydratedPaths.includes("/api/research/trace?surface=dock_commands"));
+  assert.ok(hydratedPaths.includes("/api/projects/00000000-0000-4000-8000-000000000001/research/trace?surface=dock_commands"));
   const commandsHistory = document.querySelector("#research-commands-history");
   const text = commandsHistory.children.map((child) => child.textContent).join("\n");
   assert.match(text, /dock command/);
@@ -1154,8 +1155,8 @@ test("successful Commands send clears only Commands draft; product or research f
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         if (mode === "research-fail") return jsonResponse(500, { status: "failed" });
         return jsonResponse(201, {
           event: { ...JSON.parse(init.body), seq: 1, occurredAt: "2026-10-13T10:00:00.000Z" },
@@ -1233,8 +1234,8 @@ test("product Structure form and dock Commands remain separable by surface and d
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         const body = JSON.parse(init.body);
         researchEvents.push(body);
         return jsonResponse(201, { event: { ...body, seq: researchEvents.length, occurredAt: "2026-10-13T11:00:00.000Z" } });
@@ -1297,8 +1298,8 @@ test("sole available panel stays behind neutral placeholder until explicit selec
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
       requests.push({ path, method: init.method ?? "GET", body: init.body == null ? null : JSON.parse(init.body) });
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         return jsonResponse(201, {
           event: { ...JSON.parse(init.body), seq: requests.length, occurredAt: "2026-10-13T12:00:00.000Z" },
         });
@@ -1332,7 +1333,7 @@ test("sole available panel stays behind neutral placeholder until explicit selec
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(productCalls, 0);
-  assert.equal(requests.some((entry) => entry.path === "/api/research/events"), false);
+  assert.equal(requests.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events"), false);
 
   const panelValue = panelOptionValue(select);
   select.value = panelValue;
@@ -1572,8 +1573,8 @@ test("T028 Notes protected-content failure keeps exact text, no history, one req
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/notes" && init.method === "POST") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/notes" && init.method === "POST") {
         notePosts += 1;
         return jsonResponse(400, { status: "failed", kind: "protected-content" });
       }
@@ -1610,8 +1611,8 @@ test("T028 Commands product success with terminal research failure shows local e
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         eventPosts += 1;
         const body = JSON.parse(init.body);
         if (body.eventKind === "action_start") {
@@ -1658,7 +1659,7 @@ test("T028 incomplete evidence terminal projects flags, null duration, never run
     getContext: () => createEmptyContext(),
     fetchImpl: async (url) => {
       const path = new URL(url, "http://127.0.0.1").pathname + new URL(url, "http://127.0.0.1").search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
       return jsonResponse(404, {});
     },
   });
@@ -1773,8 +1774,8 @@ test("Commands start evidence save failure while product pending uses start word
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         const body = JSON.parse(init.body);
         if (body.eventKind === "action_start") {
           startPosts += 1;
@@ -1842,8 +1843,8 @@ test("Commands terminal evidence save failure after product success keeps comple
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         const body = JSON.parse(init.body);
         if (body.eventKind === "action_start") {
           startPosts += 1;
@@ -1919,8 +1920,8 @@ test("T035 neutral Commands send performs zero product and research calls", asyn
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
       requests.push({ path, method: init.method ?? "GET" });
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") return jsonResponse(201, { event: { seq: 1 } });
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") return jsonResponse(201, { event: { seq: 1 } });
       return jsonResponse(404, {});
     },
   });
@@ -1930,7 +1931,7 @@ test("T035 neutral Commands send performs zero product and research calls", asyn
   document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(productCalls, 0);
-  assert.equal(requests.filter((entry) => entry.path === "/api/research/events").length, 0);
+  assert.equal(requests.filter((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events").length, 0);
   const status = document.querySelector("#research-commands-status");
   assert.equal(status.hidden, false);
   assert.match(status.textContent, /выбер|действи/i);
@@ -1954,8 +1955,8 @@ test("T035 explicit storyboard and panel selections work with owner-facing label
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         return jsonResponse(201, { event: { ...JSON.parse(init.body), seq: 1, occurredAt: "2026-10-13T10:40:57.000Z" } });
       }
       return jsonResponse(404, {});
@@ -2089,12 +2090,12 @@ test("T035 Notes Commands Operations render Russian UTC+3 timestamps", async () 
     fetchImpl: async (url) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path === "/api/research/trace?kind=note") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?kind=note") {
         return jsonResponse(200, {
           events: [{ eventKind: "note", submittedText: "заметка", occurredAt: iso, seq: 1 }],
         });
       }
-      if (path === "/api/research/trace?surface=dock_commands") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?surface=dock_commands") {
         return jsonResponse(200, {
           events: [{
             eventKind: "action_start",
@@ -2107,7 +2108,7 @@ test("T035 Notes Commands Operations render Russian UTC+3 timestamps", async () 
           }],
         });
       }
-      if (path === "/api/research/trace") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace") {
         return jsonResponse(200, {
           events: [{
             eventKind: "action_terminal",
@@ -2248,10 +2249,10 @@ test("T035 Commands history shows submissions only; Operations owns terminal row
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace") && path.includes("kind=note")) {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace") && path.includes("kind=note")) {
         return jsonResponse(200, { events: [] });
       }
-      if (path === "/api/research/trace?surface=dock_commands") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?surface=dock_commands") {
         return jsonResponse(200, {
           events: [
             {
@@ -2276,7 +2277,7 @@ test("T035 Commands history shows submissions only; Operations owns terminal row
           ],
         });
       }
-      if (path === "/api/research/trace") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace") {
         return jsonResponse(200, {
           events: [
             {
@@ -2301,7 +2302,7 @@ test("T035 Commands history shows submissions only; Operations owns terminal row
           ],
         });
       }
-      if (path === "/api/research/events") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         return jsonResponse(201, { event: { ...JSON.parse(init.body), seq: 99, occurredAt: "2026-10-13T10:50:00.000Z" } });
       }
       return jsonResponse(404, {});
@@ -2433,8 +2434,8 @@ test("dock panel send action_start commandTarget omits panelSubject; context.pan
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         const body = JSON.parse(init.body);
         posted.push(body);
         return jsonResponse(201, {
@@ -2492,8 +2493,8 @@ test("incomplete terminal startSnapshot.commandTarget omits panelSubject", async
     fetchImpl: async (url, init = {}) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path.startsWith("/api/research/trace")) return jsonResponse(200, { events: [] });
-      if (path === "/api/research/events") {
+      if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/trace")) return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/events") {
         const body = JSON.parse(init.body);
         posted.push(body);
         if (body.eventKind === "action_start") {
@@ -2557,8 +2558,8 @@ test("Commands history renders panel subject from context and gracefully without
     fetchImpl: async (url) => {
       const parsed = new URL(url, "http://127.0.0.1");
       const path = parsed.pathname + parsed.search;
-      if (path === "/api/research/trace?kind=note") return jsonResponse(200, { events: [] });
-      if (path === "/api/research/trace?surface=dock_commands") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?kind=note") return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?surface=dock_commands") {
         return jsonResponse(200, {
           events: [
             {
@@ -2600,7 +2601,7 @@ test("Commands history renders panel subject from context and gracefully without
           ],
         });
       }
-      if (path === "/api/research/trace") return jsonResponse(200, { events: [] });
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/research/trace") return jsonResponse(200, { events: [] });
       return jsonResponse(404, {});
     },
   });

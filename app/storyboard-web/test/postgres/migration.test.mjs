@@ -28,14 +28,26 @@ test("seeds one project and a failed migration does not listen", {
     await client.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
     const current = await client.query("SELECT current_database() AS name");
     assert.equal(current.rows[0].name, "comics_test");
-    const projects = await client.query("SELECT singleton FROM project");
+    const projects = await client.query("SELECT id, title FROM project");
     assert.equal(projects.rows.length, 1);
-    assert.equal(projects.rows[0].singleton, true);
+    assert.equal(projects.rows[0].title, "Текущий ролик");
+    const singleton = await client.query(`
+      SELECT 1 FROM information_schema.columns
+      WHERE table_name = 'project' AND column_name = 'singleton'
+    `);
+    assert.equal(singleton.rows.length, 0);
     const drafts = await client.query("SELECT text FROM working_draft");
     assert.equal(drafts.rows.length, 1);
-    await assert.rejects(client.query(
-      "INSERT INTO project (id, singleton) VALUES ('00000000-0000-4000-8000-000000000099', true)",
-    ));
+    await client.query(`
+      INSERT INTO project (id, title)
+      VALUES ('00000000-0000-4000-8000-000000000099', 'Временный')
+    `);
+    await client.query(`
+      INSERT INTO working_draft (project_id, text, revision_token)
+      VALUES ('00000000-0000-4000-8000-000000000099', '', '00000000-0000-4000-8000-000000000098')
+    `);
+    await client.query("DELETE FROM working_draft WHERE project_id = '00000000-0000-4000-8000-000000000099'");
+    await client.query("DELETE FROM project WHERE id = '00000000-0000-4000-8000-000000000099'");
     const recount = await client.query("SELECT count(*)::int AS count FROM project");
     assert.equal(recount.rows[0].count, 1);
 

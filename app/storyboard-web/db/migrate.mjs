@@ -6,11 +6,31 @@ import { createPool } from "./pool.mjs";
 const LOCK_KEY = "90210002026007";
 const defaultMigrationsDir = fileURLToPath(new URL("./migrations/", import.meta.url));
 
-function sqlStatements(sql) {
+export function sqlStatements(sql) {
   const statements = [];
   let current = "";
   let inString = false;
+  let dollarTag = null;
   for (let index = 0; index < sql.length; index += 1) {
+    if (!inString && !dollarTag && sql[index] === "$") {
+      const match = sql.slice(index).match(/^\$[A-Za-z0-9_]*\$/);
+      if (match) {
+        dollarTag = match[0];
+        current += dollarTag;
+        index += dollarTag.length - 1;
+        continue;
+      }
+    }
+    if (dollarTag) {
+      if (sql.startsWith(dollarTag, index)) {
+        current += dollarTag;
+        index += dollarTag.length - 1;
+        dollarTag = null;
+        continue;
+      }
+      current += sql[index];
+      continue;
+    }
     const char = sql[index];
     if (inString && char === "'" && sql[index + 1] === "'") {
       current += "''";

@@ -31,7 +31,7 @@ function send(port, body) {
       hostname: "127.0.0.1",
       port,
       method: "POST",
-      path: "/api/visual/characters/Mira/anchor-session",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/Mira/anchor-session",
       headers: { "content-type": "application/json" },
     }, (res) => {
       const chunks = [];
@@ -160,7 +160,7 @@ test("anchor accept forwards one source authority and rejects both", async () =>
         hostname: "127.0.0.1",
         port,
         method: "POST",
-        path: "/api/visual/characters/Mira/anchor-accept",
+        path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/Mira/anchor-accept",
         headers: { "content-type": "application/json" },
       }, (res) => {
         const chunks = [];
@@ -184,7 +184,7 @@ test("anchor accept forwards one source authority and rejects both", async () =>
         hostname: "127.0.0.1",
         port,
         method: "POST",
-        path: "/api/visual/characters/Mira/anchor-accept",
+        path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/Mira/anchor-accept",
         headers: { "content-type": "application/json" },
       }, (res) => {
         const chunks = [];

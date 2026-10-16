@@ -10,6 +10,20 @@
 <body>
   <div id="action-status" class="action-status" aria-live="polite" hidden></div>
   <main class="page">
+    <header class="project-bar">
+      <a class="project-back" href="/">Проекты</a>
+      <form id="rename-form" class="rename-form">
+        <label for="project-title">Проект</label>
+        <input id="project-title" name="title" maxlength="120" required>
+        <button type="submit">Сохранить название</button>
+      </form>
+    </header>
+    <section id="project-missing" class="project-missing" hidden>
+      <h1>Проект не найден</h1>
+      <p>Такого проекта нет.</p>
+      <p><a href="/">Проекты</a></p>
+    </section>
+    <div id="workspace-body">
     <h1>Раскадровка</h1>
     <p id="build-marker" class="build-marker">Сборка …</p>
     <button id="global-undo" type="button" class="global-undo" hidden disabled>Нечего отменять</button>
@@ -101,6 +115,7 @@
       <video id="render-preview" class="render-preview" controls hidden></video>
       <a id="render-download" hidden download="storyboard.mp4">Скачать видео</a>
     </section>
+    </div>
   </main>
   <div id="research-dock-host">
     <aside id="research-dock" class="research-dock" aria-label="Панель команд">

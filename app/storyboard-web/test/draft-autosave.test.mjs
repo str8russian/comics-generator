@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "../server.mjs";
 import { bindDraftAutosave } from "../public/draft-autosave.mjs";
 
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
+
 const startText = "ЧЕРНОВИК-СТАРТ-550";
 const debouncedAway = "ЧЕРНОВИК-РАННИЙ-551";
 const firstSent = "ЧЕРНОВИК-ПЕРВЫЙ-552";
@@ -228,8 +230,8 @@ test("page textarea coalesces one save and keeps local text through a stale conf
     releaseFirst();
     await waitFor(() => savedTexts.length === 2, originalSetTimeout);
     assert.deepEqual(savedTexts, [firstSent, newest]);
-    assert.equal(requests.filter((request) => request.path === "/api/draft").every((request) => request.body.text !== intermediate), true);
-    assert.equal(requests.filter((request) => request.path === "/api/draft").every((request) => request.body.text !== debouncedAway), true);
+    assert.equal(requests.filter((request) => request.path === "/api/projects/00000000-0000-4000-8000-000000000001/draft").every((request) => request.body.text !== intermediate), true);
+    assert.equal(requests.filter((request) => request.path === "/api/projects/00000000-0000-4000-8000-000000000001/draft").every((request) => request.body.text !== debouncedAway), true);
     assert.equal(requests.some((request) => request.path === "/api/storyboard"), false);
 
     conflictsRemaining = 1;

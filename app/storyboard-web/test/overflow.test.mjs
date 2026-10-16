@@ -184,14 +184,14 @@ test("preserves panel visual metadata when dialogue already fits", () => {
     panels: [{
       description: "Путин отвечает",
       assetId: "asset-1",
-      asset: "/api/visual/assets/asset-1",
+      asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-1",
       zoom: 1.25,
       position: "40% 35%",
       align: "40% 35%",
       subject: "Путин",
       generationStatus: "ready",
       performanceAssetId: "perf-1",
-      performanceAssetUrl: "/api/visual/assets/perf-1",
+      performanceAssetUrl: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/perf-1",
     }],
   });
   const result = compileOverflow([frame], () => true);
@@ -199,7 +199,7 @@ test("preserves panel visual metadata when dialogue already fits", () => {
   assert.equal(result.frames.length, 1);
   const panel = result.frames[0].panels[0];
   assert.equal(panel.assetId, "asset-1");
-  assert.equal(panel.asset, "/api/visual/assets/asset-1");
+  assert.equal(panel.asset, "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/asset-1");
   assert.equal(panel.zoom, 1.25);
   assert.equal(panel.position, "40% 35%");
   assert.equal(panel.generationStatus, "ready");
@@ -213,7 +213,7 @@ test("eligible split2 ready panels keep FrameRenderer dialogue geometry across o
     {
       description: "Путин спокойно слушает",
       assetId: "left-ready",
-      asset: "/api/visual/assets/left-ready",
+      asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/left-ready",
       zoom: 1.15,
       position: "48% 32%",
       align: "48% 32%",
@@ -223,7 +223,7 @@ test("eligible split2 ready panels keep FrameRenderer dialogue geometry across o
     {
       description: "Дуров отвечает",
       assetId: "right-ready",
-      asset: "/api/visual/assets/right-ready",
+      asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/right-ready",
       zoom: 1,
       position: "52% 30%",
       align: "52% 30%",
@@ -265,7 +265,7 @@ test("keeps the same panel assets on every dialogue overflow piece", () => {
     {
       description: "Левая",
       assetId: "left",
-      asset: "/api/visual/assets/left",
+      asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/left",
       zoom: 1.1,
       position: "50% 30%",
       subject: "Путин",
@@ -274,7 +274,7 @@ test("keeps the same panel assets on every dialogue overflow piece", () => {
     {
       description: "Правая",
       assetId: "right",
-      asset: "/api/visual/assets/right",
+      asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/right",
       zoom: 1,
       position: "50% 30%",
       subject: "Дуров",

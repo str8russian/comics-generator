@@ -72,7 +72,7 @@ test("draft routes stay available and a reading without provider settings does n
   });
   const port = await listen(server);
   try {
-    const loaded = await send(port, { method: "GET", path: "/api/project" });
+    const loaded = await send(port, { method: "GET", path: "/api/projects/00000000-0000-4000-8000-000000000001" });
     assert.equal(loaded.status, 200);
     assert.equal(loaded.body.includes("configuration"), false);
     const project = JSON.parse(loaded.body);
@@ -80,14 +80,14 @@ test("draft routes stay available and a reading without provider settings does n
 
     const saved = await send(port, {
       method: "PUT",
-      path: "/api/draft",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/draft",
       body: { text: "Путин: да", revisionToken: token },
     });
     assert.equal(saved.status, 200);
     assert.equal(saved.body.includes("configuration"), false);
     assert.deepEqual(JSON.parse(saved.body), { revisionToken: nextToken });
 
-    const reading = await send(port, { method: "POST", path: "/api/readings" });
+    const reading = await send(port, { method: "POST", path: "/api/projects/00000000-0000-4000-8000-000000000001/readings" });
     assert.equal(reading.status, 500);
     assert.deepEqual(JSON.parse(reading.body), { status: "failed", kind: "configuration" });
     assert.equal(fetched, false);

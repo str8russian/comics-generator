@@ -1,3 +1,4 @@
+import { projectApi, projectIdFromLocation } from "./project-api.mjs";
 import { bindDraftAutosave } from "/draft-autosave.mjs";
 import { assessDialogue, compileOverflow, pageState } from "/overflow.mjs";
 import * as FrameRenderer from "/frame-renderer.mjs";
@@ -226,7 +227,7 @@ function syncResearchCommandTargets() {
 
 async function postResearchEvent(body) {
   try {
-    const response = await fetch("/api/research/events", {
+    const response = await fetch(scoped("/api/research/events"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
@@ -1090,8 +1091,16 @@ function showActionNotice(text, kind = "success") {
   }
 }
 
+function scoped(path) {
+  if (typeof path !== "string" || path === "/api/build" || path.startsWith("/api/build?")) return path;
+  if (!path.startsWith("/api/")) return path;
+  const resolved = projectApi(path);
+  if (!resolved) throw new Error("project");
+  return resolved;
+}
+
 async function fetchJson(path, options = {}) {
-  const response = await fetch(path, options);
+  const response = await fetch(scoped(path), options);
   let payload = null;
   try {
     payload = await response.json();
@@ -1958,7 +1967,7 @@ async function saveCast() {
   }
   let response;
   try {
-    response = await fetch(path, {
+    response = await fetch(scoped(path), {
       method,
       headers: { "content-type": "application/json" },
       body: JSON.stringify(cast),
@@ -2155,7 +2164,7 @@ confirmMaterial?.addEventListener("click", async () => {
     async operation() {
       let response;
       try {
-        response = await fetch("/api/confirmations", {
+        response = await fetch(scoped("/api/confirmations"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ readingId: review.id }),
@@ -2217,7 +2226,7 @@ stageMaterial?.addEventListener("click", async () => {
     async operation() {
       let response;
       try {
-        response = await fetch("/api/storyboard-results", { method: "POST" });
+        response = await fetch(scoped("/api/storyboard-results"), { method: "POST" });
       } catch (error) {
         showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
         const err = error instanceof Error ? error : new Error("provider");
@@ -2258,16 +2267,56 @@ stageMaterial?.addEventListener("click", async () => {
   });
 });
 
+function showMissingProject() {
+  const missing = document.querySelector("#project-missing");
+  const workspace = document.querySelector("#workspace-body");
+  if (missing) missing.hidden = false;
+  if (workspace) workspace.hidden = true;
+  const rename = document.querySelector("#rename-form");
+  if (rename) rename.hidden = true;
+  const dock = document.querySelector("#research-dock-host");
+  if (dock) dock.hidden = true;
+}
+
+function showProjectTitle(title) {
+  const input = document.querySelector("#project-title");
+  if (input && document.activeElement !== input) input.value = title || "";
+}
+
 draftAutosave.ready.then(async () => {
   try {
-    const response = await fetch("/api/project");
+    const response = await fetch(scoped("/api/project"));
+    if (response.status === 404) {
+      showMissingProject();
+      return;
+    }
     if (!response.ok) return;
     const project = await response.json();
+    showProjectTitle(project.title);
     restoreReview(project);
     await restoreStoryboard(project);
     await refreshVisual();
+    await fetch(scoped("/api/project/open"), { method: "POST" });
   } catch {
     hideReview();
+  }
+});
+
+document.querySelector("#rename-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.querySelector("#project-title");
+  const title = input?.value ?? "";
+  try {
+    const response = await fetch(scoped("/api/project/rename"), {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (!response.ok) return;
+    const payload = await response.json();
+    showProjectTitle(payload.title);
+  } catch {
+    // The visible title stays as the user left it. The next reload shows the stored title.
   }
 });
 
@@ -2285,7 +2334,7 @@ form.addEventListener("submit", async (event) => {
     async operation() {
       let response;
       try {
-        response = await fetch("/api/readings", { method: "POST" });
+        response = await fetch(scoped("/api/readings"), { method: "POST" });
       } catch (error) {
         showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
         const err = error instanceof Error ? error : new Error("provider");
@@ -2347,7 +2396,7 @@ async function refreshRenderStatus() {
     if (renderPreview) renderPreview.hidden = !ready;
     if (renderDownload) renderDownload.hidden = !ready;
     if (ready) {
-      const src = `/api/visual/render/result?render=${encodeURIComponent(status.id)}`;
+      const src = scoped(`/api/visual/render/result?render=${encodeURIComponent(status.id)}`);
       if (renderPreview && !renderPreview.src.endsWith(encodeURIComponent(status.id))) renderPreview.src = src;
       if (renderDownload) renderDownload.href = src;
     }

@@ -90,12 +90,12 @@ test("global undo requires the JSON body and reports the undone action", async (
   });
   const port = await listen(server);
   try {
-    const missing = await send(port, { method: "POST", path: "/api/visual/storyboard/undo" });
+    const missing = await send(port, { method: "POST", path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo" });
     assert.equal(missing.status, 415);
     assert.equal(undoCalls, 0);
     const restored = await send(port, {
       method: "POST",
-      path: "/api/visual/storyboard/undo",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo",
       headers: { "content-type": "application/json" },
       body: "{}",
     });
@@ -129,7 +129,7 @@ test("render evidence is written once on the server for success, failure, and re
     const renderBody = JSON.stringify({ transition: "cross-dissolve" });
     const started = await send(port, {
       method: "POST",
-      path: "/api/visual/render",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/render",
       headers: {
         "content-type": "application/json",
         "content-length": Buffer.byteLength(renderBody),
@@ -140,10 +140,10 @@ test("render evidence is written once on the server for success, failure, and re
     assert.equal(started.body.transition, "cross-dissolve");
     assert.equal(started.body.overlapFrames, 6);
     for (let i = 0; i < 3; i += 1) {
-      await send(port, { path: "/api/visual/render" });
+      await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/render" });
     }
     await new Promise((resolve) => setTimeout(resolve, 30));
-    const trace = await research.listTrace();
+    const trace = await research.listTrace({ projectId: "00000000-0000-4000-8000-000000000001" });
     const terminals = trace.events.filter((event) => event.eventKind === "action_terminal");
     const starts = trace.events.filter((event) => event.eventKind === "action_start");
     assert.equal(starts.length, 1);
@@ -154,7 +154,7 @@ test("render evidence is written once on the server for success, failure, and re
     const invalidBody = JSON.stringify({ transition: "wipe" });
     const invalid = await send(port, {
       method: "POST",
-      path: "/api/visual/render",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/render",
       headers: {
         "content-type": "application/json",
         "content-length": Buffer.byteLength(invalidBody),
@@ -162,7 +162,7 @@ test("render evidence is written once on the server for success, failure, and re
       body: invalidBody,
     });
     assert.equal(invalid.status, 400);
-    const afterInvalid = await research.listTrace();
+    const afterInvalid = await research.listTrace({ projectId: "00000000-0000-4000-8000-000000000001" });
     assert.equal(afterInvalid.events.filter((event) => event.eventKind === "action_terminal").length, 1);
   } finally {
     await close(server);
@@ -188,10 +188,10 @@ test("a failed render still records one terminal without a browser poll", async 
   });
   const port = await listen(server);
   try {
-    const started = await send(port, { method: "POST", path: "/api/visual/render" });
+    const started = await send(port, { method: "POST", path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/render" });
     assert.equal(started.status, 202);
     await new Promise((resolve) => setTimeout(resolve, 30));
-    const trace = await research.listTrace();
+    const trace = await research.listTrace({ projectId: "00000000-0000-4000-8000-000000000001" });
     const terminals = trace.events.filter((event) => event.eventKind === "action_terminal");
     assert.equal(terminals.length, 1);
     assert.equal(terminals[0].outcome, "failure");

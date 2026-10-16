@@ -1,3 +1,4 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test, { before, describe } from "node:test";
@@ -453,9 +454,9 @@ describe("anchor refine actions and centered confirmation", { concurrency: false
       name: "Mira",
       approvedAnchorId: "anchor-1",
       approvedAssetId: "anchor-asset-1",
-      approvedAssetUrl: "/api/visual/assets/anchor-asset-1",
+      approvedAssetUrl: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/anchor-asset-1",
       anchorProvenance: "generated_from_source",
-      sourcePhoto: { assetId: "source-1", assetUrl: "/api/visual/assets/source-1" },
+      sourcePhoto: { assetId: "source-1", assetUrl: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/source-1" },
     }];
     const mountRetained = () => {
       renderAnchorWorkspace({
@@ -478,7 +479,7 @@ describe("anchor refine actions and centered confirmation", { concurrency: false
                 anchorProvenance: body.provenance,
                 sourcePhoto: {
                   assetId: body.sourceAssetId || "source-1",
-                  assetUrl: "/api/visual/assets/source-1",
+                  assetUrl: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/source-1",
                 },
               }],
             };
@@ -511,7 +512,7 @@ describe("anchor refine actions and centered confirmation", { concurrency: false
     assert.ok(captions.includes("Сгенерирован по исходному фото"));
     assert.ok(captions.includes("Исходное фото"));
     assert.equal(
-      [...document.querySelectorAll("img")].some((img) => img.getAttribute("src") === "/api/visual/assets/source-1"),
+      [...document.querySelectorAll("img")].some((img) => img.getAttribute("src") === "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/source-1"),
       true,
     );
 
@@ -520,9 +521,9 @@ describe("anchor refine actions and centered confirmation", { concurrency: false
       name: "Mira",
       approvedAnchorId: "anchor-1",
       approvedAssetId: "anchor-asset-1",
-      approvedAssetUrl: "/api/visual/assets/anchor-asset-1",
+      approvedAssetUrl: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/anchor-asset-1",
       anchorProvenance: "generated_from_source",
-      sourcePhoto: { assetId: "source-1", assetUrl: "/api/visual/assets/source-1" },
+      sourcePhoto: { assetId: "source-1", assetUrl: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/source-1" },
     }];
     mountRetained();
     buttonByText("Уточнить образ").dispatchEvent({ type: "click" });

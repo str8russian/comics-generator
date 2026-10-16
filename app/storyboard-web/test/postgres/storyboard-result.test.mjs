@@ -15,6 +15,7 @@ import {
   saveDraft,
   stageActiveMaterial,
 } from "../../project-store.mjs";
+import { enterProject, SEEDED_PROJECT_ID } from "../../project-scope.mjs";
 import { createServer } from "../../server.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
@@ -193,6 +194,7 @@ function request(port, { method, path }) {
 test("storyboard results bind to the captured material state and rebuild dialogue", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
 }, async () => {
+  enterProject(SEEDED_PROJECT_ID);
   const url = new URL(databaseUrl);
   assert.equal(url.pathname, "/comics_test");
   const previous = process.env.DATABASE_URL;
@@ -300,8 +302,8 @@ test("storyboard results bind to the captured material state and rebuild dialogu
       },
     });
     const port = await listen(server);
-    const postStage = () => request(port, { method: "POST", path: "/api/storyboard-results" });
-    const getProject = () => request(port, { method: "GET", path: "/api/project" });
+    const postStage = () => request(port, { method: "POST", path: "/api/projects/00000000-0000-4000-8000-000000000001/storyboard-results" });
+    const getProject = () => request(port, { method: "GET", path: "/api/projects/00000000-0000-4000-8000-000000000001" });
 
     const unresolved = await postStage();
     assert.equal(unresolved.status, 200);

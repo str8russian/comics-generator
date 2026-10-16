@@ -1,9 +1,13 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
 import { createServer, DEFAULT_MAX_BODY_BYTES, routes } from "../server.mjs";
 
 const files = {
+  "app/storyboard-web/public/projects.html": "<!doctype html><title>projects</title>",
+  "app/storyboard-web/public/projects.js": "export const projects = true;\n",
+  "app/storyboard-web/public/project-api.mjs": "export function projectApi(path) { return path; }\n",
   "app/storyboard-web/public/index.html": "<!doctype html><title>injected</title>",
   "app/storyboard-web/public/app.js": "export const injectedApp = true;\n",
   "app/storyboard-web/public/app.css": "body { margin: 0; }\n",
@@ -70,7 +74,9 @@ test("names the static allowlist from the storyboard contract", () => {
   assert.equal(DEFAULT_MAX_BODY_BYTES, 262144);
   const actual = routes.map((route) => [route.method, route.path, route.file]);
   assert.deepEqual(actual, [
-    ["GET", "/", "app/storyboard-web/public/index.html"],
+    ["GET", "/", "app/storyboard-web/public/projects.html"],
+    ["GET", "/projects.js", "app/storyboard-web/public/projects.js"],
+    ["GET", "/project-api.mjs", "app/storyboard-web/public/project-api.mjs"],
     ["GET", "/app.js", "app/storyboard-web/public/app.js"],
     ["GET", "/app.css", "app/storyboard-web/public/app.css"],
     ["GET", "/draft-autosave.mjs", "app/storyboard-web/public/draft-autosave.mjs"],

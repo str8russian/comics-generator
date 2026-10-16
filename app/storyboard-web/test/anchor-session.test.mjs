@@ -235,7 +235,7 @@ function refineRetainedAsset() {
   const created = resolveGenerate(first.state, { ok: true, requestId: first.effect.requestId, dataUrl: ANCHOR });
   const accepted = acceptDraft(created);
   accepted.anchor.source.assetId = "source-1";
-  accepted.anchor.source.dataUrl = "/api/visual/assets/source-1";
+  accepted.anchor.source.dataUrl = "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/source-1";
   return openRefine(accepted);
 }
 

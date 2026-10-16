@@ -135,7 +135,7 @@ test("visual endpoints use the image provider for anchors and panels but never f
   try {
     const identity = await request(port, {
       method: "POST",
-      path: `/api/visual/characters/${encodeURIComponent("Путин")}/identity`,
+      path: `/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/${encodeURIComponent("Путин")}/identity`,
       body: { imageDataUrl: dataUrl, comment: "recognizable" },
     });
     assert.equal(identity.status, 200);
@@ -143,7 +143,7 @@ test("visual endpoints use the image provider for anchors and panels but never f
 
     const anchor = await request(port, {
       method: "POST",
-      path: `/api/visual/characters/${encodeURIComponent("Путин")}/anchor`,
+      path: `/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/${encodeURIComponent("Путин")}/anchor`,
       body: { instruction: "heavier contour" },
     });
     assert.equal(anchor.status, 200);
@@ -153,7 +153,7 @@ test("visual endpoints use the image provider for anchors and panels but never f
 
     const panel = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/0/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
       body: { instruction: "closer", performanceImageDataUrl: dataUrl },
     });
     assert.equal(panel.status, 200);
@@ -165,7 +165,7 @@ test("visual endpoints use the image provider for anchors and panels but never f
 
     const zoom = await request(port, {
       method: "PATCH",
-      path: "/api/visual/frames/f1/panels/0/placement",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/placement",
       body: { zoom: 1.5, positionX: 50, positionY: 30 },
     });
     assert.equal(zoom.status, 200);
@@ -174,7 +174,7 @@ test("visual endpoints use the image provider for anchors and panels but never f
     assert.equal(counters.beginPanel, 1, "placement must not begin a generation attempt");
     assert.equal(counters.finishPanel, 1, "placement must not finish a generation attempt");
 
-    const asset = await request(port, { path: "/api/visual/assets/00000000-0000-4000-8000-000000000111" });
+    const asset = await request(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/00000000-0000-4000-8000-000000000111" });
     assert.equal(asset.status, 200);
     assert.equal(asset.headers["content-type"], "image/png");
     assert.deepEqual(asset.bytes, png);
@@ -212,7 +212,7 @@ test("identity save accepts JPEG and PNG, never calls the image provider, and re
   try {
     const pngResponse = await request(port, {
       method: "POST",
-      path: `/api/visual/characters/${encodeURIComponent("Путин")}/identity`,
+      path: `/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/${encodeURIComponent("Путин")}/identity`,
       body: { imageDataUrl: dataUrl, comment: "png" },
     });
     assert.equal(pngResponse.status, 200);
@@ -222,7 +222,7 @@ test("identity save accepts JPEG and PNG, never calls the image provider, and re
     const { jpeg, dataUrl: jpegUrl } = jpegDataUrl();
     const jpegResponse = await request(port, {
       method: "POST",
-      path: `/api/visual/characters/${encodeURIComponent("Путин")}/identity`,
+      path: `/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/${encodeURIComponent("Путин")}/identity`,
       body: { imageDataUrl: jpegUrl, comment: "jpeg" },
     });
     assert.equal(jpegResponse.status, 200);
@@ -231,7 +231,7 @@ test("identity save accepts JPEG and PNG, never calls the image provider, and re
 
     const heic = await request(port, {
       method: "POST",
-      path: `/api/visual/characters/${encodeURIComponent("Путин")}/identity`,
+      path: `/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/${encodeURIComponent("Путин")}/identity`,
       body: { imageDataUrl: `data:image/heic;base64,${heicLike().toString("base64")}` },
     });
     assert.equal(heic.status, 400);
@@ -240,7 +240,7 @@ test("identity save accepts JPEG and PNG, never calls the image provider, and re
     const oversize = Buffer.concat([png, Buffer.alloc((12 * 1024 * 1024 + 1) - png.length)]);
     const tooLarge = await request(port, {
       method: "POST",
-      path: `/api/visual/characters/${encodeURIComponent("Путин")}/identity`,
+      path: `/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/${encodeURIComponent("Путин")}/identity`,
       body: { imageDataUrl: `data:image/png;base64,${oversize.toString("base64")}` },
     });
     assert.equal(tooLarge.status, 400);
@@ -298,7 +298,7 @@ test("stable style seed is reused for later anchors and survives approval of oth
   try {
     const first = await request(port, {
       method: "POST",
-      path: `/api/visual/characters/${encodeURIComponent("Дуров")}/anchor`,
+      path: `/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/${encodeURIComponent("Дуров")}/anchor`,
       body: { instruction: "match project style" },
     });
     assert.equal(first.status, 200);
@@ -310,7 +310,7 @@ test("stable style seed is reused for later anchors and survives approval of oth
 
     const approve = await request(port, {
       method: "POST",
-      path: `/api/visual/characters/${encodeURIComponent("Дуров")}/anchors/00000000-0000-4000-8000-000000000222/approve`,
+      path: `/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/${encodeURIComponent("Дуров")}/anchors/00000000-0000-4000-8000-000000000222/approve`,
       body: {},
     });
     assert.equal(approve.status, 200);
@@ -402,7 +402,7 @@ test("eligible split2 frame generate uses panel-ready compiler for both panels s
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/generate",
       body: {},
     });
     const elapsed = Date.now() - started;
@@ -513,7 +513,7 @@ test("eligible frame generate with empty body uses constrained canonical compile
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/generate",
       body: {},
     });
     assert.equal(generated.status, 200);
@@ -626,7 +626,7 @@ test("eligible frame generate preserves Russian supported intent without raw des
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/generate",
       body: {},
     });
     assert.equal(generated.status, 200);
@@ -699,7 +699,7 @@ test("out-of-scope single frame generate keeps the historical panel prompt path"
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/generate",
       body: {},
     });
     assert.equal(generated.status, 200);
@@ -749,7 +749,7 @@ test("out-of-scope single frame keeps historical reference image order and promp
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/0/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
       body: { instruction: "closer" },
     });
     assert.equal(generated.status, 200);
@@ -796,7 +796,7 @@ function eligibleSplitState(overrides = {}) {
           description: "Путин спокойно слушает",
           subject: Object.prototype.hasOwnProperty.call(overrides, "leftSubject") ? overrides.leftSubject : "Путин",
           assetId: leftAssetId,
-          asset: leftAssetId ? `/api/visual/assets/${leftAssetId}` : null,
+          asset: leftAssetId ? `/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/${leftAssetId}` : null,
           zoom: 1,
           position: "50% 30%",
           align: "50% 30%",
@@ -806,7 +806,7 @@ function eligibleSplitState(overrides = {}) {
           description: "Дуров отвечает",
           subject: Object.prototype.hasOwnProperty.call(overrides, "rightSubject") ? overrides.rightSubject : "Дуров",
           assetId: rightAssetId,
-          asset: rightAssetId ? `/api/visual/assets/${rightAssetId}` : null,
+          asset: rightAssetId ? `/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/${rightAssetId}` : null,
           zoom: 1,
           position: "50% 30%",
           align: "50% 30%",
@@ -867,7 +867,7 @@ test("panel-scoped regeneration requests only the targeted panel and keeps the o
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/1/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/1/generate",
       body: { instruction: "only right panel" },
     });
     assert.equal(generated.status, 200);
@@ -901,7 +901,7 @@ test("api visual exposes latest failed status while retaining the current ready 
   });
   const port = await listen(server);
   try {
-    const loaded = await request(port, { path: "/api/visual" });
+    const loaded = await request(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/visual" });
     assert.equal(loaded.status, 200);
     assert.equal(loaded.body.frames[0].visualReady, true);
     assert.equal(loaded.body.frames[0].panels[1].assetId, "right-prev");
@@ -968,7 +968,7 @@ test("visual panel generation logs stay free of secrets prompts and image bytes"
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/0/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
       body: { instruction: "secret-revision-instruction", performanceImageDataUrl: dataUrl },
     });
     assert.equal(generated.status, 200);
@@ -1087,7 +1087,7 @@ test("eligible panel diagnostics recover canonical intent authority ids and term
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/0/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
       body: {},
     });
     assert.equal(generated.status, 200);
@@ -1185,7 +1185,7 @@ test("eligible panel diagnostics represent closed-eye gaze as none", async () =>
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/0/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
       body: {},
     });
     assert.equal(generated.status, 200);
@@ -1274,7 +1274,7 @@ test("eligible panel provider failure diagnostics retain intent authority ids an
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/0/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
       body: {},
     });
     assert.equal(generated.status >= 400, true);
@@ -1322,7 +1322,7 @@ test("panel-scoped preflight failure logs address and reason with zero provider 
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/0/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
       body: {},
     });
     assert.equal(generated.status, 409);
@@ -1367,7 +1367,7 @@ test("eligible frame preflight blocks missing style with zero provider calls", a
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/generate",
       body: {},
     });
     assert.equal(generated.status, 409);
@@ -1411,7 +1411,7 @@ test("eligible frame preflight blocks missing subject and missing anchor with ze
     try {
       const generated = await request(port, {
         method: "POST",
-        path: "/api/visual/frames/f1/generate",
+        path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/generate",
         body: {},
       });
       assert.equal(generated.status, 409, label);
@@ -1440,7 +1440,7 @@ test("invalid performance image rejects before provider and keeps previous ready
         description: "Путин спокойно отвечает",
         subject: "Путин",
         assetId: "kept-ready",
-        asset: "/api/visual/assets/kept-ready",
+        asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/kept-ready",
         zoom: 1,
         position: "50% 30%",
         align: "50% 30%",
@@ -1472,7 +1472,7 @@ test("invalid performance image rejects before provider and keeps previous ready
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/0/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
       body: { performanceImageDataUrl: "data:image/png;base64,not-an-image" },
     });
     assert.equal(generated.status, 400);
@@ -1502,7 +1502,7 @@ test("panel provider timeout invalid-output and provider failures preserve or wi
           description: "Путин спокойно отвечает",
           subject: "Путин",
           assetId: "kept-ready",
-          asset: "/api/visual/assets/kept-ready",
+          asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/kept-ready",
           zoom: 1,
           position: "50% 30%",
           align: "50% 30%",
@@ -1548,7 +1548,7 @@ test("panel provider timeout invalid-output and provider failures preserve or wi
     try {
       const generated = await request(port, {
         method: "POST",
-        path: "/api/visual/frames/f1/panels/0/generate",
+        path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
         body: {},
       });
       assert.equal(generated.status, httpStatus, kind);
@@ -1618,7 +1618,7 @@ test("panel provider timeout invalid-output and provider failures preserve or wi
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/panels/0/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/generate",
       body: {},
     });
     assert.equal(generated.status, 502);
@@ -1682,7 +1682,7 @@ test("partial eligible frame attempt keeps visualReady with retained previous an
   try {
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/generate",
       body: {},
     });
     assert.equal(generated.status, 200);
@@ -1721,7 +1721,7 @@ test("successful panel assets survive loadVisual fitting and partial frame failu
           description: "Путин",
           subject: "Путин",
           assetId: "p0",
-          asset: "/api/visual/assets/p0",
+          asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/p0",
           zoom: 1,
           position: "50% 30%",
           align: "50% 30%",
@@ -1731,7 +1731,7 @@ test("successful panel assets survive loadVisual fitting and partial frame failu
           description: "Дуров",
           subject: "Дуров",
           assetId: "p1",
-          asset: "/api/visual/assets/p1",
+          asset: "/api/projects/00000000-0000-4000-8000-000000000001/visual/assets/p1",
           zoom: 1.2,
           position: "45% 28%",
           align: "45% 28%",
@@ -1781,7 +1781,7 @@ test("successful panel assets survive loadVisual fitting and partial frame failu
 
     const generated = await request(port, {
       method: "POST",
-      path: "/api/visual/frames/f1/generate",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/generate",
       body: {},
     });
     assert.equal(generated.status, 200);
@@ -1865,7 +1865,7 @@ test("structural edit applies the Putin full-frame command and maps conflicts to
   try {
     const edited = await request(port, {
       method: "POST",
-      path: "/api/visual/storyboard/edit",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit",
       body: { instruction: "в кадре 14 должен быть только Путин на весь кадр" },
     });
     assert.equal(edited.status, 200);
@@ -1876,7 +1876,7 @@ test("structural edit applies the Putin full-frame command and maps conflicts to
 
     const conflict = await request(port, {
       method: "POST",
-      path: "/api/visual/storyboard/edit",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit",
       body: { instruction: "Сделай кадр 2 крупнее" },
     });
     assert.equal(conflict.status, 409);
@@ -1972,7 +1972,7 @@ test("pan, zoom, reset, and mirror update one panel and never call the image pro
   try {
     const pan = await request(port, {
       method: "PATCH",
-      path: "/api/visual/frames/f1/panels/0/placement",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/placement",
       body: { positionX: 12, positionY: 70 },
     });
     assert.equal(pan.status, 200);
@@ -1985,7 +1985,7 @@ test("pan, zoom, reset, and mirror update one panel and never call the image pro
 
     const zoom = await request(port, {
       method: "PATCH",
-      path: "/api/visual/frames/f1/panels/0/placement",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/placement",
       body: { zoom: 2 },
     });
     assert.equal(zoom.status, 200);
@@ -1995,7 +1995,7 @@ test("pan, zoom, reset, and mirror update one panel and never call the image pro
 
     const mirror = await request(port, {
       method: "PATCH",
-      path: "/api/visual/frames/f1/panels/0/placement",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/placement",
       body: { mirrored: true },
     });
     assert.equal(mirror.status, 200);
@@ -2006,7 +2006,7 @@ test("pan, zoom, reset, and mirror update one panel and never call the image pro
 
     const reset = await request(port, {
       method: "PATCH",
-      path: "/api/visual/frames/f1/panels/0/placement",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/0/placement",
       body: { reset: true },
     });
     assert.equal(reset.status, 200);
@@ -2018,7 +2018,7 @@ test("pan, zoom, reset, and mirror update one panel and never call the image pro
 
     const invalid = await request(port, {
       method: "PATCH",
-      path: "/api/visual/frames/f1/panels/1/placement",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/f1/panels/1/placement",
       body: { zoom: 9 },
     });
     assert.equal(invalid.status, 400);

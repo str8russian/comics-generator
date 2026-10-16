@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPool } from "../../db/pool.mjs";
 import { migrate } from "../../db/migrate.mjs";
+import { enterProject, SEEDED_PROJECT_ID } from "../../project-scope.mjs";
 import { createVisualStore } from "../../visual-store.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
@@ -63,11 +64,14 @@ async function reset(pool) {
 }
 
 async function seed(pool) {
-  await pool.query("INSERT INTO source_revision (id, text) VALUES ($1, 'test')", [ids.source]);
+  await pool.query(
+    "INSERT INTO source_revision (id, project_id, text) VALUES ($1, $2, 'test')",
+    [ids.source, SEEDED_PROJECT_ID],
+  );
   await pool.query(`
-    INSERT INTO reading (id, draft_text, draft_revision_token, status)
-    VALUES ($1, 'test', '20000000-0000-4000-8000-000000000008', 'ready')
-  `, [ids.reading]);
+    INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status)
+    VALUES ($1, $2, 'test', '20000000-0000-4000-8000-000000000008', 'ready')
+  `, [ids.reading, SEEDED_PROJECT_ID]);
   await pool.query(`
     INSERT INTO interpretation (id, source_revision_id, reading_id)
     VALUES ($1, $2, $3)
@@ -83,8 +87,8 @@ async function seed(pool) {
   await pool.query(`
     UPDATE project
     SET active_source_revision_id = $1, active_material_state_id = $2
-    WHERE singleton = true
-  `, [ids.source, ids.material]);
+    WHERE id = $3
+  `, [ids.source, ids.material, SEEDED_PROJECT_ID]);
   await pool.query(`
     INSERT INTO storyboard_result (id, material_state_id, status, stage_payload, created_at)
     VALUES ($1, $2, 'checked', $3::jsonb, '2026-10-14T12:00:00Z')
@@ -92,6 +96,7 @@ async function seed(pool) {
 }
 
 async function withStore(run) {
+  enterProject(SEEDED_PROJECT_ID);
   if (!databaseUrl) return;
   const url = new URL(databaseUrl);
   assert.equal(url.pathname, "/comics_test");

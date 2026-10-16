@@ -1,3 +1,5 @@
+import { projectApi } from "./project-api.mjs";
+
 const SAVE_DELAY_MS = 400;
 const CONFLICT_TEXT = "Есть более новый сохранённый черновик.";
 
@@ -58,13 +60,21 @@ export function bindDraftAutosave({
     notify();
   }
 
+  function api(path) {
+    const resolved = projectApi(path);
+    if (!resolved) throw new Error("project");
+    return resolved;
+  }
+
   async function readProject() {
-    const response = await fetchImpl("/api/project");
+    const response = await fetchImpl(api("/api/project"));
+    const ok = typeof response.ok === "boolean" ? response.ok : response.status === 200;
+    if (!ok) throw new Error("project");
     return response.json();
   }
 
   async function putDraft(text) {
-    const response = await fetchImpl("/api/draft", {
+    const response = await fetchImpl(api("/api/draft"), {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text, revisionToken: token }),
@@ -154,7 +164,7 @@ export function bindDraftAutosave({
   async function reloadStored() {
     if (!beginResolve()) return;
     try {
-      const response = await fetchImpl("/api/project");
+      const response = await fetchImpl(api("/api/project"));
       const project = await response.json();
       const text = project?.draft?.text;
       const nextToken = project?.draft?.revisionToken;
@@ -174,7 +184,7 @@ export function bindDraftAutosave({
     if (!beginResolve()) return;
     const visible = textarea.value;
     try {
-      const response = await fetchImpl("/api/project");
+      const response = await fetchImpl(api("/api/project"));
       const project = await response.json();
       const nextToken = project?.draft?.revisionToken;
       if (response.status !== 200 || typeof nextToken !== "string") {

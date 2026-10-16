@@ -8,6 +8,7 @@ import {
 } from "./assembly.mjs";
 import { inspectImage, parseIdentityImage } from "./image-info.mjs";
 import { presentFrameTiming } from "./timing.mjs";
+import { requireProjectId, touchProjectContent } from "./project-scope.mjs";
 import {
   expandStoryboardFrames,
   isManualCharacterTarget,
@@ -21,7 +22,9 @@ function failed(kind, httpStatus = 400) {
 }
 
 function assetUrl(id) {
-  return id ? `/api/visual/assets/${id}` : null;
+  if (!id) return null;
+  const projectId = requireProjectId();
+  return `/api/projects/${projectId}/visual/assets/${id}`;
 }
 
 async function withClient(pool, fn) {
@@ -34,6 +37,7 @@ async function withClient(pool, fn) {
 }
 
 async function activeResult(client) {
+  const projectId = requireProjectId();
   const result = await client.query(`
     SELECT storyboard_result.id,
            storyboard_result.material_state_id,
@@ -41,11 +45,11 @@ async function activeResult(client) {
     FROM project
     JOIN storyboard_result
       ON storyboard_result.material_state_id = project.active_material_state_id
-    WHERE project.singleton = true
+    WHERE project.id = $1
       AND storyboard_result.status = 'checked'
     ORDER BY storyboard_result.created_at DESC, storyboard_result.id DESC
     LIMIT 1
-  `);
+  `, [projectId]);
   return result.rows[0] ?? null;
 }
 
@@ -257,10 +261,35 @@ async function assetRow(client, assetId) {
   if (!assetId) return null;
   const result = await client.query(
     `SELECT id, kind, mime, width, height, byte_length, sha256, bytes
-     FROM visual_asset WHERE id = $1`,
-    [assetId],
+     FROM visual_asset WHERE id = $1 AND project_id = $2`,
+    [assetId, requireProjectId()],
   );
   return result.rows[0] ?? null;
+}
+
+async function generationOwned(client, generationId) {
+  const result = await client.query(`
+    SELECT panel_generation.id
+    FROM panel_generation
+    JOIN panel_visual_state ON panel_visual_state.id = panel_generation.panel_visual_state_id
+    JOIN storyboard_version ON storyboard_version.id = panel_visual_state.storyboard_version_id
+    JOIN storyboard_result ON storyboard_result.id = storyboard_version.storyboard_result_id
+    JOIN material_state ON material_state.id = storyboard_result.material_state_id
+    JOIN source_revision ON source_revision.id = material_state.source_revision_id
+    WHERE panel_generation.id = $1 AND source_revision.project_id = $2
+  `, [generationId, requireProjectId()]);
+  return result.rowCount === 1;
+}
+
+async function anchorOwned(client, anchorId) {
+  const result = await client.query(`
+    SELECT character_anchor_version.id
+    FROM character_anchor_version
+    JOIN material_state ON material_state.id = character_anchor_version.material_state_id
+    JOIN source_revision ON source_revision.id = material_state.source_revision_id
+    WHERE character_anchor_version.id = $1 AND source_revision.project_id = $2
+  `, [anchorId, requireProjectId()]);
+  return result.rowCount === 1;
 }
 
 function imageBytes(image) {
@@ -336,10 +365,11 @@ async function insertAsset(client, kind, image, provenance = null) {
   const id = randomUUID();
   const clean = sanitizeProvenance(provenance);
   await client.query(`
-    INSERT INTO visual_asset (id, kind, mime, width, height, byte_length, sha256, bytes, provenance)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+    INSERT INTO visual_asset (id, project_id, kind, mime, width, height, byte_length, sha256, bytes, provenance)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
   `, [
     id,
+    requireProjectId(),
     kind,
     inspected.mime,
     inspected.width,
@@ -361,9 +391,10 @@ async function currentIdentity(client, materialStateId, characterName) {
            visual_asset.height
     FROM character_identity
     JOIN visual_asset ON visual_asset.id = character_identity.current_asset_id
+      AND visual_asset.project_id = $3
     WHERE character_identity.material_state_id = $1
       AND character_identity.character_name = $2
-  `, [materialStateId, characterName]);
+  `, [materialStateId, characterName, requireProjectId()]);
   return result.rows[0] ?? null;
 }
 
@@ -615,7 +646,8 @@ async function loadVisualWithClient(client) {
     const reusable = await client.query(`
       SELECT DISTINCT a.id, a.kind, a.mime, a.width, a.height, a.provenance, a.created_at
       FROM visual_asset a
-      WHERE a.kind IN ('uploaded-image', 'panel-image')
+      WHERE a.project_id = $2
+        AND a.kind IN ('uploaded-image', 'panel-image')
         AND a.id IN (
           SELECT pvs.assigned_asset_id
           FROM panel_visual_state pvs
@@ -634,7 +666,7 @@ async function loadVisualWithClient(client) {
           WHERE sv.storyboard_result_id = $1 AND pg.status = 'ready' AND pg.output_asset_id IS NOT NULL
         )
       ORDER BY a.id
-    `, [context.result.id]);
+    `, [context.result.id, requireProjectId()]);
     return {
       ok: true,
       status: "ready",
@@ -759,6 +791,10 @@ export async function finishAnchor(pool, { id, result }) {
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
+      if (!(await anchorOwned(client, id))) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
       if (!result?.ok) {
         await client.query(
           `UPDATE character_anchor_version SET status = 'failed', error_kind = $2, provider_metadata = $3::jsonb
@@ -935,6 +971,10 @@ export async function finishPanelGeneration(pool, { id, result, provenance = nul
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
+      if (!(await generationOwned(client, id))) {
+        await client.query("ROLLBACK");
+        return failed("not-found", 404);
+      }
       const generation = await client.query("SELECT * FROM panel_generation WHERE id = $1 FOR UPDATE", [id]);
       if (generation.rowCount !== 1 || generation.rows[0].status !== "pending") {
         await client.query("ROLLBACK");
@@ -1177,6 +1217,7 @@ async function assetIsReusable(client, storyboardResultId, assetId) {
     SELECT 1
     FROM visual_asset a
     WHERE a.id = $1
+      AND a.project_id = $3
       AND a.kind IN ('uploaded-image', 'panel-image')
       AND (
         EXISTS (
@@ -1201,7 +1242,7 @@ async function assetIsReusable(client, storyboardResultId, assetId) {
             AND pg.output_asset_id = a.id
         )
       )
-  `, [assetId, storyboardResultId]);
+  `, [assetId, storyboardResultId, requireProjectId()]);
   return result.rowCount > 0;
 }
 
@@ -1216,10 +1257,10 @@ async function prepareAssignment(client, current, operation) {
     if (!image.ok) return failed(image.kind);
     const existing = await client.query(`
       SELECT id FROM visual_asset
-      WHERE sha256 = $1 AND kind IN ('uploaded-image', 'panel-image')
+      WHERE project_id = $1 AND sha256 = $2 AND kind IN ('uploaded-image', 'panel-image')
       ORDER BY created_at ASC, id ASC
       LIMIT 1
-    `, [image.sha256]);
+    `, [requireProjectId(), image.sha256]);
     if (existing.rowCount === 1) {
       assetId = existing.rows[0].id;
       origin = "reuse";
@@ -1236,7 +1277,10 @@ async function prepareAssignment(client, current, operation) {
     WHERE storyboard_version_id = $1 AND panel_id = ANY($2::text[])
   `, [current.version.id, panelIds]);
   if (rows.rowCount !== new Set(panelIds).size) return failed("panel-not-found");
-  const stored = await client.query(`SELECT provenance FROM visual_asset WHERE id = $1`, [assetId]);
+  const stored = await client.query(
+    `SELECT provenance FROM visual_asset WHERE id = $1 AND project_id = $2`,
+    [assetId, requireProjectId()],
+  );
   return {
     ok: true,
     patch: {
@@ -1593,24 +1637,32 @@ export async function readAnchorStyle(pool) {
   }
 }
 
+function contentWrite(pool, fn) {
+  return async (...args) => {
+    const result = await fn(...args);
+    if (result?.ok) await touchProjectContent(pool).catch(() => {});
+    return result;
+  };
+}
+
 export function createVisualStore(pool) {
   return {
     load: () => loadVisual(pool),
-    saveIdentity: (input) => saveIdentity(pool, input),
-    beginAnchor: (input) => beginAnchor(pool, input),
-    finishAnchor: (input) => finishAnchor(pool, input),
-    approveAnchor: (input) => approveAnchor(pool, input),
-    acceptSessionAnchor: (input) => acceptSessionAnchor(pool, input),
-    retireCurrentAnchor: (input) => retireCurrentAnchor(pool, input),
-    restoreRetiredAnchor: (input) => restoreRetiredAnchor(pool, input),
+    saveIdentity: contentWrite(pool, (input) => saveIdentity(pool, input)),
+    beginAnchor: contentWrite(pool, (input) => beginAnchor(pool, input)),
+    finishAnchor: contentWrite(pool, (input) => finishAnchor(pool, input)),
+    approveAnchor: contentWrite(pool, (input) => approveAnchor(pool, input)),
+    acceptSessionAnchor: contentWrite(pool, (input) => acceptSessionAnchor(pool, input)),
+    retireCurrentAnchor: contentWrite(pool, (input) => retireCurrentAnchor(pool, input)),
+    restoreRetiredAnchor: contentWrite(pool, (input) => restoreRetiredAnchor(pool, input)),
     readAnchorStyle: () => readAnchorStyle(pool),
-    beginPanelGeneration: (input) => beginPanelGeneration(pool, input),
-    finishPanelGeneration: (input) => finishPanelGeneration(pool, input),
-    updatePlacement: (input) => updatePlacement(pool, input),
-    saveStoryboardEdit: (input) => saveStoryboardEdit(pool, input),
-    undoStoryboardEdit: () => undoStoryboardEdit(pool),
-    approveVisual: () => approveVisual(pool),
-    applyOperation: (input) => applyProductOperation(pool, input),
+    beginPanelGeneration: contentWrite(pool, (input) => beginPanelGeneration(pool, input)),
+    finishPanelGeneration: contentWrite(pool, (input) => finishPanelGeneration(pool, input)),
+    updatePlacement: contentWrite(pool, (input) => updatePlacement(pool, input)),
+    saveStoryboardEdit: contentWrite(pool, (input) => saveStoryboardEdit(pool, input)),
+    undoStoryboardEdit: contentWrite(pool, () => undoStoryboardEdit(pool)),
+    approveVisual: contentWrite(pool, () => approveVisual(pool)),
+    applyOperation: contentWrite(pool, (input) => applyProductOperation(pool, input)),
     readAsset: (id) => readAsset(pool, id),
     loadStructure: () => loadStoryboardStructure(pool),
   };

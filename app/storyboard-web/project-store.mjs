@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isEmptyDraft } from "./fidelity.mjs";
+import { createProject, listProjects, markOpened, renameProject } from "./project-catalog.mjs";
+import { requireProjectId, touchProjectContent } from "./project-scope.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -201,6 +203,7 @@ async function rollback(client) {
 }
 
 async function lockDraft(client) {
+  const projectId = requireProjectId();
   const result = await client.query(`
     SELECT project.id AS project_id,
            project.active_source_revision_id,
@@ -210,9 +213,9 @@ async function lockDraft(client) {
            working_draft.revision_token
     FROM project
     JOIN working_draft ON working_draft.project_id = project.id
-    WHERE project.singleton = true
+    WHERE project.id = $1
     FOR UPDATE
-  `);
+  `, [projectId]);
   return result.rowCount === 1 ? result.rows[0] : null;
 }
 
@@ -385,22 +388,31 @@ async function presentMaterial(queryable, materialStateId) {
 
 export async function loadProject(pool) {
   try {
+    const projectId = requireProjectId();
     const draft = await pool.query(
-      `SELECT project.active_source_revision_id,
+      `SELECT project.id,
+              project.title,
+              project.created_at,
+              project.updated_at,
+              project.last_opened_at,
+              project.active_source_revision_id,
               project.active_material_state_id,
               project.current_reading_id,
               working_draft.text,
               working_draft.revision_token
        FROM project
        JOIN working_draft ON working_draft.project_id = project.id
-       WHERE project.singleton = true`,
+       WHERE project.id = $1`,
+      [projectId],
     );
-    if (draft.rowCount !== 1) return null;
+    if (draft.rowCount !== 1) return { missing: true };
     const row = draft.rows[0];
     const revisions = await pool.query(
       `SELECT id, parent_source_revision_id, created_at
        FROM source_revision
+       WHERE project_id = $1
        ORDER BY created_at, id`,
+      [projectId],
     );
     const storyboards = await pool.query(
       `SELECT DISTINCT ON (storyboard_result.material_state_id)
@@ -411,11 +423,19 @@ export async function loadProject(pool) {
               storyboard_result.stage_payload
        FROM storyboard_result
        JOIN material_state ON material_state.id = storyboard_result.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       WHERE source_revision.project_id = $1
        ORDER BY storyboard_result.material_state_id, storyboard_result.created_at DESC, storyboard_result.id DESC`,
+      [projectId],
     );
     const reading = await presentReading(pool, row.current_reading_id);
     const material = await presentMaterial(pool, row.active_material_state_id);
     return {
+      id: row.id,
+      title: row.title,
+      createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
+      updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : row.updated_at,
+      lastOpenedAt: row.last_opened_at instanceof Date ? row.last_opened_at.toISOString() : row.last_opened_at,
       draft: { text: row.text, revisionToken: row.revision_token },
       activeSourceRevisionId: row.active_source_revision_id,
       activeMaterialStateId: row.active_material_state_id,
@@ -438,16 +458,25 @@ export async function saveDraft(pool, input) {
     return { ok: false, httpStatus: 400, kind: "invalid-request" };
   }
   try {
+    const projectId = requireProjectId();
     const nextToken = randomUUID();
+    const current = await pool.query(
+      `SELECT text FROM working_draft WHERE project_id = $1 AND revision_token = $2`,
+      [projectId, input.revisionToken],
+    );
+    if (current.rowCount !== 1) {
+      return { ok: false, httpStatus: 409, kind: "stale-draft" };
+    }
     const updated = await pool.query(
       `UPDATE working_draft
        SET text = $1, revision_token = $2, updated_at = now()
-       WHERE revision_token = $3`,
-      [input.text, nextToken, input.revisionToken],
+       WHERE project_id = $3 AND revision_token = $4`,
+      [input.text, nextToken, projectId, input.revisionToken],
     );
     if (updated.rowCount !== 1) {
       return { ok: false, httpStatus: 409, kind: "stale-draft" };
     }
+    if (current.rows[0].text !== input.text) await touchProjectContent(pool);
     return { ok: true, httpStatus: 200, revisionToken: nextToken };
   } catch {
     return databaseFailure();
@@ -468,14 +497,15 @@ export async function beginReading(pool) {
     }
     const readingId = randomUUID();
     await client.query(
-      `INSERT INTO reading (id, draft_text, draft_revision_token, status)
-       VALUES ($1, $2, $3, 'pending')`,
-      [readingId, locked.draft_text, locked.revision_token],
+      `INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status)
+       VALUES ($1, $2, $3, $4, 'pending')`,
+      [readingId, locked.project_id, locked.draft_text, locked.revision_token],
     );
     await client.query(
       `UPDATE project SET current_reading_id = $1 WHERE id = $2`,
       [readingId, locked.project_id],
     );
+    await touchProjectContent(client);
     await client.query("COMMIT");
     return {
       ok: true,
@@ -493,7 +523,7 @@ export async function finishReading(pool, input) {
     await client.query("BEGIN");
     const locked = await lockDraft(client);
     const reading = await client.query(
-      `SELECT id, draft_text, status FROM reading WHERE id = $1 FOR UPDATE`,
+      `SELECT id, draft_text, status, project_id FROM reading WHERE id = $1 FOR UPDATE`,
       [input.readingId],
     );
     if (!locked || reading.rowCount !== 1) {
@@ -501,7 +531,7 @@ export async function finishReading(pool, input) {
       return notFound();
     }
     const row = reading.rows[0];
-    if (locked.current_reading_id !== input.readingId || row.status !== "pending") {
+    if (row.project_id !== locked.project_id || locked.current_reading_id !== input.readingId || row.status !== "pending") {
       await rollback(client);
       return staleReading();
     }
@@ -594,7 +624,7 @@ export async function replacePendingCast(pool, readingId, cast) {
     await client.query("BEGIN");
     const locked = await lockDraft(client);
     const reading = await client.query(
-      `SELECT id, draft_text, status, snapshot FROM reading WHERE id = $1 FOR UPDATE`,
+      `SELECT id, project_id, draft_text, status, snapshot FROM reading WHERE id = $1 FOR UPDATE`,
       [readingId],
     );
     if (reading.rowCount !== 1) {
@@ -602,7 +632,11 @@ export async function replacePendingCast(pool, readingId, cast) {
       return notFound();
     }
     const row = reading.rows[0];
-    if (!locked || locked.current_reading_id !== readingId || row.status !== "ready" || locked.draft_text !== row.draft_text) {
+    if (!locked || row.project_id !== locked.project_id) {
+      await rollback(client);
+      return notFound();
+    }
+    if (locked.current_reading_id !== readingId || row.status !== "ready" || locked.draft_text !== row.draft_text) {
       await rollback(client);
       return staleReading();
     }
@@ -617,6 +651,7 @@ export async function replacePendingCast(pool, readingId, cast) {
       return invalidRequest();
     }
     await replaceCastRows(client, readingId, normalized);
+    await touchProjectContent(client);
     await client.query("COMMIT");
     return { ok: true, httpStatus: 200, status: "ok" };
   });
@@ -629,7 +664,7 @@ export async function confirmReading(pool, input) {
     await client.query("BEGIN");
     const locked = await lockDraft(client);
     const reading = await client.query(
-      `SELECT id, draft_text, status, snapshot FROM reading WHERE id = $1 FOR UPDATE`,
+      `SELECT id, project_id, draft_text, status, snapshot FROM reading WHERE id = $1 FOR UPDATE`,
       [readingId],
     );
     if (reading.rowCount !== 1) {
@@ -637,7 +672,11 @@ export async function confirmReading(pool, input) {
       return notFound();
     }
     const row = reading.rows[0];
-    if (!locked || locked.current_reading_id !== readingId || row.status !== "ready" || locked.draft_text !== row.draft_text) {
+    if (!locked || row.project_id !== locked.project_id) {
+      await rollback(client);
+      return notFound();
+    }
+    if (locked.current_reading_id !== readingId || row.status !== "ready" || locked.draft_text !== row.draft_text) {
       await rollback(client);
       return staleReading();
     }
@@ -663,8 +702,8 @@ export async function confirmReading(pool, input) {
     const interpretationId = randomUUID();
     const materialId = randomUUID();
     await client.query(
-      `INSERT INTO source_revision (id, parent_source_revision_id, text) VALUES ($1, $2, $3)`,
-      [revisionId, locked.active_source_revision_id, row.draft_text],
+      `INSERT INTO source_revision (id, project_id, parent_source_revision_id, text) VALUES ($1, $2, $3, $4)`,
+      [revisionId, locked.project_id, locked.active_source_revision_id, row.draft_text],
     );
     await client.query(
       `INSERT INTO interpretation (id, source_revision_id, reading_id) VALUES ($1, $2, $3)`,
@@ -750,6 +789,7 @@ export async function confirmReading(pool, input) {
        WHERE id = $3`,
       [revisionId, materialId, locked.project_id],
     );
+    await touchProjectContent(client);
     await client.query("COMMIT");
     return {
       ok: true,
@@ -826,7 +866,7 @@ export async function reviseMaterialState(pool, cast) {
     );
     await insertMaterialCast(client, materialId, normalized);
     await client.query(
-      `UPDATE project SET active_material_state_id = $1 WHERE id = $2`,
+      `UPDATE project SET active_material_state_id = $1, updated_at = clock_timestamp() WHERE id = $2`,
       [materialId, locked.project_id],
     );
     await client.query("COMMIT");
@@ -1149,8 +1189,19 @@ export async function stageActiveMaterial(pool, options = {}) {
 
   return withClient(pool, async (client) => {
     await client.query("BEGIN");
-    const active = await client.query("SELECT active_material_state_id FROM project WHERE singleton = true");
+    const projectId = requireProjectId();
+    const active = await client.query("SELECT active_material_state_id FROM project WHERE id = $1", [projectId]);
     const activeId = active.rows[0]?.active_material_state_id ?? null;
+    const ownedMaterial = await client.query(`
+      SELECT material_state.id
+      FROM material_state
+      JOIN source_revision ON source_revision.id = material_state.source_revision_id
+      WHERE material_state.id = $1 AND source_revision.project_id = $2
+    `, [captured.context.materialStateId, projectId]);
+    if (ownedMaterial.rowCount !== 1) {
+      await rollback(client);
+      return notFound();
+    }
     let status = "failed";
     let failures = [{ kind: "invalid-output" }];
     let stagePayload = null;
@@ -1171,6 +1222,7 @@ export async function stageActiveMaterial(pool, options = {}) {
       failures = [{ kind }];
     }
     await insertStoryboard(client, captured.context.materialStateId, { status, failures, stagePayload });
+    await touchProjectContent(client);
     await client.query("COMMIT");
     const latest = await client.query(
       `SELECT material_state_id, status, failures, stage_payload
@@ -1209,5 +1261,9 @@ export function createProjectStore(pool) {
     confirmReading: (input) => confirmReading(pool, input),
     reviseMaterialState: (cast) => reviseMaterialState(pool, cast),
     stageActiveMaterial: (options) => stageActiveMaterial(pool, options),
+    listProjects: (options) => listProjects(pool, options),
+    createProject: () => createProject(pool),
+    renameProject: (projectId, title) => renameProject(pool, projectId, title),
+    markOpened: (projectId) => markOpened(pool, projectId),
   };
 }

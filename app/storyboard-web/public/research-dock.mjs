@@ -1,3 +1,5 @@
+import { projectApi } from "./project-api.mjs";
+
 export const CONTEXT_KEYS = [
   "workflowPhase",
   "storyboardVersionId",
@@ -332,6 +334,14 @@ function setElementAttribute(element, name, value) {
   }
 }
 
+function scopeApi(url) {
+  if (typeof url !== "string" || !url.startsWith("/api/")) return url;
+  if (url.startsWith("/api/projects/")) return url;
+  const resolved = projectApi(url);
+  if (!resolved) throw new Error("project");
+  return resolved;
+}
+
 async function defaultFetch(url, init) {
   if (typeof globalThis.fetch !== "function") {
     throw new Error("fetch is not available");
@@ -435,6 +445,7 @@ export function bindResearchDock({
   const operationsList = document.querySelector("#research-operations-list");
   const toggle = document.querySelector("#research-dock-toggle");
   const resizeGrip = document.querySelector("#research-dock-resize");
+  const request = (url, init) => fetchImpl(scopeApi(url), init);
 
   let collapsed = false;
   let notes = [];
@@ -840,7 +851,7 @@ export function bindResearchDock({
 
   async function postResearchEvent(body) {
     try {
-      const response = await fetchImpl("/api/research/events", {
+      const response = await request("/api/research/events", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -855,7 +866,7 @@ export function bindResearchDock({
 
   async function hydrate() {
     try {
-      const notesResponse = await fetchImpl("/api/research/trace?kind=note");
+      const notesResponse = await request("/api/research/trace?kind=note");
       if (notesResponse?.ok) {
         const payload = await notesResponse.json();
         notes = Array.isArray(payload?.events)
@@ -868,7 +879,7 @@ export function bindResearchDock({
     }
 
     try {
-      const commandsResponse = await fetchImpl("/api/research/trace?surface=dock_commands");
+      const commandsResponse = await request("/api/research/trace?surface=dock_commands");
       if (commandsResponse?.ok) {
         const payload = await commandsResponse.json();
         commandEvents = Array.isArray(payload?.events)
@@ -884,7 +895,7 @@ export function bindResearchDock({
     }
 
     try {
-      const traceResponse = await fetchImpl("/api/research/trace");
+      const traceResponse = await request("/api/research/trace");
       if (traceResponse?.ok) {
         const payload = await traceResponse.json();
         terminalEvents = Array.isArray(payload?.events)
@@ -906,7 +917,7 @@ export function bindResearchDock({
     sendingNote = true;
     setNotesStatus("");
     try {
-      const response = await fetchImpl("/api/research/notes", {
+      const response = await request("/api/research/notes", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

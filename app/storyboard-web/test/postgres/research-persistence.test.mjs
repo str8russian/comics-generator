@@ -1,8 +1,18 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { createPool } from "../../db/pool.mjs";
 import { migrate } from "../../db/migrate.mjs";
+import { SEEDED_PROJECT_ID } from "../../project-scope.mjs";
+
+function projectResearch(store) {
+  return {
+    appendNote: (input) => store.appendNote({ ...input, projectId: SEEDED_PROJECT_ID }),
+    appendEvent: (input) => store.appendEvent({ ...input, projectId: SEEDED_PROJECT_ID }),
+    listTrace: (input = {}) => store.listTrace({ ...input, projectId: SEEDED_PROJECT_ID }),
+  };
+}
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
 const TEST_LOCK = "90210002026009";
@@ -55,7 +65,7 @@ test("research_event migration, restart durability, uniqueness, and long reading
 
     await resetResearch(poolA);
 
-    const storeA = createResearchStore(poolA);
+    const storeA = projectResearch(createResearchStore(poolA));
     const note = await storeA.appendNote({
       submittedText: "durable-note",
       context: nullContext({ workflowPhase: "structure" }),
@@ -111,7 +121,7 @@ test("research_event migration, restart durability, uniqueness, and long reading
     await poolA.end();
     poolA = null;
     poolB = createPool(databaseUrl);
-    const storeB = createResearchStore(poolB);
+    const storeB = projectResearch(createResearchStore(poolB));
     const listed = await storeB.listTrace();
     assert.equal(listed.ok, true);
     assert.equal(listed.events.length, 3);
@@ -188,7 +198,7 @@ test("research_event migration, restart durability, uniqueness, and long reading
     poolB = null;
     const poolC = createPool(databaseUrl);
     try {
-      const storeC = createResearchStore(poolC);
+      const storeC = projectResearch(createResearchStore(poolC));
       const afterRestart = await storeC.listTrace();
       assert.equal(afterRestart.ok, true);
       const seqs = afterRestart.events.map((event) => event.seq);

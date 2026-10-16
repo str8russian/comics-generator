@@ -1,3 +1,4 @@
+globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -120,7 +121,7 @@ test("POST notes, POST events, GET trace with kind and surface filters", async (
   await withServer(async ({ port }) => {
     const note = await send(port, {
       method: "POST",
-      path: "/api/research/notes",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/notes",
       headers: { "content-type": "application/json" },
       body: json({ submittedText: "заметка", context: nullContext({ workflowPhase: "structure" }) }),
     });
@@ -133,7 +134,7 @@ test("POST notes, POST events, GET trace with kind and surface filters", async (
     const correlationId = randomUUID();
     const start = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -151,7 +152,7 @@ test("POST notes, POST events, GET trace with kind and surface filters", async (
 
     const terminal = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_terminal",
@@ -165,13 +166,13 @@ test("POST notes, POST events, GET trace with kind and surface filters", async (
 
     const productNote = await send(port, {
       method: "POST",
-      path: "/api/research/notes",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/notes",
       headers: { "content-type": "application/json" },
       body: json({ submittedText: "ещё", context: nullContext() }),
     });
     assert.equal(productNote.status, 201);
 
-    const all = await send(port, { path: "/api/research/trace" });
+    const all = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
     assert.equal(all.status, 200);
     const allBody = JSON.parse(all.body);
     assert.ok(allBody.events.length >= 4);
@@ -179,13 +180,13 @@ test("POST notes, POST events, GET trace with kind and surface filters", async (
       assert.equal(validateResearchEvent(event), true, JSON.stringify(validateResearchEvent.errors));
     }
 
-    const notes = await send(port, { path: "/api/research/trace?kind=note" });
+    const notes = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?kind=note" });
     assert.equal(notes.status, 200);
     const notesBody = JSON.parse(notes.body);
     assert.ok(notesBody.events.every((event) => event.eventKind === "note"));
     assert.ok(notesBody.events.length >= 2);
 
-    const commands = await send(port, { path: "/api/research/trace?surface=dock_commands" });
+    const commands = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace?surface=dock_commands" });
     assert.equal(commands.status, 200);
     const commandsBody = JSON.parse(commands.body);
     assert.ok(commandsBody.events.every((event) => event.surface === "dock_commands"));
@@ -197,13 +198,13 @@ test("protected-content rejects without echoing secret in body or logs", async (
   const secret = "Bearer eyJhbGciOiJIUzI1NiJ9.secret-payload.signature";
   const logs = [];
   await withServer(async ({ port }) => {
-    const before = await send(port, { path: "/api/research/trace" });
+    const before = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
     assert.equal(before.status, 200);
     const beforeCount = JSON.parse(before.body).events.length;
 
     const response = await send(port, {
       method: "POST",
-      path: "/api/research/notes",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/notes",
       headers: { "content-type": "application/json" },
       body: json({ submittedText: secret, context: nullContext() }),
     });
@@ -213,7 +214,7 @@ test("protected-content rejects without echoing secret in body or logs", async (
     assert.equal(captured.includes(secret), false);
     assert.equal(captured.includes("eyJhbGciOiJIUzI1NiJ9"), false);
 
-    const after = await send(port, { path: "/api/research/trace" });
+    const after = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
     assert.equal(after.status, 200);
     assert.equal(JSON.parse(after.body).events.length, beforeCount);
   }, { logger: { log(line) { logs.push(String(line)); } } });
@@ -221,13 +222,13 @@ test("protected-content rejects without echoing secret in body or logs", async (
 
 test("HTTP cast_edit requires product_control surface and schema-validates accepted events", async () => {
   await withServer(async ({ port }) => {
-    const before = await send(port, { path: "/api/research/trace" });
+    const before = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
     assert.equal(before.status, 200);
     const beforeCount = JSON.parse(before.body).events.length;
 
     const invalid = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -249,13 +250,13 @@ test("HTTP cast_edit requires product_control surface and schema-validates accep
     });
     assert.equal(invalid.status, 400);
     assert.deepEqual(JSON.parse(invalid.body), { status: "failed", kind: "invalid-request" });
-    const afterInvalid = await send(port, { path: "/api/research/trace" });
+    const afterInvalid = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
     assert.equal(JSON.parse(afterInvalid.body).events.length, beforeCount);
 
     const correlationId = randomUUID();
     const start = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -280,7 +281,7 @@ test("HTTP cast_edit requires product_control surface and schema-validates accep
 
     const terminal = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_terminal",
@@ -301,7 +302,7 @@ test("HTTP outcomeKind rejects secret-like values without echo", async () => {
     const correlationId = randomUUID();
     const start = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -317,7 +318,7 @@ test("HTTP outcomeKind rejects secret-like values without echo", async () => {
     assert.equal(start.status, 201);
     const response = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_terminal",
@@ -338,7 +339,7 @@ test("forbidden object keys are invalid-request", async () => {
   await withServer(async ({ port }) => {
     const response = await send(port, {
       method: "POST",
-      path: "/api/research/notes",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/notes",
       headers: { "content-type": "application/json" },
       body: json({
         submittedText: "ok",
@@ -355,7 +356,7 @@ test("ordinary invalid request is invalid-request", async () => {
   await withServer(async ({ port }) => {
     const response = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({ eventKind: "not-a-kind", correlationId: randomUUID() }),
     });
@@ -368,7 +369,7 @@ test("genuinely oversized research body returns empty 413", async () => {
   await withServer(async ({ port }) => {
     const response = await send(port, {
       method: "POST",
-      path: "/api/research/notes",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/notes",
       headers: { "content-type": "application/json" },
       body: Buffer.alloc(DEFAULT_MAX_BODY_BYTES + 1, 0x61),
     });
@@ -384,7 +385,7 @@ test("reading submittedText longer than 8000 is accepted within DEFAULT_MAX_BODY
     const correlationId = randomUUID();
     const start = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -410,7 +411,7 @@ test("operational logLine never includes research submittedText", async () => {
   await withServer(async ({ port }) => {
     const response = await send(port, {
       method: "POST",
-      path: "/api/research/notes",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/notes",
       headers: { "content-type": "application/json" },
       body: json({ submittedText: marker, context: nullContext() }),
     });
@@ -433,7 +434,7 @@ test("T023 baseline: HTTP terminal derive-from-start, duplicate rejection, unmat
     });
     const start = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -452,7 +453,7 @@ test("T023 baseline: HTTP terminal derive-from-start, duplicate rejection, unmat
     const unmatchedId = randomUUID();
     const unmatched = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -469,7 +470,7 @@ test("T023 baseline: HTTP terminal derive-from-start, duplicate rejection, unmat
 
     const terminal = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_terminal",
@@ -495,7 +496,7 @@ test("T023 baseline: HTTP terminal derive-from-start, duplicate rejection, unmat
 
     const dupStart = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -512,7 +513,7 @@ test("T023 baseline: HTTP terminal derive-from-start, duplicate rejection, unmat
 
     const dupTerminal = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_terminal",
@@ -523,7 +524,7 @@ test("T023 baseline: HTTP terminal derive-from-start, duplicate rejection, unmat
     });
     assert.equal(dupTerminal.status, 400);
 
-    const trace = await send(port, { path: "/api/research/trace" });
+    const trace = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
     assert.equal(trace.status, 200);
     const events = JSON.parse(trace.body).events;
     for (const event of events) {
@@ -575,7 +576,7 @@ test("T027 protected-content canaries reject notes and action starts without ech
     for (const route of ["notes", "events"]) {
       const logs = [];
       await withServer(async ({ port }) => {
-        const before = await send(port, { path: "/api/research/trace" });
+        const before = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
         assert.equal(before.status, 200);
         const beforeCount = JSON.parse(before.body).events.length;
 
@@ -593,7 +594,7 @@ test("T027 protected-content canaries reject notes and action starts without ech
           };
         const response = await send(port, {
           method: "POST",
-          path: route === "notes" ? "/api/research/notes" : "/api/research/events",
+          path: route === "notes" ? "/api/projects/00000000-0000-4000-8000-000000000001/research/notes" : "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
           headers: { "content-type": "application/json" },
           body: json(body),
         });
@@ -607,7 +608,7 @@ test("T027 protected-content canaries reject notes and action starts without ech
         assert.equal(captured.includes(canary.text), false, `${canary.label}/${route} full`);
         assert.equal(captured.includes(canary.substring), false, `${canary.label}/${route} substring`);
 
-        const after = await send(port, { path: "/api/research/trace" });
+        const after = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
         assert.equal(after.status, 200);
         assert.equal(JSON.parse(after.body).events.length, beforeCount, `${canary.label}/${route} rows`);
       }, { logger: { log(line) { logs.push(String(line)); } } });
@@ -625,11 +626,11 @@ test("T027 nested forbidden keys are rejected at depth without persistence", asy
   ];
   for (const nested of nestedKeys) {
     await withServer(async ({ port }) => {
-      const before = await send(port, { path: "/api/research/trace" });
+      const before = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
       const beforeCount = JSON.parse(before.body).events.length;
       const response = await send(port, {
         method: "POST",
-        path: "/api/research/notes",
+        path: "/api/projects/00000000-0000-4000-8000-000000000001/research/notes",
         headers: { "content-type": "application/json" },
         body: json({
           submittedText: "обычная заметка",
@@ -639,7 +640,7 @@ test("T027 nested forbidden keys are rejected at depth without persistence", asy
       });
       assert.equal(response.status, 400, JSON.stringify(nested));
       assert.deepEqual(JSON.parse(response.body), { status: "failed", kind: "invalid-request" });
-      const after = await send(port, { path: "/api/research/trace" });
+      const after = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
       assert.equal(JSON.parse(after.body).events.length, beforeCount);
     });
   }
@@ -650,7 +651,7 @@ test("T027 ordinary owner prose persists byte-for-byte on notes and starts", asy
   await withServer(async ({ port }) => {
     const note = await send(port, {
       method: "POST",
-      path: "/api/research/notes",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/notes",
       headers: { "content-type": "application/json" },
       body: json({ submittedText: prose, context: nullContext({ workflowPhase: "structure" }) }),
     });
@@ -660,7 +661,7 @@ test("T027 ordinary owner prose persists byte-for-byte on notes and starts", asy
     const correlationId = randomUUID();
     const start = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -676,7 +677,7 @@ test("T027 ordinary owner prose persists byte-for-byte on notes and starts", asy
     assert.equal(start.status, 201);
     assert.equal(JSON.parse(start.body).event.submittedText, prose);
 
-    const trace = await send(port, { path: "/api/research/trace" });
+    const trace = await send(port, { path: "/api/projects/00000000-0000-4000-8000-000000000001/research/trace" });
     const events = JSON.parse(trace.body).events;
     assert.ok(events.some((event) => event.eventKind === "note" && event.submittedText === prose));
     assert.ok(events.some((event) => (
@@ -714,7 +715,7 @@ test("UI dock panel action_start without commandTarget.panelSubject is accepted 
     const correlationId = randomUUID();
     const start = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",
@@ -737,7 +738,7 @@ test("UI dock panel action_start without commandTarget.panelSubject is accepted 
     assert.equal(Object.hasOwn(storyboardTarget, "panelSubject"), false);
     const productStart = await send(port, {
       method: "POST",
-      path: "/api/research/events",
+      path: "/api/projects/00000000-0000-4000-8000-000000000001/research/events",
       headers: { "content-type": "application/json" },
       body: json({
         eventKind: "action_start",

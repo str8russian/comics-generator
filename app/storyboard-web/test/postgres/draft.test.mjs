@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPool } from "../../db/pool.mjs";
 import { migrate } from "../../db/migrate.mjs";
+import { enterProject, SEEDED_PROJECT_ID } from "../../project-scope.mjs";
 import { loadProject, saveDraft } from "../../project-store.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
@@ -10,6 +11,7 @@ const TEST_LOCK = "90210002026008";
 test("draft saves are conditional and do not create a source revision", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
 }, async () => {
+  enterProject(SEEDED_PROJECT_ID);
   const url = new URL(databaseUrl);
   assert.equal(url.pathname, "/comics_test");
   const previous = process.env.DATABASE_URL;
