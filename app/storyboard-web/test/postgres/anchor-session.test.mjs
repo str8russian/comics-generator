@@ -119,6 +119,46 @@ test("accepted anchor head ignores drafts and records provenance", {
     assert.equal(afterRefine.characters[0].approvedAnchorId, refined.anchorId);
     assert.equal(afterRefine.characters[0].anchorProvenance, "refined_from_accepted_anchor");
 
+    const identityId = afterRefine.characters[0].identity.assetId;
+    const beforeAssets = await pool.query("SELECT id, kind FROM visual_asset");
+    const reused = await store.acceptSessionAnchor({
+      characterName: "Персонаж",
+      provenance: "generated_from_source",
+      image: { bytes: generated },
+      sourceAssetId: identityId,
+    });
+    assert.equal(reused.ok, true);
+    const afterReuse = await store.load();
+    assert.equal(afterReuse.characters[0].anchorProvenance, "generated_from_source");
+    assert.equal(afterReuse.characters[0].identity.assetId, identityId);
+    assert.equal(afterReuse.characters[0].sourcePhoto.assetId, identityId);
+    assert.equal(afterReuse.characters[0].approvedAnchorId, reused.anchorId);
+    const afterAssets = await pool.query("SELECT id, kind FROM visual_asset");
+    const createdAssets = afterAssets.rows.filter((row) => !beforeAssets.rows.some((existing) => existing.id === row.id));
+    assert.equal(createdAssets.length, 1);
+    assert.equal(createdAssets[0].kind, "base-anchor");
+
+    const foreign = await store.acceptSessionAnchor({
+      characterName: "Персонаж",
+      provenance: "generated_from_source",
+      image: { bytes: png },
+      sourceAssetId: "00000000-0000-4000-8000-000000009999",
+    });
+    assert.equal(foreign.ok, false);
+    assert.equal(foreign.kind, "not-found");
+    const both = await store.acceptSessionAnchor({
+      characterName: "Персонаж",
+      provenance: "generated_from_source",
+      image: { bytes: png },
+      sourceImage: { bytes: png },
+      sourceAssetId: identityId,
+    });
+    assert.equal(both.ok, false);
+    assert.equal(both.kind, "invalid-request");
+    const unchanged = await store.load();
+    assert.equal(unchanged.characters[0].identity.assetId, identityId);
+    assert.equal(unchanged.characters[0].approvedAnchorId, reused.anchorId);
+
     const retired = await store.retireCurrentAnchor({ characterName: "Персонаж" });
     assert.equal(retired.ok, true);
     const afterDelete = await store.load();

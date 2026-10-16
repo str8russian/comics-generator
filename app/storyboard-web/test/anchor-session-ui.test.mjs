@@ -446,6 +446,163 @@ describe("anchor refine actions and centered confirmation", { concurrency: false
     assert.equal(/window\.confirm|window\.alert/.test(readFileSync(new URL("../public/anchor-session-ui.mjs", import.meta.url), "utf8")), false);
   });
 
+  test("accepting a source-origin refine candidate reuses the identity asset", async () => {
+    forceClose();
+    const requests = [];
+    let characters = [{
+      name: "Mira",
+      approvedAnchorId: "anchor-1",
+      approvedAssetId: "anchor-asset-1",
+      approvedAssetUrl: "/api/visual/assets/anchor-asset-1",
+      anchorProvenance: "generated_from_source",
+      sourcePhoto: { assetId: "source-1", assetUrl: "/api/visual/assets/source-1" },
+    }];
+    const mountRetained = () => {
+      renderAnchorWorkspace({
+        root: host,
+        characters,
+        async runProductResearchAction({ operation }) {
+          return operation();
+        },
+        fetchJson(path, options) {
+          const body = JSON.parse(options.body);
+          requests.push({ path, body });
+          if (String(path).endsWith("/anchor-accept")) {
+            return {
+              status: "ready",
+              characters: [{
+                name: "Mira",
+                approvedAnchorId: "anchor-accepted",
+                approvedAssetId: "output-1",
+                approvedAssetUrl: C1,
+                anchorProvenance: body.provenance,
+                sourcePhoto: {
+                  assetId: body.sourceAssetId || "source-1",
+                  assetUrl: "/api/visual/assets/source-1",
+                },
+              }],
+            };
+          }
+          return { imageDataUrl: C1 };
+        },
+        applyVisual(next) {
+          characters = next.characters;
+          mountRetained();
+        },
+        characterActionContextOverrides() {
+          return {};
+        },
+      });
+    };
+    mountRetained();
+    buttonByText("Уточнить образ").dispatchEvent({ type: "click" });
+    click("generate-from-source");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(document.querySelector(".position").textContent, "Вариант 1 из 1");
+    click("draft-accept");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const accept = requests.find((entry) => entry.path.endsWith("/anchor-accept"));
+    assert.equal(accept.body.provenance, "generated_from_source");
+    assert.equal(accept.body.sourceAssetId, "source-1");
+    assert.equal(accept.body.sourceImageDataUrl, undefined);
+    assert.equal(accept.body.imageDataUrl, C1);
+    assert.equal(requests.filter((entry) => entry.path.endsWith("/anchor-session")).length, 1);
+    const captions = [...document.querySelectorAll("figcaption")].map((node) => node.textContent);
+    assert.ok(captions.includes("Сгенерирован по исходному фото"));
+    assert.ok(captions.includes("Исходное фото"));
+    assert.equal(
+      [...document.querySelectorAll("img")].some((img) => img.getAttribute("src") === "/api/visual/assets/source-1"),
+      true,
+    );
+
+    requests.length = 0;
+    characters = [{
+      name: "Mira",
+      approvedAnchorId: "anchor-1",
+      approvedAssetId: "anchor-asset-1",
+      approvedAssetUrl: "/api/visual/assets/anchor-asset-1",
+      anchorProvenance: "generated_from_source",
+      sourcePhoto: { assetId: "source-1", assetUrl: "/api/visual/assets/source-1" },
+    }];
+    mountRetained();
+    buttonByText("Уточнить образ").dispatchEvent({ type: "click" });
+    typeInstruction("строже");
+    click("generate");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    click("draft-accept");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const refined = requests.find((entry) => entry.path.endsWith("/anchor-accept"));
+    assert.equal(refined.body.provenance, "refined_from_accepted_anchor");
+    assert.equal(refined.body.sourceAssetId, undefined);
+    assert.equal(refined.body.sourceImageDataUrl, undefined);
+    const refinedCaptions = [...document.querySelectorAll("figcaption")].map((node) => node.textContent);
+    assert.ok(refinedCaptions.includes("Уточнён по принятому образу"));
+  });
+
+  test("a hung anchor generation times out once and a manual retry is a new request", async () => {
+    forceClose();
+    const requests = [];
+    let mode = "ok";
+    let releaseLate = null;
+    const C2 = "data:image/png;base64,C2";
+    const LATE = "data:image/png;base64,LATE";
+    renderAnchorWorkspace({
+      root: host,
+      characters: [sourcedCharacter()],
+      anchorClientTimeoutMs: 40,
+      async runProductResearchAction({ operation }) {
+        return operation();
+      },
+      fetchJson(_path, options) {
+        const body = JSON.parse(options.body);
+        requests.push({ body, signal: options.signal });
+        if (mode === "hang") {
+          return new Promise((resolve) => {
+            releaseLate = () => resolve({ imageDataUrl: LATE });
+          });
+        }
+        return Promise.resolve({ imageDataUrl: requests.length === 1 ? C1 : C2 });
+      },
+      characterActionContextOverrides() {
+        return {};
+      },
+      applyVisual() {},
+    });
+    buttonByText("Уточнить образ").dispatchEvent({ type: "click" });
+    typeInstruction("строже");
+    click("generate");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    click("generate");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    click("variant-undo");
+    assert.equal(document.querySelector(".position").textContent, "Вариант 1 из 2");
+    mode = "hang";
+    const before = requests.length;
+    click("generate");
+    assert.equal(requests.length, before + 1);
+    assert.equal(requests.at(-1).signal.aborted, false);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(requests.at(-1).signal.aborted, true);
+    assert.equal(document.querySelector(".error").textContent, "Создание заняло больше минуты. Попробуйте ещё раз.");
+    assert.equal(document.getElementById("draft-instruction").value, "строже");
+    assert.equal(document.querySelector(".position").textContent, "Вариант 1 из 2");
+    assert.equal(document.getElementById("generation-basis").textContent, "Для первой кнопки основа — Вариант 1.");
+    assert.equal(document.getElementById("generate").disabled, false);
+    assert.equal(document.getElementById("generate-from-source").disabled, false);
+    assert.equal(requests.length, before + 1);
+    mode = "ok";
+    click("generate");
+    assert.equal(requests.length, before + 2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseLate();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(document.querySelector(".position").textContent, "Вариант 3 из 3");
+    const sources = [...document.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+    assert.equal(sources.includes(LATE), false);
+    assert.equal(sources.includes(C2), true);
+    assert.equal(requests.length, before + 2);
+  });
+
   test("confirmation stays in the viewport because it is outside the scrolling dialog", () => {
     const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
     assert.match(css, /\.anchor-dialog\s*\{[^}]*overflow:\s*auto/s);

@@ -413,6 +413,7 @@ export async function executeImageRequest(input) {
     serializedBody: prepared.serializedBody,
     env: input.env,
     fetchImpl: input.fetchImpl,
+    timeoutMs: input.timeoutMs,
     transport: prepared.diagnostics,
   });
   const diagnostics = {

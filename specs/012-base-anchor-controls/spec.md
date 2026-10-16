@@ -24,6 +24,8 @@ The accepted anchor stays visible until **Принять**. Cancel leaves it unc
 
 The next-action basis and the displayed candidate's origin are separate. Origin is stored on the candidate.
 
+Every explicit anchor-generation attempt reaches a terminal state within 60 seconds. The server aborts the provider request at 58 seconds, or sooner when an already configured image timeout is lower, and an environment value cannot raise that budget above 58 seconds. The browser aborts its own request at 60 seconds and releases the pending lock. Timeout keeps the open draft, shows **Создание заняло больше минуты. Попробуйте ещё раз.**, and does not retry, append a candidate, or change the accepted anchor or identity. A later explicit click makes one new request. A late response from the timed-out attempt is ignored.
+
 ## Prompt
 
 Production anchor generation uses the accepted system prompt: thick near-black character contours, few hard-edged tones, a full-bleed muted slate-blue matte, one chest-up person, no canvas frame, props, microphone, or logo, and identity-only use of a real photograph. Output is 4:5. The existing reference-budget transport stays in front of the provider.
@@ -32,8 +34,7 @@ Production anchor generation uses the accepted system prompt: thick near-black c
 
 Selecting a draft photo or generating candidates does not change `character_identity.current_asset_id` and does not replace the accepted anchor. `loadVisual` shows the head approved anchor only.
 
-- Accepting a source-based candidate atomically stores that photo as the current identity and that image as the approved anchor (`generated_from_source`).
-- Accepting a refinement keeps the current identity and promotes only the selected candidate.
+- Accepting the selected candidate preserves that candidate's generation origin. Direct source origin is `generated_from_source`. When the retained source is already this character's current identity asset, Accept reuses that asset and does not insert a duplicate identity image. A newly uploaded source photo is still stored atomically as the identity. Accepted-anchor origin stays `refined_from_accepted_anchor` and does not change identity. A candidate branched from another candidate keeps that refinement classification. A ready upload stays `uploaded_as_ready_anchor`.
 - Accepting a ready upload approves it with `uploaded_as_ready_anchor` and no real-photo identity. This needs a nullable `identity_asset_id` and a provenance column.
 - Delete confirms, retires the current head without deleting asset bytes, and returns the card to empty. **Вернуть образ** restores that anchor in the page session with no provider call. Reload shows the persisted head. A new accept after deletion does not revive the retired anchor.
 

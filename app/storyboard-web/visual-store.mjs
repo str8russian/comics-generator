@@ -1445,11 +1445,18 @@ export async function acceptSessionAnchor(pool, {
   provenance,
   image,
   sourceImage = null,
+  sourceAssetId = null,
   instruction = "",
 }) {
+  const reusedSourceId = typeof sourceAssetId === "string" && sourceAssetId.trim() ? sourceAssetId.trim() : null;
+  const hasSourceImage = Boolean(imageBytes(sourceImage));
   if (!characterName || !ANCHOR_PROVENANCE.has(provenance) || !imageBytes(image)) return failed("invalid-request");
   if (String(instruction).length > 4000) return failed("invalid-request");
-  if (provenance === "generated_from_source" && !imageBytes(sourceImage)) return failed("invalid-request");
+  if (provenance === "generated_from_source") {
+    if (hasSourceImage === Boolean(reusedSourceId)) return failed("invalid-request");
+  } else if (reusedSourceId) {
+    return failed("invalid-request");
+  }
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
@@ -1466,13 +1473,22 @@ export async function acceptSessionAnchor(pool, {
       }
       let identityAssetId = null;
       if (provenance === "generated_from_source") {
-        identityAssetId = (await insertAsset(client, "identity-reference", sourceImage)).id;
-        await client.query(`
-          INSERT INTO character_identity (material_state_id, character_name, current_asset_id, comment)
-          VALUES ($1, $2, $3, '')
-          ON CONFLICT (material_state_id, character_name)
-          DO UPDATE SET current_asset_id = EXCLUDED.current_asset_id, updated_at = clock_timestamp()
-        `, [materialStateId, characterName, identityAssetId]);
+        if (reusedSourceId) {
+          const current = await currentIdentity(client, materialStateId, characterName);
+          if (!current || current.current_asset_id !== reusedSourceId) {
+            await client.query("ROLLBACK");
+            return failed("not-found", 404);
+          }
+          identityAssetId = current.current_asset_id;
+        } else {
+          identityAssetId = (await insertAsset(client, "identity-reference", sourceImage)).id;
+          await client.query(`
+            INSERT INTO character_identity (material_state_id, character_name, current_asset_id, comment)
+            VALUES ($1, $2, $3, '')
+            ON CONFLICT (material_state_id, character_name)
+            DO UPDATE SET current_asset_id = EXCLUDED.current_asset_id, updated_at = clock_timestamp()
+          `, [materialStateId, characterName, identityAssetId]);
+        }
       } else if (provenance === "refined_from_accepted_anchor") {
         identityAssetId = (await currentIdentity(client, materialStateId, characterName))?.current_asset_id ?? null;
       }

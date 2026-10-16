@@ -1,6 +1,8 @@
 import { createEmptyCommandTarget } from "./research-dock.mjs";
 import {
   acceptDraft,
+  acceptPayload,
+  ANCHOR_CLIENT_DEADLINE_MS,
   cancelDelete,
   choosePath,
   confirmDelete,
@@ -30,7 +32,15 @@ const IDENTITY_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/w
 let session = null;
 let deletedUndo = null;
 let generateLock = false;
+let generateAttempt = 0;
 let host = null;
+
+function timeoutError() {
+  const error = new Error("timeout");
+  error.name = "AbortError";
+  error.kind = "timeout";
+  return error;
+}
 
 function el(tag, props = {}, children = []) {
   const node = document.createElement(tag);
@@ -115,10 +125,24 @@ async function onGenerate(request, deps) {
     return;
   }
   generateLock = true;
+  const attempt = ++generateAttempt;
   const effect = next.effect;
   const character = session.character;
   session = { ...session, state: next.state };
   render();
+  const controller = new AbortController();
+  const deadline = Number(deps.anchorClientTimeoutMs) > 0
+    ? Number(deps.anchorClientTimeoutMs)
+    : ANCHOR_CLIENT_DEADLINE_MS;
+  const timer = setTimeout(() => controller.abort(), deadline);
+  const current = () => attempt === generateAttempt && session?.state?.modal?.requestId === effect.requestId;
+  const settle = (result) => {
+    if (!current() || !session?.state?.modal?.pending) return;
+    session = {
+      ...session,
+      state: resolveGenerate(session.state, { ...result, requestId: effect.requestId }),
+    };
+  };
   try {
     await deps.runProductResearchAction({
       semanticAction: "anchor_generate",
@@ -130,48 +154,59 @@ async function onGenerate(request, deps) {
       }),
       busyMessage: `Создаю вариант для ${character.name}…`,
       async operation() {
-        const payload = await deps.fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/anchor-session`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(serverBody(effect, session.state.anchor)),
-        });
-        session = {
-          ...session,
-          state: resolveGenerate(session.state, {
-            ok: true,
-            dataUrl: payload.imageDataUrl,
-            requestId: effect.requestId,
-          }),
-        };
-        return payload;
+        try {
+          const payload = await new Promise((resolve, reject) => {
+            const fail = () => reject(timeoutError());
+            if (controller.signal.aborted) fail();
+            else controller.signal.addEventListener("abort", fail, { once: true });
+            Promise.resolve(deps.fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/anchor-session`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(serverBody(effect, session.state.anchor)),
+              signal: controller.signal,
+            })).then((value) => {
+              if (!current() || controller.signal.aborted) fail();
+              else resolve(value);
+            }, reject);
+          });
+          if (!current() || controller.signal.aborted) return payload;
+          settle({ ok: true, dataUrl: payload.imageDataUrl });
+          return payload;
+        } catch (error) {
+          const kind = error?.kind === "timeout" || error?.name === "AbortError" || controller.signal.aborted
+            ? "timeout"
+            : (error?.kind || "provider");
+          settle({ ok: false, kind });
+          throw error;
+        }
       },
     });
   } catch (error) {
-    session = {
-      ...session,
-      state: resolveGenerate(session.state, {
-        ok: false,
-        kind: error?.kind || "provider",
-        requestId: effect.requestId,
-      }),
-    };
+    const kind = error?.kind === "timeout" || error?.name === "AbortError" || controller.signal.aborted
+      ? "timeout"
+      : (error?.kind || "provider");
+    settle({ ok: false, kind });
   } finally {
-    generateLock = false;
-    render();
+    clearTimeout(timer);
+    if (attempt === generateAttempt) {
+      generateLock = false;
+      render();
+    }
   }
 }
 
 async function onAccept(deps) {
   if (!session?.state.modal) return;
-  const modal = session.state.modal;
   const character = session.character;
-  const ready = modal.step === "ready" ? modal.source?.dataUrl : modal.candidates[modal.index]?.dataUrl;
-  if (!ready) return;
-  const provenance = modal.step === "ready"
-    ? "uploaded_as_ready_anchor"
-    : (modal.step === "refine" ? "refined_from_accepted_anchor" : "generated_from_source");
-  const sourceImageDataUrl = provenance === "generated_from_source" ? modal.source?.dataUrl : null;
-  if (provenance === "generated_from_source" && !String(sourceImageDataUrl || "").startsWith("data:")) return;
+  const payload = acceptPayload(session.state);
+  if (!payload) return;
+  const body = {
+    provenance: payload.provenance,
+    imageDataUrl: payload.imageDataUrl,
+    instruction: payload.instruction,
+  };
+  if (payload.sourceImageDataUrl) body.sourceImageDataUrl = payload.sourceImageDataUrl;
+  if (payload.sourceAssetId) body.sourceAssetId = payload.sourceAssetId;
   await deps.runProductResearchAction({
     semanticAction: "anchor_approve",
     submittedText: null,
@@ -182,12 +217,7 @@ async function onAccept(deps) {
       const next = await deps.fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/anchor-accept`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          provenance,
-          imageDataUrl: ready,
-          sourceImageDataUrl,
-          instruction: modal.instruction || "",
-        }),
+        body: JSON.stringify(body),
       });
       session = null;
       deletedUndo = deletedUndo?.characterName === character.name ? null : deletedUndo;

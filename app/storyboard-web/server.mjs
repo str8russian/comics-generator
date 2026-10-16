@@ -16,7 +16,7 @@ import { stageStoryboard } from "./stage.mjs";
 import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
 import { assembleAnchorSession } from "./anchor-session-request.mjs";
 import { compilePrototypePrompt } from "./anchor-prompt.mjs";
-import { generateImage, resolveImageModel } from "./image-provider.mjs";
+import { anchorSessionProviderTimeoutMs, generateImage, resolveImageModel } from "./image-provider.mjs";
 import {
   executeImageRequest,
   loadImageReferenceConfig,
@@ -1231,6 +1231,7 @@ async function handleAnchorSession(req, res, {
     imageGenerator,
     env: env ?? process.env,
     fetchImpl,
+    timeoutMs: anchorSessionProviderTimeoutMs(env ?? process.env),
   });
   logVisual(logger, request, "anchor-session", {
     characterName,
@@ -1270,9 +1271,17 @@ async function handleAnchorAccept(req, res, { runtime, characterName, logger, ne
     return;
   }
   const image = parseImageDataUrl(body.payload?.imageDataUrl);
-  const sourceImage = body.payload?.sourceImageDataUrl ? parseImageDataUrl(body.payload.sourceImageDataUrl) : null;
-  if (!image || (body.payload?.sourceImageDataUrl && !sourceImage)) {
+  const rawSourceUrl = body.payload?.sourceImageDataUrl;
+  const sourceImage = rawSourceUrl ? parseImageDataUrl(rawSourceUrl) : null;
+  const sourceAssetId = typeof body.payload?.sourceAssetId === "string" && body.payload.sourceAssetId.trim()
+    ? body.payload.sourceAssetId.trim()
+    : null;
+  if (!image || (rawSourceUrl && !sourceImage)) {
     sendJson(res, 400, { status: "failed", kind: "invalid-image" });
+    return;
+  }
+  if (sourceImage && sourceAssetId) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
   const result = await runtime.visualStore.acceptSessionAnchor({
@@ -1280,6 +1289,7 @@ async function handleAnchorAccept(req, res, { runtime, characterName, logger, ne
     provenance: body.payload?.provenance,
     image,
     sourceImage,
+    sourceAssetId,
     instruction: body.payload?.instruction || "",
   });
   logVisual(logger, request, "anchor-accept", {

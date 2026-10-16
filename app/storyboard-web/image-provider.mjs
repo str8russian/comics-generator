@@ -151,6 +151,18 @@ function http1Fetch(url, init = {}) {
   });
 }
 
+export const ANCHOR_SESSION_PROVIDER_CAP_MS = 58_000;
+
+export function anchorSessionProviderTimeoutMs(env = {}) {
+  const requested = Number(env.ANCHOR_SESSION_TIMEOUT_MS ?? ANCHOR_SESSION_PROVIDER_CAP_MS);
+  const ceiling = Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, ANCHOR_SESSION_PROVIDER_CAP_MS)
+    : ANCHOR_SESSION_PROVIDER_CAP_MS;
+  const configured = Number(env.IMAGE_TIMEOUT_MS || env.CONTEST_TIMEOUT_MS || 180000);
+  if (!Number.isFinite(configured) || configured <= 0) return ceiling;
+  return Math.min(configured, ceiling);
+}
+
 export async function generateImage({
   prompt,
   images,
@@ -158,11 +170,16 @@ export async function generateImage({
   serializedBody,
   env = process.env,
   fetchImpl = http1Fetch,
+  timeoutMs: timeoutOverride,
 }) {
   const baseUrl = String(env.BASE_URL ?? "").trim();
   const token = String(env.CONTEST_API_TOKEN ?? "").trim();
   const model = resolveImageModel(env);
-  const timeoutMs = Number(env.IMAGE_TIMEOUT_MS || env.CONTEST_TIMEOUT_MS || 180000);
+  const configured = Number(env.IMAGE_TIMEOUT_MS || env.CONTEST_TIMEOUT_MS || 180000);
+  const override = Number(timeoutOverride);
+  const timeoutMs = Number.isFinite(override) && override > 0 && Number.isFinite(configured) && configured > 0
+    ? Math.min(configured, override)
+    : configured;
   if (!baseUrl || !token || !model || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return failure("configuration", 500);
   }

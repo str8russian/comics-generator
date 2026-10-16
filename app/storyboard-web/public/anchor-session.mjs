@@ -438,6 +438,46 @@ export function escapeKey(state, triggerId = "draft-close") {
   return requestDismiss(state, triggerId);
 }
 
+export const ANCHOR_CLIENT_DEADLINE_MS = 60_000;
+
+export function acceptPayload(state) {
+  const modal = state?.modal;
+  if (!modal || modal.pending || state.notice) return null;
+  if (modal.step === "ready") {
+    if (!modal.source?.dataUrl) return null;
+    return {
+      provenance: PROVENANCE.uploadedAsReadyAnchor,
+      imageDataUrl: modal.source.dataUrl,
+      sourceImageDataUrl: null,
+      sourceAssetId: null,
+      instruction: modal.instruction || "",
+    };
+  }
+  const candidate = selectedCandidate(modal);
+  if (!candidate?.dataUrl) return null;
+  const origin = candidate.origin?.kind;
+  const provenance = origin === "source" || (modal.step === "photo" && origin !== "accepted-anchor")
+    ? PROVENANCE.generatedFromSource
+    : PROVENANCE.refinedFromAcceptedAnchor;
+  const payload = {
+    provenance,
+    imageDataUrl: candidate.dataUrl,
+    sourceImageDataUrl: null,
+    sourceAssetId: null,
+    instruction: modal.instruction || "",
+  };
+  if (provenance !== PROVENANCE.generatedFromSource) return payload;
+  const sourceUrl = modal.source?.dataUrl || "";
+  if (sourceUrl.startsWith("data:")) {
+    payload.sourceImageDataUrl = sourceUrl;
+    return payload;
+  }
+  const assetId = state.anchor?.source?.assetId || modal.source?.assetId || null;
+  if (!assetId) return null;
+  payload.sourceAssetId = assetId;
+  return payload;
+}
+
 export function acceptDraft(state) {
   const modal = state.modal;
   if (!modal || modal.pending || state.notice) return state;
@@ -567,7 +607,7 @@ const ERROR_TEXT = {
   "unsupported-file": "Нужен файл JPEG, PNG или WebP.",
   "file-too-large": "Файл больше 12 МБ.",
   provider: "Провайдер не вернул изображение. Выбор, инструкция и уже полученные варианты сохранены. Можно повторить.",
-  timeout: "Провайдер не ответил вовремя. Выбор, инструкция и уже полученные варианты сохранены. Можно повторить.",
+  timeout: "Создание заняло больше минуты. Попробуйте ещё раз.",
   "invalid-output": "Провайдер вернул неразборчивый ответ. Выбор, инструкция и уже полученные варианты сохранены. Можно повторить.",
   "provider-payload-too-large": "Запрос оказался слишком большим для провайдера. Выбор и варианты сохранены. Можно повторить.",
   "reference-payload-too-large": "Изображение не помещается в запрос к провайдеру. Выбор и варианты сохранены.",

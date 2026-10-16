@@ -17,6 +17,7 @@ import {
   view,
   createState,
   acceptDraft,
+  acceptPayload,
 } from "../public/anchor-session.mjs";
 
 const SOURCE = "data:image/png;base64,SOURCE";
@@ -227,4 +228,53 @@ test("later candidates keep the selected basis and the source action separate", 
   assert.equal(fresh.effect.body.previousImage, null);
   assert.equal(fresh.effect.body.anchorImage, null);
   assert.equal(state.anchor.dataUrl, ANCHOR);
+});
+
+function refineRetainedAsset() {
+  const first = requestGenerate(photoReady());
+  const created = resolveGenerate(first.state, { ok: true, requestId: first.effect.requestId, dataUrl: ANCHOR });
+  const accepted = acceptDraft(created);
+  accepted.anchor.source.assetId = "source-1";
+  accepted.anchor.source.dataUrl = "/api/visual/assets/source-1";
+  return openRefine(accepted);
+}
+
+test("accepting a source-origin refine candidate reuses the retained identity asset", () => {
+  let state = refineRetainedAsset();
+  const generated = requestGenerateFromSource(state);
+  state = resolveGenerate(generated.state, { ok: true, requestId: generated.effect.requestId, dataUrl: C1 });
+  const payload = acceptPayload(state);
+  assert.equal(payload.provenance, "generated_from_source");
+  assert.equal(payload.sourceAssetId, "source-1");
+  assert.equal(payload.sourceImageDataUrl, null);
+  assert.equal(payload.imageDataUrl, C1);
+  assert.equal(state.anchor.dataUrl, ANCHOR);
+  assert.equal(state.anchor.source.assetId, "source-1");
+});
+
+test("accepting an accepted-anchor refinement does not send a new source", () => {
+  let state = setInstruction(refineRetainedAsset(), "строже");
+  const refined = requestGenerate(state);
+  state = resolveGenerate(refined.state, { ok: true, requestId: refined.effect.requestId, dataUrl: C1 });
+  const payload = acceptPayload(state);
+  assert.equal(payload.provenance, "refined_from_accepted_anchor");
+  assert.equal(payload.sourceAssetId, null);
+  assert.equal(payload.sourceImageDataUrl, null);
+  assert.equal(payload.imageDataUrl, C1);
+});
+
+test("ready upload and new-photo acceptance keep their existing source contracts", () => {
+  const ready = setSelectedImage(choosePath(openCreate(createState()), "ready"), { dataUrl: ANCHOR, mime: "image/png" });
+  const uploaded = acceptPayload(ready);
+  assert.equal(uploaded.provenance, "uploaded_as_ready_anchor");
+  assert.equal(uploaded.imageDataUrl, ANCHOR);
+  assert.equal(uploaded.sourceAssetId, null);
+  assert.equal(uploaded.sourceImageDataUrl, null);
+
+  const first = requestGenerate(photoReady());
+  const photo = resolveGenerate(first.state, { ok: true, requestId: first.effect.requestId, dataUrl: C1 });
+  const created = acceptPayload(photo);
+  assert.equal(created.provenance, "generated_from_source");
+  assert.equal(created.sourceImageDataUrl, SOURCE);
+  assert.equal(created.sourceAssetId, null);
 });
