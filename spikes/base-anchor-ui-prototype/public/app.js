@@ -15,6 +15,7 @@ import {
   requestDelete,
   requestDismiss,
   requestGenerate,
+  requestGenerateFromSource,
   resetEmpty,
   resolveGenerate,
   restoreSession,
@@ -169,6 +170,7 @@ function renderModal(modal, locked) {
     modal.showFile ? fileField() : null,
     renderPreview(modal.preview),
     modal.position ? el("p", { class: "position", text: modal.position }) : null,
+    modal.candidateOrigin ? el("p", { id: "candidate-origin", class: "candidate-origin", text: modal.candidateOrigin }) : null,
     modal.candidateCount ? el("div", { class: "variant-nav" }, [
       button({ id: "variant-undo", disabled: !modal.canUndo }, "Предыдущий вариант", () => commit(undoCandidate(state))),
       button({ id: "variant-redo", disabled: !modal.canRedo }, "Следующий вариант", () => commit(redoCandidate(state))),
@@ -177,11 +179,17 @@ function renderModal(modal, locked) {
       modal.showInstruction ? instructionField(modal) : null,
       modal.basis ? el("p", { id: "generation-basis", class: "basis", text: modal.basis }) : null,
       modal.basisIdentity ? el("p", { id: "generation-basis-identity", class: "basis-identity", text: modal.basisIdentity }) : null,
-      modal.showGenerate ? button({
-        id: "generate",
-        class: "primary",
-        disabled: !modal.generateEnabled,
-      }, modal.pending ? "Запрос к провайдеру…" : modal.generateLabel, onGenerate) : null,
+      modal.showGenerate || modal.showGenerateFromSource ? el("div", { class: "generate-actions" }, [
+        modal.showGenerate ? button({
+          id: "generate",
+          class: "primary",
+          disabled: !modal.generateEnabled,
+        }, modal.pending ? "Запрос к провайдеру…" : modal.generateLabel, () => onGenerate(requestGenerate)) : null,
+        modal.showGenerateFromSource ? button({
+          id: "generate-from-source",
+          class: "secondary",
+        }, modal.fromSourceLabel, () => onGenerate(requestGenerateFromSource)) : null,
+      ]) : null,
     ]) : null,
     modal.pending ? el("p", { class: "status", "aria-live": "polite", text: "Идёт один запрос к провайдеру." }) : null,
     modal.error ? el("p", { class: "error", "aria-live": "polite", text: modal.error }) : null,
@@ -362,9 +370,9 @@ async function onFile(event) {
   }
 }
 
-async function onGenerate() {
-  if (generateLock) return;
-  const next = requestGenerate(state);
+async function onGenerate(request) {
+  if (generateLock || state.modal?.pending) return;
+  const next = request(state);
   if (!next.effect) {
     commit(next.state);
     return;

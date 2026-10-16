@@ -15,6 +15,7 @@ import {
   requestDelete,
   requestDismiss,
   requestGenerate,
+  requestGenerateFromSource,
   resetEmpty,
   resolveGenerate,
   restoreSession,
@@ -394,6 +395,115 @@ test("prototype reset and seeded ready anchor stay out of the draft and do not i
   assert.equal(refined.anchor.provenance, PROVENANCE.refinedFromAcceptedAnchor);
   assert.equal(refined.anchor.source, null);
   assert.equal(view(refined).anchor.label, "Уточнён по принятому образу");
+});
+
+test("a source-photo action appends an independent candidate without revising the selected draft", () => {
+  let photo = setSelectedImage(choosePath(openCreate(createState()), "photo"), {
+    dataUrl: SOURCE,
+    mime: "image/jpeg",
+  });
+  assert.equal(view(photo).modal.generateLabel, "Сгенерировать");
+  assert.equal(view(photo).modal.showGenerateFromSource, false);
+
+  photo = succeed(photo, C1).state;
+  const afterFirst = view(photo).modal;
+  assert.equal(afterFirst.generateLabel, "Создать вариант на основе выбранного");
+  assert.equal(afterFirst.showGenerateFromSource, true);
+  assert.equal(afterFirst.fromSourceLabel, "Создать вариант от исходного фото");
+  assert.equal(afterFirst.candidateOrigin, "Этот вариант создан от исходного фото.");
+
+  const selected = requestGenerate(setInstruction(photo, "от выбранного"));
+  assert.equal(selected.effect.body.previousImage, C1);
+  assert.equal(selected.effect.body.sourceImage, SOURCE);
+  photo = resolveGenerate(selected.state, {
+    ok: false,
+    requestId: selected.effect.requestId,
+    kind: "provider",
+  });
+  assert.deepEqual(photo.modal.candidates.map((candidate) => candidate.dataUrl), [C1]);
+  assert.equal(photo.modal.index, 0);
+
+  photo = succeed(setInstruction(photo, "второй"), C2).state;
+  photo = undoCandidate(photo);
+  assert.equal(view(photo).modal.basis, "Основа следующего варианта: Вариант 1.");
+  const branched = requestGenerate(photo);
+  assert.equal(branched.effect.body.previousImage, C1);
+  photo = resolveGenerate(branched.state, {
+    ok: true,
+    requestId: branched.effect.requestId,
+    dataUrl: C3,
+  });
+  assert.equal(view(photo).modal.candidateOrigin, "Этот вариант создан на основе Варианта 1.");
+
+  photo = setInstruction(photo, "");
+  const fromSource = requestGenerateFromSource(photo);
+  assert.equal(fromSource.blocked, null);
+  assert.equal(fromSource.effect.body.operation, "from-source");
+  assert.equal(fromSource.effect.body.sourceImage, SOURCE);
+  assert.equal(fromSource.effect.body.previousImage, null);
+  assert.equal(fromSource.effect.body.anchorImage, null);
+  assert.equal(fromSource.effect.body.instruction, "");
+  assert.equal(requestGenerate(fromSource.state).blocked, "pending");
+  assert.equal(requestGenerateFromSource(fromSource.state).blocked, "pending");
+  photo = resolveGenerate(fromSource.state, {
+    ok: true,
+    requestId: fromSource.effect.requestId,
+    dataUrl: C4,
+  });
+  assert.deepEqual(photo.modal.candidates.map((candidate) => candidate.dataUrl), [C1, C2, C3, C4]);
+  assert.equal(photo.modal.index, 3);
+  assert.equal(view(photo).modal.candidateOrigin, "Этот вариант создан от исходного фото.");
+  assert.equal(view(photo).modal.basis, "Основа следующего варианта: Вариант 4.");
+  photo = undoCandidate(photo);
+  assert.equal(view(photo).modal.candidateOrigin, "Этот вариант создан на основе Варианта 1.");
+  photo = redoCandidate(photo);
+  assert.equal(view(photo).modal.candidateOrigin, "Этот вариант создан от исходного фото.");
+  const refined = requestGenerate(setInstruction(photo, "уточнить новый"));
+  assert.equal(refined.effect.body.previousImage, C4);
+  assert.equal(refined.effect.body.sourceImage, SOURCE);
+
+  const failed = requestGenerateFromSource(photo);
+  photo = resolveGenerate(failed.state, {
+    ok: false,
+    requestId: failed.effect.requestId,
+    kind: "provider",
+  });
+  assert.deepEqual(photo.modal.candidates.map((candidate) => candidate.dataUrl), [C1, C2, C3, C4]);
+  assert.equal(photo.modal.index, 3);
+  assert.equal(photo.modal.pending, false);
+
+  const uploaded = succeed(setInstruction(openRefine(uploadedState()), "первый"), C1).state;
+  assert.equal(view(uploaded).modal.showGenerateFromSource, false);
+  assert.equal(view(uploaded).modal.candidateOrigin, "Этот вариант создан от текущего принятого образа.");
+  assert.equal(requestGenerateFromSource(uploaded).blocked, "source-unavailable");
+  const seeded = succeed(setInstruction(openRefine(seedReadyAnchor(createState(), {
+    dataUrl: UPLOAD,
+    mime: "image/png",
+  })), "первый"), C1).state;
+  assert.equal(view(seeded).modal.showGenerateFromSource, false);
+
+  let refine = succeed(setInstruction(openRefine(generatedState()), "первый"), C1).state;
+  assert.equal(view(refine).modal.showGenerateFromSource, true);
+  assert.equal(view(refine).modal.candidateOrigin, "Этот вариант создан от текущего принятого образа.");
+  assert.equal(refine.anchor.dataUrl, ORIGINAL);
+  const independent = requestGenerateFromSource(setInstruction(refine, "заново"));
+  assert.equal(independent.effect.body.operation, "from-source");
+  assert.equal(independent.effect.body.sourceImage, SOURCE);
+  assert.equal(independent.effect.body.previousImage, null);
+  assert.equal(independent.effect.body.anchorImage, null);
+  assert.equal(independent.effect.body.instruction, "заново");
+  refine = resolveGenerate(independent.state, {
+    ok: true,
+    requestId: independent.effect.requestId,
+    dataUrl: C2,
+  });
+  assert.deepEqual(refine.modal.candidates.map((candidate) => candidate.dataUrl), [C1, C2]);
+  assert.equal(refine.anchor.dataUrl, ORIGINAL);
+  assert.equal(view(refine).modal.candidateOrigin, "Этот вариант создан от исходного фото.");
+  const accepted = acceptDraft(refine);
+  assert.equal(accepted.anchor.dataUrl, C2);
+  assert.equal(accepted.anchor.source.dataUrl, SOURCE);
+  assert.equal(accepted.modal, null);
 });
 
 test("ready upload, undo, redo, cancel, delete, and accept do not request generation", () => {

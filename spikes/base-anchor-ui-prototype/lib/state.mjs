@@ -16,6 +16,9 @@ export const LABELS = Object.freeze({
   sourcePhoto: "Исходное фото",
   generate: "Сгенерировать",
   another: "Создать вариант на основе выбранного",
+  fromSource: "Создать вариант от исходного фото",
+  originSource: "Этот вариант создан от исходного фото.",
+  originAnchor: "Этот вариант создан от текущего принятого образа.",
   basisSource: "Основа следующего варианта: исходное фото.",
   basisAnchor: "Основа следующего варианта: текущий принятый образ.",
   basisIdentity: "Исходное фото по-прежнему определяет личность.",
@@ -241,14 +244,47 @@ function canRequest(modal) {
   return false;
 }
 
-export function requestGenerate(state) {
+function guardGenerate(state) {
   const modal = state.modal;
-  if (!modal) return { state, effect: null, blocked: "closed" };
-  if (state.notice) return { state, effect: null, blocked: "notice" };
-  if (modal.pending) return { state, effect: null, blocked: "pending" };
-  if (modal.step !== "photo" && modal.step !== "refine") {
-    return { state, effect: null, blocked: "not-generative" };
+  if (!modal) return { blocked: "closed" };
+  if (state.notice) return { blocked: "notice" };
+  if (modal.pending) return { blocked: "pending" };
+  if (modal.step !== "photo" && modal.step !== "refine") return { blocked: "not-generative" };
+  return { blocked: null };
+}
+
+function beginGenerate(state, body, origin) {
+  const requestId = state.modal.requestId + 1;
+  return {
+    state: {
+      ...state,
+      modal: {
+        ...state.modal,
+        pending: true,
+        error: null,
+        requestId,
+        pendingOrigin: origin,
+      },
+    },
+    effect: { type: "generate", requestId, body },
+    blocked: null,
+  };
+}
+
+function originForSelectedRevision(modal) {
+  const previous = selectedCandidate(modal);
+  if (previous) {
+    const parentNumber = modal.candidates.findIndex((item) => item.id === previous.id) + 1;
+    return { kind: "candidate", parentId: previous.id, parentNumber };
   }
+  if (modal.step === "refine") return { kind: "accepted-anchor" };
+  return { kind: "source" };
+}
+
+export function requestGenerate(state) {
+  const guard = guardGenerate(state);
+  if (guard.blocked) return { state, effect: null, blocked: guard.blocked };
+  const modal = state.modal;
   if (!canRequest(modal)) {
     const error = modal.step === "refine" && modal.candidates.length === 0
       ? "instruction-required"
@@ -259,7 +295,6 @@ export function requestGenerate(state) {
       blocked: error,
     };
   }
-  const requestId = modal.requestId + 1;
   const previous = selectedCandidate(modal);
   const body = modal.step === "photo"
     ? {
@@ -276,14 +311,23 @@ export function requestGenerate(state) {
       anchorImage: modal.anchorImage,
       previousImage: previous?.dataUrl ?? null,
     };
-  return {
-    state: {
-      ...state,
-      modal: { ...modal, pending: true, error: null, requestId },
-    },
-    effect: { type: "generate", requestId, body },
-    blocked: null,
-  };
+  return beginGenerate(state, body, originForSelectedRevision(modal));
+}
+
+export function requestGenerateFromSource(state) {
+  const guard = guardGenerate(state);
+  if (guard.blocked) return { state, effect: null, blocked: guard.blocked };
+  const modal = state.modal;
+  if (!modal.candidates.length || !modal.source?.dataUrl) {
+    return { state, effect: null, blocked: "source-unavailable" };
+  }
+  return beginGenerate(state, {
+    operation: "from-source",
+    instruction: modal.instruction.trim(),
+    sourceImage: modal.source.dataUrl,
+    anchorImage: null,
+    previousImage: null,
+  }, { kind: "source" });
 }
 
 export function resolveGenerate(state, result) {
@@ -291,11 +335,12 @@ export function resolveGenerate(state, result) {
   if (!modal?.pending) return state;
   if (!result || result.requestId !== modal.requestId) return state;
   const notice = state.notice?.type === "pending" ? null : state.notice;
+  const settled = { ...modal, pending: false, pendingOrigin: null };
   if (!result.ok || typeof result.dataUrl !== "string" || !result.dataUrl) {
     return {
       ...state,
       notice,
-      modal: { ...modal, pending: false, error: result?.kind || "provider" },
+      modal: { ...settled, error: result?.kind || "provider" },
     };
   }
   const echoesSource = modal.source?.dataUrl && result.dataUrl === modal.source.dataUrl;
@@ -303,12 +348,14 @@ export function resolveGenerate(state, result) {
   if (echoesSource || echoesReady) {
     return {
       ...state,
-      modal: { ...modal, pending: false, error: "echoed-source" },
+      notice,
+      modal: { ...settled, error: "echoed-source" },
     };
   }
   const candidate = {
     id: `candidate-${modal.candidates.length + 1}`,
     dataUrl: result.dataUrl,
+    origin: modal.pendingOrigin || null,
   };
   const candidates = [...modal.candidates, candidate];
   return {
@@ -317,6 +364,7 @@ export function resolveGenerate(state, result) {
     modal: {
       ...modal,
       pending: false,
+      pendingOrigin: null,
       error: null,
       candidates,
       index: candidates.length - 1,
@@ -589,6 +637,15 @@ function preview(modal) {
   return { dominant: null, secondary: [], note: "" };
 }
 
+function originCopy(candidate) {
+  if (candidate?.origin?.kind === "source") return LABELS.originSource;
+  if (candidate?.origin?.kind === "accepted-anchor") return LABELS.originAnchor;
+  if (candidate?.origin?.kind === "candidate" && candidate.origin.parentNumber) {
+    return `Этот вариант создан на основе Варианта ${candidate.origin.parentNumber}.`;
+  }
+  return "";
+}
+
 function generationBasis(draft) {
   if (draft.step !== "photo" && draft.step !== "refine") return { text: "", identity: "" };
   const hasSource = Boolean(draft.source?.dataUrl);
@@ -634,8 +691,14 @@ export function view(state) {
       error: draft.error ? errorText(draft.error) : "",
       errorCode: draft.error,
       generateLabel: draft.candidates.length > 0 ? LABELS.another : LABELS.generate,
+      showGenerateFromSource: generative
+        && !draft.pending
+        && draft.candidates.length > 0
+        && Boolean(draft.source?.dataUrl),
+      fromSourceLabel: LABELS.fromSource,
       basis: basis.text,
       basisIdentity: basis.identity,
+      candidateOrigin: originCopy(selectedCandidate(draft)),
       generateEnabled: canRequest(draft),
       acceptEnabled: !draft.pending && (
         (draft.step === "ready" && Boolean(draft.source?.dataUrl))

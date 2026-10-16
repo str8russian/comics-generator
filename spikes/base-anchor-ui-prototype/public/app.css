@@ -277,7 +277,21 @@ button:disabled {
 
 .basis { font-weight: 600; }
 
-.basis-identity { color: var(--muted); }
+.basis-identity,
+.candidate-origin { color: var(--muted); }
+
+.candidate-origin {
+  margin: 4px 0 0;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+.generate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
 
 label,
 .file-label {
