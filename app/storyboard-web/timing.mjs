@@ -10,8 +10,11 @@ export function graphemeCount(text) {
 }
 
 export function typedDialogue(frame) {
-  if (frame?.frameKind === "text" || frame?.frameKind === "image") return "";
+  if (frame?.frameKind === "text") return "";
+  if (frame?.dialogueMode === "silent" || frame?.dialogueMode === "hidden") return "";
   const text = typeof frame?.dialogue === "string" ? frame.dialogue : "";
+  if (frame?.dialogueMode === "spoken") return text.trim() ? text : "";
+  if (frame?.frameKind === "image") return "";
   return text.trim() ? text : "";
 }
 

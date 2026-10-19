@@ -584,3 +584,54 @@ test("T023 baseline: navigation rewrite on terminal is ignored; unmatched start 
     item.correlationId === unmatchedId && (item.historical === true || item.status === "interrupted")
   )), true);
 });
+
+test("frame dialogue records the mode transition and not the line", async () => {
+  const research = store();
+  const correlationId = randomUUID();
+  const commandTarget = {
+    kind: "frame",
+    displayFrameNumber: 1,
+    displayFrameId: "frame-1",
+    structureFrameId: "frame-1",
+    structureSegmentIndex: null,
+    panelIndex: null,
+    zoom: null,
+    positionX: null,
+    positionY: null,
+    characterName: null,
+    anchorVersionId: null,
+    panelId: "left",
+  };
+  const start = await research.appendEvent({
+    eventKind: "action_start",
+    semanticAction: "frame_dialogue",
+    correlationId,
+    surface: "product_control",
+    submittedText: null,
+    commandTarget,
+    editTarget: null,
+    context: nullContext({ structureFrameId: "frame-1", panelId: "left" }),
+  });
+  assert.equal(start.ok, true);
+  const terminal = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId,
+    outcome: "success",
+    outcomeFlags: { dialogueMode: "silent", previousDialogueMode: "spoken" },
+  });
+  assert.equal(terminal.ok, true);
+  assert.equal(terminal.event.semanticAction, "frame_dialogue");
+  assert.equal(terminal.event.submittedText, null);
+  assert.deepEqual(terminal.event.outcomeFlags, {
+    dialogueMode: "silent",
+    previousDialogueMode: "spoken",
+  });
+  assert.equal(JSON.stringify(terminal.event).includes("Привет"), false);
+  const rejected = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId: randomUUID(),
+    outcome: "success",
+    outcomeFlags: { dialogueMode: "Привет" },
+  });
+  assert.equal(rejected.ok, false);
+});

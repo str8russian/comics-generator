@@ -274,6 +274,7 @@ export function validateCharacterGeneration({
 }
 
 export function isEligiblePanelReadyDialogueFrame(frame) {
+  if (frame?.dialogueMode === "silent" || frame?.dialogueMode === "hidden") return false;
   if (!frame || frame.layout !== "split2") return false;
   if (!Array.isArray(frame.panels) || frame.panels.length !== 2) return false;
   if (!String(frame.dialogue ?? "").trim()) return false;
@@ -481,8 +482,12 @@ export function expandStoryboardFrames(frames) {
           panels: segment.panels.map((panel) => ({ ...panel })),
           sourceItemId: frame.sourceItemId,
           sourceRole: frame.sourceRole,
-          speakerPanel: segment.speakerPanel,
+          speakerPanel: segment.dialogueMode === "silent" || segment.dialogueMode === "hidden"
+            ? null
+            : segment.speakerPanel,
           dialogue: segment.quote,
+          dialogueMode: segment.dialogueMode,
+          dormantSpeakerPanelId: segment.dormantSpeakerPanelId ?? null,
           displayBlock: { sourceItemId: frame.sourceItemId, start, end },
           structureFrameId: frame.id,
           structureSegmentIndex: index,

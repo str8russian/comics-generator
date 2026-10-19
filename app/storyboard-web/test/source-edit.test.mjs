@@ -154,6 +154,23 @@ test("exclusion removes a derived listener and keeps a source remark", () => {
   assert.equal(blocked.kind, "cast-reconciliation");
 });
 
+test("a silent frame with dormant text is not a speaking frame", () => {
+  const cast = {
+    characters: [{ name: "Владимир" }, { name: "Андрей Сергеич" }],
+    aliases: [],
+  };
+  const result = reconcileExclusion([{
+    id: "quiet",
+    origin: "derived",
+    dialogueMode: "silent",
+    dialogue: "старая реплика",
+    speakerPanel: null,
+    panels: [{ id: "only", manualSubject: "Андрей Сергеич", description: "Андрей Сергеич" }],
+  }], "Андрей Сергеич", cast);
+  assert.equal(result.ok, true);
+  assert.equal(result.frames.length, 0);
+});
+
 test("a speaking character cannot be excluded and a recheck keeps the extracted name out", () => {
   const cast = {
     characters: [

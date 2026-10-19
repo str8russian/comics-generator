@@ -2,7 +2,7 @@ const rendererHref = typeof globalThis.window === "undefined"
   ? new URL("../../prototypes/storyboard-viewer/frame-renderer.mjs", import.meta.url).href
   : new URL("/frame-renderer.mjs", import.meta.url).href;
 
-const { FONT_LADDER } = await import(rendererHref);
+const { FONT_LADDER, compilesSpokenDialogue } = await import(rendererHref);
 
 function ladderFor(layout) {
   return layout === "split2" ? FONT_LADDER.split2 : FONT_LADDER.single;
@@ -88,6 +88,10 @@ function piece(frame, text, composition, offset, fontSize) {
     fontSize,
     visualReady: frameVisualReady(panels),
   };
+  const mode = composition.dialogueMode || frame.dialogueMode;
+  if (mode === "spoken" || mode === "silent" || mode === "hidden") pieceFrame.dialogueMode = mode;
+  const dormant = composition.dormantSpeakerPanelId || frame.dormantSpeakerPanelId;
+  if (typeof dormant === "string" && dormant) pieceFrame.dormantSpeakerPanelId = dormant;
   if (frame.retainedImageNotice) pieceFrame.retainedImageNotice = frame.retainedImageNotice;
   if (text === frame.dialogue) {
     if (frame.frameKind) pieceFrame.frameKind = frame.frameKind;
@@ -168,10 +172,36 @@ function compileDirecting(frame, measure) {
   const structureFrameId = typeof frame.structureFrameId === "string" ? frame.structureFrameId : frame.id;
   for (let index = 0; index < frame.segments.length; index += 1) {
     const segment = frame.segments[index];
+    if (segment.dialogueMode === "silent" || segment.dialogueMode === "hidden") {
+      const panels = (segment.panels || []).map(copyPanel);
+      frames.push({
+        layout: segment.layout,
+        origin: "source",
+        panels,
+        sourceItemId: frame.sourceItemId,
+        sourceRole: frame.sourceRole,
+        speakerPanel: null,
+        dialogue: typeof segment.quote === "string" ? segment.quote : "",
+        dialogueMode: segment.dialogueMode,
+        dormantSpeakerPanelId: segment.dormantSpeakerPanelId ?? null,
+        displayBlock: {
+          sourceItemId: frame.sourceItemId,
+          start: ranges[index].start,
+          end: ranges[index].end,
+        },
+        visualReady: frameVisualReady(panels),
+        structureFrameId,
+        structureSegmentIndex: index,
+        ...(Number.isInteger(segment.durationFrames) ? { durationFrames: segment.durationFrames } : {}),
+      });
+      continue;
+    }
     const built = compileQuote(frame, segment.quote, {
       layout: segment.layout,
       speakerPanel: segment.speakerPanel,
       panels: segment.panels,
+      dialogueMode: segment.dialogueMode,
+      dormantSpeakerPanelId: segment.dormantSpeakerPanelId,
     }, ranges[index].start, measure);
     if (!built.ok) return built;
     frames.push(...built.frames.map((pieceFrame) => ({
@@ -199,7 +229,7 @@ function copySilent(frame) {
 export function compileOverflow(frames, measure) {
   const next = [];
   for (const frame of frames) {
-    if (!frame || typeof frame.dialogue !== "string" || frame.dialogue.length === 0) {
+    if (!compilesSpokenDialogue(frame)) {
       next.push(copySilent(frame));
       continue;
     }
@@ -213,6 +243,8 @@ export function compileOverflow(frames, measure) {
       layout: frame.layout,
       speakerPanel: frame.speakerPanel,
       panels: frame.panels,
+      dialogueMode: frame.dialogueMode,
+      dormantSpeakerPanelId: frame.dormantSpeakerPanelId,
     }, frame.displayBlock && Number.isInteger(frame.displayBlock.start) ? frame.displayBlock.start : 0, measure);
     if (!built.ok) return built;
     next.push(...withIds(frame, built.frames));

@@ -34,6 +34,7 @@ const SEMANTIC_ACTIONS = new Set([
   "storyboard_undo",
   "render",
   "source_utterance_edit",
+  "frame_dialogue",
 ]);
 
 const SURFACES = new Set(["dock_notes", "dock_commands", "product_control"]);
@@ -225,10 +226,23 @@ function normalizeOutcomeFlags(value) {
     if (typeof value.evidenceIncomplete !== "boolean") return undefined;
     out.evidenceIncomplete = value.evidenceIncomplete;
   }
+  if (Object.hasOwn(value, "dialogueMode")) {
+    if (!isDialogueMode(value.dialogueMode)) return undefined;
+    out.dialogueMode = value.dialogueMode;
+  }
+  if (Object.hasOwn(value, "previousDialogueMode")) {
+    if (!isDialogueMode(value.previousDialogueMode)) return undefined;
+    out.previousDialogueMode = value.previousDialogueMode;
+  }
   for (const key of Object.keys(value)) {
-    if (key !== "retainedLastGoodImage" && key !== "evidenceIncomplete") return undefined;
+    if (key !== "retainedLastGoodImage" && key !== "evidenceIncomplete"
+      && key !== "dialogueMode" && key !== "previousDialogueMode") return undefined;
   }
   return out;
+}
+
+function isDialogueMode(value) {
+  return value === "spoken" || value === "silent" || value === "hidden";
 }
 
 function normalizeOutcomeKind(value) {
@@ -393,6 +407,8 @@ function validateEventInput(input) {
 function deriveTerminalFlags(clientFlags, { incomplete }) {
   const flags = {};
   if (clientFlags.retainedLastGoodImage === true) flags.retainedLastGoodImage = true;
+  if (clientFlags.dialogueMode) flags.dialogueMode = clientFlags.dialogueMode;
+  if (clientFlags.previousDialogueMode) flags.previousDialogueMode = clientFlags.previousDialogueMode;
   if (incomplete) flags.evidenceIncomplete = true;
   return flags;
 }

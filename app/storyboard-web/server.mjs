@@ -954,6 +954,9 @@ async function handleOperations(req, res, { runtime, logger, nextRequest }) {
   }
   const request = nextRequest();
   const result = await runtime.visualStore.applyOperation(body.payload);
+  if (result?.ok && result.invalidateRender) {
+    await runtime.renderController?.dropCurrent?.(requireProjectId());
+  }
   if (!result.ok) {
     logVisual(logger, request, "visual-operation", {
       status: "failed",

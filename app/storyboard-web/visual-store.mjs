@@ -6,6 +6,7 @@ import {
   preservePanelIdentity,
   visibleFrameSignature,
 } from "./assembly.mjs";
+import { backfillDialogueModes } from "./dialogue-mode.mjs";
 import { inspectImage, parseIdentityImage } from "./image-info.mjs";
 import { presentFrameTiming } from "./timing.mjs";
 import { requireProjectId, touchProjectContent } from "./project-scope.mjs";
@@ -85,9 +86,15 @@ async function ensureVersion(client) {
     JOIN storyboard_version ON storyboard_version.id = storyboard_head.active_storyboard_version_id
     WHERE storyboard_head.storyboard_result_id = $1
   `, [result.id]);
-  if (head.rowCount === 1) return { result, version: head.rows[0] };
+  if (head.rowCount === 1) {
+    const context = { result, version: head.rows[0] };
+    await persistDialogueModes(client, context);
+    return context;
+  }
   const id = randomUUID();
-  const frames = Array.isArray(result.stage_payload?.frames) ? result.stage_payload.frames : [];
+  const frames = backfillDialogueModes(
+    Array.isArray(result.stage_payload?.frames) ? result.stage_payload.frames : [],
+  ).frames;
   await client.query(
     `INSERT INTO storyboard_version (id, storyboard_result_id, frames)
      VALUES ($1, $2, $3::jsonb)`,
@@ -99,6 +106,22 @@ async function ensureVersion(client) {
     [result.id, id],
   );
   return { result, version: { id, parent_storyboard_version_id: null, frames, instruction: null } };
+}
+
+async function persistDialogueModes(client, context) {
+  const rows = await client.query(
+    `SELECT id, frames FROM storyboard_version WHERE storyboard_result_id = $1`,
+    [context.result.id],
+  );
+  for (const row of rows.rows) {
+    const filled = backfillDialogueModes(row.frames);
+    if (!filled.changed) continue;
+    await client.query(
+      `UPDATE storyboard_version SET frames = $2::jsonb WHERE id = $1`,
+      [row.id, JSON.stringify(filled.frames)],
+    );
+    if (row.id === context.version.id) context.version.frames = filled.frames;
+  }
 }
 
 async function persistPanelIds(client, context) {
@@ -166,6 +189,7 @@ const UNDO_LABELS = {
   setTextCard: "текст карточки",
   setOwnerDescription: "заметку к панели",
   setManualSubject: "выбор персонажа",
+  setFrameDialogue: "диалог кадра",
   uploadAsset: "загрузку изображения",
   assignAsset: "назначение изображения",
   batch: "несколько изменений",
@@ -608,9 +632,11 @@ async function loadVisualWithClient(client) {
         return {
           ...panel,
           subject: state?.subject ?? null,
-          role: Number.isInteger(frame.speakerPanel)
-            ? (frame.speakerPanel === panelIndex ? "Говорит" : "Слушает")
-            : "Действие",
+          role: frame.dialogueMode === "silent"
+            ? "Молчит"
+            : (frame.dialogueMode === "hidden" || !Number.isInteger(frame.speakerPanel)
+              ? "Действие"
+              : (frame.speakerPanel === panelIndex ? "Говорит" : "Слушает")),
           stateId: state?.id ?? null,
           assetId: outputAssetId,
           asset: assetUrl(outputAssetId),
@@ -1377,8 +1403,10 @@ function operationContextFor(operations) {
   const operation = operations.length === 1 ? operations[0] : { op: "batch" };
   const panelId = typeof operation.panelId === "string"
     ? operation.panelId
-    : (operation.targets?.[0]?.panelId ?? null);
-  return {
+    : (typeof operation.speakerPanelId === "string"
+      ? operation.speakerPanelId
+      : (operation.targets?.[0]?.panelId ?? null));
+  const context = {
     op: operation.op,
     structureFrameId: operation.structureFrameId ?? operation.afterStructureFrameId ?? null,
     structureSegmentIndex: Number.isInteger(operation.structureSegmentIndex) ? operation.structureSegmentIndex : null,
@@ -1386,6 +1414,10 @@ function operationContextFor(operations) {
     panelIndex: Number.isInteger(operation.panelIndex) ? operation.panelIndex : null,
     displayFrameNumber: Number.isInteger(operation.displayFrameNumber) ? operation.displayFrameNumber : null,
   };
+  if (operation.dialogueMode === "spoken" || operation.dialogueMode === "silent" || operation.dialogueMode === "hidden") {
+    context.dialogueMode = operation.dialogueMode;
+  }
+  return context;
 }
 
 export async function applyProductOperation(pool, input) {
@@ -1448,8 +1480,9 @@ export async function applyProductOperation(pool, input) {
         === panelVisualSignature(proposedPanelRows(beforeRows.rows, frames, patches, cast));
       if (sameFrames && samePanels) {
         await client.query("COMMIT");
-        return { ok: true, changed: false, storyboardVersionId: current.version.id };
+        return { ok: true, changed: false, invalidateRender: false, storyboardVersionId: current.version.id };
       }
+      const invalidateRender = operations.some((operation) => operation.op === "setFrameDialogue");
       const instruction = operations.length === 1 ? operations[0].op : "batch";
       const next = await forkVisibleState(client, current, {
         instruction,
@@ -1472,7 +1505,7 @@ export async function applyProductOperation(pool, input) {
         },
       });
       await client.query("COMMIT");
-      return { ok: true, changed: true, storyboardVersionId: next.version.id };
+      return { ok: true, changed: true, invalidateRender, storyboardVersionId: next.version.id };
     });
   } catch (error) {
     if (error?.kind === "invalid-image") return failed("invalid-image");

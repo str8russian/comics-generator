@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { backfillDialogueModes } from "./dialogue-mode.mjs";
 import { assessStage } from "./fidelity.mjs";
 import { assessDialogue } from "./overflow.mjs";
 import { assessPanelIntent } from "./panel-intent.mjs";
@@ -147,7 +148,7 @@ export function buildChecked(draft, sourceItems, stage, cast) {
       status: "checked",
       draft,
       sourceItems: sourceItems.map(publicItem),
-      frames,
+      frames: backfillDialogueModes(frames).frames,
       review,
     },
   };

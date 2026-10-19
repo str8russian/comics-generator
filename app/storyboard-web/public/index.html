@@ -183,8 +183,29 @@
           <label for="utterance-text">Новая формулировка</label>
           <textarea id="utterance-text"></textarea>
           <p id="utterance-error" hidden></p>
+          <p class="scope-note">Меняет всю исходную реплику. Черновик диалога обновляется.</p>
           <button id="utterance-save" type="button">Сохранить</button>
           <button id="utterance-cancel" type="button" class="secondary">Отмена</button>
+        </section>
+        <section id="frame-dialogue" class="frame-dialogue" hidden>
+          <h3>Диалог кадра</h3>
+          <p class="scope-note">Меняет только показ этого кадра. Черновик диалога не меняется.</p>
+          <p id="frame-dialogue-state"></p>
+          <fieldset>
+            <legend>Состояние</legend>
+            <label><input type="radio" name="frame-dialogue-mode" value="spoken"> Реплика</label>
+            <label><input type="radio" name="frame-dialogue-mode" value="silent"> Молчание</label>
+            <label><input type="radio" name="frame-dialogue-mode" value="hidden"> Без реплики</label>
+          </fieldset>
+          <div id="frame-dialogue-spoken" hidden>
+            <label for="frame-dialogue-text">Текст реплики</label>
+            <textarea id="frame-dialogue-text"></textarea>
+            <div id="frame-dialogue-speaker"></div>
+          </div>
+          <p id="frame-dialogue-error" hidden></p>
+          <button id="frame-dialogue-save" type="button">Сохранить</button>
+          <button id="frame-dialogue-add" type="button">Добавить реплику</button>
+          <button id="frame-dialogue-remove" type="button">Удалить реплику</button>
         </section>
         <div id="detail-panel-controls" class="panel-controls"></div>
       </div>

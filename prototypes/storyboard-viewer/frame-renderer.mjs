@@ -35,6 +35,26 @@ export function panelContentSize(panelCount, hasDialogue) {
   };
 }
 
+export function dialogueRegionVisible(frame) {
+  if (frame?.frameKind === "text") return false;
+  if (frame?.dialogueMode === "spoken" || frame?.dialogueMode === "silent") return true;
+  if (frame?.dialogueMode === "hidden") return false;
+  return typeof frame?.dialogue === "string" && frame.dialogue.trim().length > 0;
+}
+
+export function visibleDialogueText(frame) {
+  if (frame?.frameKind === "text") return "";
+  if (frame?.dialogueMode === "silent" || frame?.dialogueMode === "hidden") return "";
+  const text = typeof frame?.dialogue === "string" ? frame.dialogue : "";
+  return text.trim() ? text : "";
+}
+
+export function compilesSpokenDialogue(frame) {
+  if (frame?.dialogueMode === "silent" || frame?.dialogueMode === "hidden") return false;
+  if (frame?.frameKind === "text") return false;
+  return typeof frame?.dialogue === "string" && frame.dialogue.length > 0;
+}
+
 function clampPercent(value) {
   const clamped = Math.min(100, Math.max(0, value));
   return Math.round(clamped * 1000) / 1000;
@@ -114,8 +134,9 @@ export function render(frame, options) {
   }
 
   const strip = el("div", "panel-strip", ownerDocument);
-  const dialogue = typeof frame.dialogue === "string" && frame.dialogue.trim() ? frame.dialogue : "";
-  strip.style.bottom = dialogue ? (FRAME_GEOMETRY.dialogueBarHeight + "px") : "0";
+  const showRegion = dialogueRegionVisible(frame);
+  const dialogue = visibleDialogueText(frame);
+  strip.style.bottom = showRegion ? (FRAME_GEOMETRY.dialogueBarHeight + "px") : "0";
 
   panels.forEach((panel, index) => {
     const column = el("section", "panel", ownerDocument);
@@ -145,7 +166,7 @@ export function render(frame, options) {
     strip.append(column);
   });
 
-  if (!dialogue) {
+  if (!showRegion) {
     canvas.append(strip);
     return canvas;
   }
@@ -158,7 +179,7 @@ export function render(frame, options) {
     const cell = el("div", "dialogue-cell", ownerDocument);
     cell.style.padding = split ? FRAME_GEOMETRY.splitPadding : FRAME_GEOMETRY.singlePadding;
     if (index > 0) cell.style.borderLeft = FRAME_GEOMETRY.panelGutter + "px solid " + FRAME_BG;
-    if (index === frame.speakerPanel) {
+    if (dialogue && index === frame.speakerPanel) {
       const text = el("p", "dialogue-text" + (frame.silent ? " silent" : ""), ownerDocument);
       text.style.fontSize = fontSize + "px";
       text.textContent = dialogue;
@@ -215,6 +236,8 @@ if (typeof window !== "undefined") {
     panelGutter: FRAME_GEOMETRY.panelGutter,
     render,
     measureDialogue,
+    dialogueRegionVisible,
+    visibleDialogueText,
     fontSizeFor,
     PLACEMENT_DEFAULTS,
     renditionTransform,

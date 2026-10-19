@@ -62,7 +62,9 @@ const FrameView = ({frame, spec}) => {
   }
   const split = (frame.panels || []).length > 1;
   const dialogue = typeof frame.dialogue === 'string' ? frame.dialogue : '';
-  const hasDialogue = dialogue.trim().length > 0;
+  const mode = frame.dialogueMode;
+  const showRegion = mode === 'spoken' || mode === 'silent' || (mode == null && dialogue.trim().length > 0);
+  const showText = mode === 'silent' || mode === 'hidden' ? false : dialogue.trim().length > 0;
   const characters = Array.from(dialogue);
   const typedFrames = Math.max(0, localFrame - frame.preRollFrames);
   const visibleCount = Math.min(
@@ -72,7 +74,7 @@ const FrameView = ({frame, spec}) => {
   const visibleText = characters.slice(0, visibleCount).join('');
   const typingHasStarted = localFrame >= frame.preRollFrames;
   const isTyping = typingHasStarted && visibleCount < characters.length;
-  const visualBottom = hasDialogue ? theme.dialogueBarHeightPx : 0;
+  const visualBottom = showRegion ? theme.dialogueBarHeightPx : 0;
 
   return (
     <AbsoluteFill style={{backgroundColor: theme.backgroundColor, color: theme.textColor, fontFamily: theme.fontFamily, opacity}}>
@@ -111,7 +113,7 @@ const FrameView = ({frame, spec}) => {
         ))}
       </div>
 
-      {hasDialogue ? (
+      {showRegion ? (
         <div
           style={{
             position: 'absolute',
@@ -139,7 +141,7 @@ const FrameView = ({frame, spec}) => {
                 borderLeft: index > 0 ? `${theme.panelGutterPx}px solid ${theme.backgroundColor}` : undefined,
               }}
             >
-              {index === frame.speakerPanel ? (
+              {showText && index === frame.speakerPanel ? (
                 <p
                   style={{
                     margin: 0,

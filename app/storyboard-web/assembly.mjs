@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { isPositiveFrameCount, minimumDurationFrames, typedDialogue } from "./timing.mjs";
+import { readDialogueMode } from "./dialogue-mode.mjs";
+import { dialogueCompletes, isPositiveFrameCount, minimumDurationFrames, typedDialogue } from "./timing.mjs";
 
 const TEXT_LIMIT = 2000;
 const NOTE_LIMIT = 500;
@@ -77,6 +78,14 @@ function newPanel(idFactory) {
 }
 
 function retargetSpeaker(node, previousPanels, nextPanels) {
+  if (typeof node.dormantSpeakerPanelId === "string") {
+    const dormantRemains = nextPanels.some((panel) => panel.id === node.dormantSpeakerPanelId);
+    if (!dormantRemains) delete node.dormantSpeakerPanelId;
+  }
+  if (node.dialogueMode === "silent" || node.dialogueMode === "hidden") {
+    node.speakerPanel = null;
+    return;
+  }
   if (!Number.isInteger(node.speakerPanel)) return;
   const speaker = previousPanels[node.speakerPanel];
   if (!speaker?.id) {
@@ -85,6 +94,9 @@ function retargetSpeaker(node, previousPanels, nextPanels) {
   }
   const nextIndex = nextPanels.findIndex((panel) => panel.id === speaker.id);
   node.speakerPanel = nextIndex >= 0 ? nextIndex : 0;
+  if (node.dialogueMode === "spoken" && nextPanels[node.speakerPanel]?.id) {
+    node.dormantSpeakerPanelId = nextPanels[node.speakerPanel].id;
+  }
 }
 
 export function applyOperation(frames, operation = {}, options = {}) {
@@ -102,6 +114,7 @@ export function applyOperation(frames, operation = {}, options = {}) {
   if (op === "setTextCard") return setTextCard(next, operation);
   if (op === "setOwnerDescription") return setOwnerDescription(next, operation);
   if (op === "setManualSubject") return setManualSubject(next, operation);
+  if (op === "setFrameDialogue") return setFrameDialogue(next, operation);
   return fail("invalid-operation");
 }
 
@@ -134,6 +147,7 @@ function insertFrame(frames, operation, idFactory) {
     panels: kind === "text" ? [] : [newPanel(idFactory)],
   };
   if (kind === "text") frame.textCard = "";
+  else frame.dialogueMode = "hidden";
   frames.splice(index, 0, frame);
   return { ok: true, frames, frameId: frame.id, mode: "version" };
 }
@@ -184,7 +198,7 @@ function deletePanel(frames, operation) {
       error = fail("last-panel");
       return;
     }
-    const dialogue = node === frame ? typedDialogue(frame) : String(node.quote || "");
+    const dialogue = visibleNodeText(frame, node);
     if (dialogue.trim() && node.speakerPanel === index && operation.confirmSpeakerTransfer !== true) {
       error = fail("speaker-transfer-required");
       return;
@@ -218,9 +232,7 @@ function setDuration(frames, operation) {
   const target = locate(frames, operation);
   if (target.ok === false) return target;
   if (!isPositiveFrameCount(operation.durationFrames)) return fail("invalid-duration");
-  const dialogue = target.node === target.frame
-    ? typedDialogue(target.frame)
-    : (target.frame.frameKind === "text" || target.frame.frameKind === "image" ? "" : String(target.node.quote || ""));
+  const dialogue = visibleNodeText(target.frame, target.node);
   const minimum = minimumDurationFrames(dialogue);
   if (operation.durationFrames < minimum) return fail("duration-truncates-dialogue");
   target.node.durationFrames = operation.durationFrames;
@@ -235,7 +247,114 @@ function setTextCard(frames, operation) {
   if (typeof operation.text !== "string" || operation.text.length > TEXT_LIMIT) return fail("invalid-text");
   frame.textCard = operation.text;
   if (frame.dialogue) frame.dialogue = "";
+  if (Object.hasOwn(frame, "dialogueMode")) delete frame.dialogueMode;
   return { ok: true, frames, mode: "current" };
+}
+
+function visibleNodeText(frame, node) {
+  if (node?.dialogueMode === "silent" || node?.dialogueMode === "hidden") return "";
+  if (node === frame) return typedDialogue(frame);
+  const quote = String(node?.quote || "");
+  if (node?.dialogueMode === "spoken") return quote.trim() ? quote : "";
+  if (frame?.frameKind === "text" || frame?.frameKind === "image") return "";
+  return quote.trim() ? quote : "";
+}
+
+function storedNodeText(frame, node) {
+  if (node === frame) return typeof node?.dialogue === "string" ? node.dialogue : "";
+  return typeof node?.quote === "string" ? node.quote : "";
+}
+
+function raisedSpokenDuration(explicit, text) {
+  if (!isPositiveFrameCount(explicit)) return explicit ?? null;
+  const minimum = minimumDurationFrames(text);
+  if (explicit >= minimum && dialogueCompletes(explicit, text)) return explicit;
+  return minimum;
+}
+
+function setFrameDialogue(frames, operation) {
+  const target = locate(frames, operation);
+  if (target.ok === false) return target;
+  if (target.frame.frameKind === "text" || target.node.frameKind === "text") return fail("not-dialogue-frame");
+  const mode = operation.dialogueMode;
+  if (mode !== "spoken" && mode !== "silent" && mode !== "hidden") return fail("invalid-mode");
+  const stored = storedNodeText(target.frame, target.node);
+  let text = stored;
+  if (mode === "spoken" && typeof operation.text === "string") {
+    if (operation.text.length > TEXT_LIMIT) return fail("invalid-text");
+    text = operation.text;
+  }
+  if (mode === "spoken" && !text.trim()) return fail("empty-dialogue");
+
+  let speakerPanel = null;
+  let dormantSpeakerPanelId = typeof target.node.dormantSpeakerPanelId === "string"
+    ? target.node.dormantSpeakerPanelId
+    : null;
+  if (mode === "spoken") {
+    const panels = target.panels;
+    if (!panels.length) return fail("speaker-required");
+    if (panels.length === 1) {
+      if (operation.speakerPanelId != null && operation.speakerPanelId !== panels[0].id) {
+        return fail("speaker-not-found");
+      }
+      speakerPanel = 0;
+      dormantSpeakerPanelId = panels[0].id || dormantSpeakerPanelId;
+    } else {
+      const requested = typeof operation.speakerPanelId === "string" && operation.speakerPanelId
+        ? operation.speakerPanelId
+        : dormantSpeakerPanelId;
+      if (!requested) return fail("speaker-required");
+      const index = panels.findIndex((panel) => panel.id === requested);
+      if (index < 0) {
+        return fail(operation.speakerPanelId ? "speaker-not-found" : "speaker-required");
+      }
+      speakerPanel = index;
+      dormantSpeakerPanelId = panels[index].id;
+    }
+  } else if (readDialogueMode(target.frame, target.node) === "spoken") {
+    const active = Number.isInteger(target.node.speakerPanel) ? target.panels[target.node.speakerPanel] : null;
+    if (active?.id) dormantSpeakerPanelId = active.id;
+  }
+
+  const durationFrames = mode === "spoken"
+    ? raisedSpokenDuration(target.node.durationFrames, text)
+    : (target.node.durationFrames ?? null);
+  const currentSpeaker = Number.isInteger(target.node.speakerPanel) ? target.node.speakerPanel : null;
+  const unchanged = readDialogueMode(target.frame, target.node) === mode
+    && stored === text
+    && currentSpeaker === speakerPanel
+    && (target.node.dormantSpeakerPanelId ?? null) === (dormantSpeakerPanelId ?? null)
+    && (target.node.durationFrames ?? null) === (durationFrames ?? null)
+    && isDialogueMode(target.node.dialogueMode);
+  if (unchanged) return { ok: true, frames, mode: "version" };
+
+  target.node.dialogueMode = mode;
+  target.node.speakerPanel = speakerPanel;
+  if (dormantSpeakerPanelId) target.node.dormantSpeakerPanelId = dormantSpeakerPanelId;
+  else delete target.node.dormantSpeakerPanelId;
+  if (durationFrames == null) delete target.node.durationFrames;
+  else target.node.durationFrames = durationFrames;
+  if (target.node === target.frame) {
+    target.node.dialogue = text;
+    if (target.node.displayBlock && typeof target.node.displayBlock === "object") {
+      target.node.displayBlock = { ...target.node.displayBlock, start: 0, end: text.length };
+    }
+  } else {
+    target.node.quote = text;
+    let cursor = 0;
+    for (const segment of target.frame.segments) {
+      const quote = String(segment.quote || "");
+      segment.start = cursor;
+      segment.end = cursor + quote.length;
+      cursor += quote.length;
+    }
+    target.frame.dialogue = target.frame.segments.map((segment) => String(segment.quote || "")).join("");
+  }
+  return { ok: true, frames, mode: "version" };
+}
+
+function isDialogueMode(value) {
+  return value === "spoken" || value === "silent" || value === "hidden";
 }
 
 function setManualSubject(frames, operation) {
@@ -286,6 +405,8 @@ function nodeSignature(node) {
     durationFrames: node?.durationFrames ?? null,
     textCard: node?.textCard ?? "",
     dialogue: node?.dialogue ?? node?.quote ?? "",
+    dialogueMode: node?.dialogueMode ?? null,
+    dormantSpeakerPanelId: node?.dormantSpeakerPanelId ?? null,
     speakerPanel: Number.isInteger(node?.speakerPanel) ? node.speakerPanel : null,
     panels: (node?.panels || []).map((panel) => ({
       id: panel?.id ?? null,

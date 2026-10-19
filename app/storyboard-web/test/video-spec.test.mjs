@@ -86,6 +86,55 @@ test("hard cut stays the default and cross dissolve overlaps six frames except a
   assert.equal(compileVideoSpec(visual, { transition: "fade" }).kind, "invalid-transition");
 });
 
+test("silent and hidden stay explicit when dormant text is stored", () => {
+  const compiled = compileVideoSpec({
+    status: "ready",
+    frames: [
+      {
+        id: "quiet",
+        dialogueMode: "silent",
+        dialogue: "Не показывать",
+        speakerPanel: null,
+        durationFrames: 36,
+        layout: "split2",
+        panels: [{ id: "a" }, { id: "b" }],
+      },
+      {
+        id: "gone",
+        dialogueMode: "hidden",
+        dialogue: "Не показывать",
+        speakerPanel: null,
+        layout: "split2",
+        panels: [{ id: "c" }, { id: "d" }],
+      },
+      {
+        id: "said",
+        dialogueMode: "spoken",
+        dialogue: "Привет",
+        speakerPanel: 1,
+        layout: "split2",
+        panels: [{ id: "e" }, { id: "f" }],
+      },
+    ],
+  });
+  assert.equal(compiled.ok, true);
+  assert.equal(compiled.spec.frames[0].dialogueMode, "silent");
+  assert.equal(compiled.spec.frames[0].dialogue, "");
+  assert.equal(compiled.spec.frames[0].preRollFrames, 0);
+  assert.equal(compiled.spec.frames[0].revealFrames, 0);
+  assert.equal(compiled.spec.frames[0].durationFrames, 36);
+  assert.equal(compiled.spec.frames[1].dialogueMode, "hidden");
+  assert.equal(compiled.spec.frames[1].dialogue, "");
+  assert.equal(compiled.spec.frames[1].preRollFrames, 0);
+  assert.equal(compiled.spec.frames[1].durationFrames, 36);
+  assert.notEqual(compiled.spec.frames[0].dialogueMode, compiled.spec.frames[1].dialogueMode);
+  assert.equal(compiled.spec.frames[2].dialogueMode, "spoken");
+  assert.equal(compiled.spec.frames[2].dialogue, "Привет");
+  assert.equal(compiled.spec.frames[2].preRollFrames > 0, true);
+  assert.equal(JSON.stringify(compiled.spec.frames[0]).includes("Не показывать"), false);
+  assert.equal(JSON.stringify(compiled.spec.frames[1]).includes("Не показывать"), false);
+});
+
 test("a silent frame compiles to 36 frames when no duration is stored", () => {
   const compiled = compileVideoSpec({
     status: "ready",

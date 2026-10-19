@@ -243,6 +243,124 @@ test("backfill assigns missing panel ids once and preserves them", () => {
   assert.equal(second.frames[0].panels[0].id, first.frames[0].panels[0].id);
 });
 
+test("setFrameDialogue creates, silences, hides, and restores a line without inference", () => {
+  const hidden = applyOperation([{
+    id: "frame-1",
+    layout: "split2",
+    frameKind: "image",
+    dialogueMode: "hidden",
+    dialogue: "",
+    panels: [{ id: "left", description: "Левая" }, { id: "right", description: "Правая" }],
+  }], {
+    op: "setFrameDialogue",
+    structureFrameId: "frame-1",
+    dialogueMode: "spoken",
+    text: "Первый говорит",
+    speakerPanelId: "left",
+  }, { idFactory: ids });
+  assert.equal(hidden.ok, true);
+  assert.equal(hidden.frames[0].dialogueMode, "spoken");
+  assert.equal(hidden.frames[0].dialogue, "Первый говорит");
+  assert.equal(hidden.frames[0].speakerPanel, 0);
+  const silent = applyOperation(hidden.frames, {
+    op: "setFrameDialogue",
+    structureFrameId: "frame-1",
+    dialogueMode: "silent",
+  }, { idFactory: ids });
+  assert.equal(silent.frames[0].dialogueMode, "silent");
+  assert.equal(silent.frames[0].dialogue, "Первый говорит");
+  assert.equal(silent.frames[0].speakerPanel, null);
+  assert.equal(silent.frames[0].dormantSpeakerPanelId, "left");
+  const restored = applyOperation(silent.frames, {
+    op: "setFrameDialogue",
+    structureFrameId: "frame-1",
+    dialogueMode: "spoken",
+  }, { idFactory: ids });
+  assert.equal(restored.frames[0].dialogue, "Первый говорит");
+  assert.equal(restored.frames[0].speakerPanel, 0);
+  const concealed = applyOperation(restored.frames, {
+    op: "setFrameDialogue",
+    structureFrameId: "frame-1",
+    dialogueMode: "hidden",
+  }, { idFactory: ids });
+  assert.equal(concealed.frames[0].dialogueMode, "hidden");
+  assert.equal(concealed.frames[0].dialogue, "Первый говорит");
+  assert.equal(concealed.frames[0].panels.length, 2);
+  const again = applyOperation(concealed.frames, {
+    op: "setFrameDialogue",
+    structureFrameId: "frame-1",
+    dialogueMode: "spoken",
+    speakerPanelId: "right",
+  }, { idFactory: ids });
+  assert.equal(again.frames[0].speakerPanel, 1);
+  assert.equal(again.frames[0].dialogue, "Первый говорит");
+  const noop = applyOperation(again.frames, {
+    op: "setFrameDialogue",
+    structureFrameId: "frame-1",
+    dialogueMode: "spoken",
+    text: "Первый говорит",
+    speakerPanelId: "right",
+  }, { idFactory: ids });
+  assert.deepEqual(noop.frames, again.frames);
+  const empty = applyOperation(again.frames, {
+    op: "setFrameDialogue",
+    structureFrameId: "frame-1",
+    dialogueMode: "spoken",
+    text: "   ",
+    speakerPanelId: "right",
+  }, { idFactory: ids });
+  assert.equal(empty.ok, false);
+  assert.equal(empty.kind, "empty-dialogue");
+  const stale = applyOperation(again.frames, {
+    op: "setFrameDialogue",
+    structureFrameId: "frame-1",
+    dialogueMode: "spoken",
+    text: "Новая",
+    speakerPanelId: "missing",
+  }, { idFactory: ids });
+  assert.equal(stale.kind, "speaker-not-found");
+});
+
+test("reordering panels keeps the spoken panel and a deleted speaker must be chosen again", () => {
+  const spoken = [{
+    id: "frame-1",
+    layout: "split2",
+    dialogueMode: "spoken",
+    dialogue: "Реплика",
+    speakerPanel: 0,
+    dormantSpeakerPanelId: "left",
+    panels: [{ id: "left" }, { id: "right" }],
+  }];
+  const moved = applyOperation(spoken, {
+    op: "reorderPanels",
+    structureFrameId: "frame-1",
+    panelIds: ["right", "left"],
+  }, { idFactory: ids });
+  assert.equal(moved.frames[0].speakerPanel, 1);
+  assert.equal(moved.frames[0].dormantSpeakerPanelId, "left");
+  const removed = applyOperation(moved.frames, {
+    op: "deletePanel",
+    panelId: "left",
+    confirmSpeakerTransfer: true,
+  }, { idFactory: ids });
+  assert.equal(removed.ok, true);
+  assert.equal(removed.frames[0].panels[0].id, "right");
+  const withoutSpeaker = applyOperation([{
+    id: "frame-1",
+    layout: "single",
+    dialogueMode: "hidden",
+    dialogue: "Реплика",
+    speakerPanel: null,
+    panels: [{ id: "only" }],
+  }], {
+    op: "setFrameDialogue",
+    structureFrameId: "frame-1",
+    dialogueMode: "spoken",
+    speakerPanelId: "gone",
+  }, { idFactory: ids });
+  assert.equal(withoutSpeaker.kind, "speaker-not-found");
+});
+
 test("copy-forward matches a moved panel by description when the editor drops ids", () => {
   const previous = board();
   const edited = structuredClone(previous);

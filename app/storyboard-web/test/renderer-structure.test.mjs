@@ -4,10 +4,12 @@ import test from "node:test";
 import {
   FONT_LADDER,
   FRAME_GEOMETRY,
+  dialogueRegionVisible,
   fontSizeFor,
   panByPointer,
   panelContentSize,
   render,
+  visibleDialogueText,
 } from "../../../prototypes/storyboard-viewer/frame-renderer.mjs";
 
 function createElement(tag) {
@@ -289,6 +291,59 @@ test("text cards render owner text without a dialogue bar", () => {
   assert.equal(byClass(card, "dialogue-bar").length, 0);
 });
 
+test("silent keeps an empty dialogue bar and hidden releases the full height", () => {
+  installDocument();
+  const panels = [{ description: "Первый" }, { description: "Второй" }];
+  const silent = render({
+    dialogueMode: "silent",
+    dialogue: "Спрятанная реплика",
+    speakerPanel: null,
+    layout: "split2",
+    panels,
+  }, { mode: "structure" });
+  assert.equal(byClass(silent, "dialogue-bar").length, 1);
+  assert.equal(byClass(silent, "dialogue-cell").length, 2);
+  assert.equal(byClass(silent, "dialogue-text").length, 0);
+  assert.equal(byClass(silent, "panel-strip")[0].style.bottom, "300px");
+  const hidden = render({
+    dialogueMode: "hidden",
+    dialogue: "Спрятанная реплика",
+    speakerPanel: null,
+    layout: "split2",
+    panels,
+  }, { mode: "structure" });
+  assert.equal(byClass(hidden, "dialogue-bar").length, 0);
+  assert.equal(byClass(hidden, "dialogue-text").length, 0);
+  assert.equal(byClass(hidden, "panel-strip")[0].style.bottom, "0");
+  const spoken = { dialogueMode: "spoken", dialogue: "Привет", speakerPanel: 0, panels };
+  const quiet = { dialogueMode: "silent", dialogue: "Привет", speakerPanel: null, panels };
+  const omitted = { dialogueMode: "hidden", dialogue: "Привет", speakerPanel: null, panels };
+  assert.equal(visibleDialogueText(quiet), "");
+  assert.equal(visibleDialogueText(omitted), "");
+  assert.equal(
+    panelContentSize(2, dialogueRegionVisible(spoken)).height,
+    panelContentSize(2, dialogueRegionVisible(quiet)).height,
+  );
+  assert.equal(panelContentSize(2, dialogueRegionVisible(omitted)).height, FRAME_GEOMETRY.height);
+});
+
+test("spoken split frames place text only under the selected panel", () => {
+  installDocument();
+  const panels = [{ description: "Первый" }, { description: "Второй" }];
+  for (const speakerPanel of [0, 1]) {
+    const canvas = render({
+      dialogueMode: "spoken",
+      dialogue: "Реплика",
+      speakerPanel,
+      layout: "split2",
+      panels,
+    }, { mode: "structure" });
+    const cells = byClass(canvas, "dialogue-cell");
+    assert.equal(byClass(cells[speakerPanel], "dialogue-text")[0].textContent, "Реплика");
+    assert.equal(byClass(cells[speakerPanel === 0 ? 1 : 0], "dialogue-text").length, 0);
+  }
+});
+
 test("remotion frame drops the horizontal hairline and keeps mirror plus the gutter", () => {
   const source = readFileSync(new URL("../../../prototypes/remotion-rough/src/Video.jsx", import.meta.url), "utf8");
   assert.equal(source.includes("borderTop"), false);
@@ -296,4 +351,6 @@ test("remotion frame drops the horizontal hairline and keeps mirror plus the gut
   assert.match(source, /panel\.mirrored \? 'scaleX\(-1\) '/);
   assert.match(source, /theme\.panelGutterPx/);
   assert.match(source, /frame\.kind === 'text'/);
+  assert.match(source, /mode === 'silent'/);
+  assert.match(source, /showRegion/);
 });

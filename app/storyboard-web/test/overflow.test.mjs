@@ -333,3 +333,29 @@ test("does not split an emoji grapheme and leaves a silent frame without a font 
   assert.equal(action.outsideFrameText, "(пауза)");
   assert.equal(Object.hasOwn(action, "fontSize"), false);
 });
+
+test("dormant text on a silent or hidden frame stays one unmeasured unit", () => {
+  let measured = 0;
+  const result = compileOverflow([
+    utterance({
+      dialogueMode: "silent",
+      dialogue: "Очень длинная спрятанная реплика, которую нельзя резать",
+      speakerPanel: null,
+    }),
+    utterance({
+      id: "f2",
+      dialogueMode: "hidden",
+      dialogue: "Тоже спрятана",
+      speakerPanel: null,
+    }),
+  ], () => {
+    measured += 1;
+    return false;
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.frames.length, 2);
+  assert.equal(result.frames[0].dialogueMode, "silent");
+  assert.equal(result.frames[0].dialogue.includes("спрятанная"), true);
+  assert.equal(result.frames[1].dialogueMode, "hidden");
+  assert.equal(measured, 0);
+});

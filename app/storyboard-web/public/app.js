@@ -35,6 +35,15 @@ const utteranceText = document.querySelector("#utterance-text");
 const utteranceError = document.querySelector("#utterance-error");
 const utteranceSave = document.querySelector("#utterance-save");
 const utteranceCancel = document.querySelector("#utterance-cancel");
+const frameDialogue = document.querySelector("#frame-dialogue");
+const frameDialogueState = document.querySelector("#frame-dialogue-state");
+const frameDialogueSpoken = document.querySelector("#frame-dialogue-spoken");
+const frameDialogueText = document.querySelector("#frame-dialogue-text");
+const frameDialogueSpeaker = document.querySelector("#frame-dialogue-speaker");
+const frameDialogueError = document.querySelector("#frame-dialogue-error");
+const frameDialogueSave = document.querySelector("#frame-dialogue-save");
+const frameDialogueAdd = document.querySelector("#frame-dialogue-add");
+const frameDialogueRemove = document.querySelector("#frame-dialogue-remove");
 const materialCastStatus = document.querySelector("#material-cast-status");
 const closeDetail = document.querySelector("#close-detail");
 const detailPanelControls = document.querySelector("#detail-panel-controls");
@@ -84,6 +93,7 @@ let castChain = Promise.resolve();
 let visual = null;
 let detailIndex = -1;
 let detailStructureId = null;
+let detailSegmentIndex = null;
 let statusTimer = 0;
 let busy = false;
 let pendingCastEdit = null;
@@ -744,7 +754,13 @@ function assemblyCommandTarget(frame, panel = null, panelIndex = null) {
   return createEmptyCommandTarget("frame", shared);
 }
 
-async function runAssembly(operation, message, { submittedText = null, frame = null, panel = null, panelIndex = null } = {}) {
+async function runAssembly(operation, message, {
+  submittedText = null,
+  frame = null,
+  panel = null,
+  panelIndex = null,
+  previousDialogueMode = null,
+} = {}) {
   const semanticAction = {
     insertFrame: "frame_insert",
     deleteFrame: "frame_delete",
@@ -755,6 +771,7 @@ async function runAssembly(operation, message, { submittedText = null, frame = n
     setDuration: "frame_duration",
     setTextCard: "text_card",
     setManualSubject: "panel_subject",
+    setFrameDialogue: "frame_dialogue",
     uploadAsset: "asset_assign",
     assignAsset: "asset_assign",
   }[operation?.op] || "storyboard_edit";
@@ -775,7 +792,18 @@ async function runAssembly(operation, message, { submittedText = null, frame = n
       panelSubject: panel?.subject || null,
     },
     busyMessage: message,
-    classifyResult: (result) => (result?.changed === false ? { outcome: "no-change" } : null),
+    classifyResult: (result) => {
+      const flags = operation?.op === "setFrameDialogue" && operation.dialogueMode
+        ? {
+          dialogueMode: operation.dialogueMode,
+          ...(previousDialogueMode ? { previousDialogueMode } : {}),
+        }
+        : null;
+      if (result?.changed === false) {
+        return flags ? { outcome: "no-change", outcomeFlags: flags } : { outcome: "no-change" };
+      }
+      return flags ? { outcome: "success", outcomeFlags: flags } : null;
+    },
     async operation() {
       const next = await fetchJson("/api/visual/operations", {
         method: "POST",
@@ -1001,7 +1029,11 @@ function appendPanelAssembly(box, frame, panel, panelIndex) {
   if ((frame.panels || []).length === 2) {
     box.append(assemblyButton("Удалить панель", () => {
       const dialogue = String(frame.dialogue || "").trim();
-      const speaking = Boolean(dialogue) && frame.speakerPanel === panelIndex;
+      const speaking = frame.dialogueMode === "silent" || frame.dialogueMode === "hidden"
+        ? false
+        : (frame.dialogueMode === "spoken"
+          ? frame.speakerPanel === panelIndex
+          : (Boolean(dialogue) && frame.speakerPanel === panelIndex));
       if (speaking && globalThis.confirm?.(
         "Реплика останется без изменений. Говорящим станет оставшаяся панель. Удалить эту панель?",
       ) !== true) return;
@@ -1049,6 +1081,126 @@ function prepareUtteranceEditor(frame) {
   if (utteranceError) utteranceError.hidden = true;
 }
 
+const DIALOGUE_LABELS = {
+  spoken: "Реплика",
+  silent: "Молчание",
+  hidden: "Без реплики",
+};
+
+function persistedDialogueMode(frame) {
+  if (frame?.dialogueMode === "spoken" || frame?.dialogueMode === "silent" || frame?.dialogueMode === "hidden") {
+    return frame.dialogueMode;
+  }
+  return String(frame?.dialogue || "").trim() ? "spoken" : "hidden";
+}
+
+function sameDialogueUnit(left, right) {
+  return (left?.structureFrameId || left?.id) === (right?.structureFrameId || right?.id)
+    && (Number.isInteger(left?.structureSegmentIndex) ? left.structureSegmentIndex : null)
+      === (Number.isInteger(right?.structureSegmentIndex) ? right.structureSegmentIndex : null);
+}
+
+function storedDialogueLine(frame) {
+  return readyFrames
+    .filter((entry) => sameDialogueUnit(entry, frame))
+    .slice()
+    .sort((left, right) => (left.displayBlock?.start || 0) - (right.displayBlock?.start || 0))
+    .map((entry) => entry.dialogue || "")
+    .join("");
+}
+
+function showFrameDialogueError(message) {
+  if (!frameDialogueError) return;
+  frameDialogueError.hidden = !message;
+  frameDialogueError.textContent = message || "";
+}
+
+function selectedFrameDialogueMode() {
+  return namedInputs(frameDialogue, "frame-dialogue-mode").find((input) => input.checked)?.value || null;
+}
+
+function selectedSpeakerPanelId() {
+  return namedInputs(frameDialogueSpeaker, "frame-dialogue-speaker").find((input) => input.checked)?.value || null;
+}
+
+function syncFrameDialogueFields(frame) {
+  const mode = selectedFrameDialogueMode();
+  if (frameDialogueSpoken) frameDialogueSpoken.hidden = mode !== "spoken";
+  if (frameDialogueSpeaker) {
+    frameDialogueSpeaker.hidden = mode !== "spoken" || (frame?.panels || []).length < 2;
+  }
+}
+
+function namedInputs(root, name) {
+  if (!root || typeof root.querySelectorAll !== "function") return [];
+  return [...root.querySelectorAll(`input[name='${name}']`)];
+}
+
+function renderFrameDialogue(frame) {
+  if (!frameDialogue) return;
+  const eligible = frame && frame.frameKind !== "text";
+  frameDialogue.hidden = !eligible;
+  if (!eligible) return;
+  const mode = persistedDialogueMode(frame);
+  if (frameDialogueState) frameDialogueState.textContent = `Сейчас: ${DIALOGUE_LABELS[mode]}`;
+  for (const input of namedInputs(frameDialogue, "frame-dialogue-mode")) {
+    input.checked = input.value === mode;
+  }
+  if (frameDialogueText) frameDialogueText.value = storedDialogueLine(frame);
+  if (frameDialogueSpeaker && typeof frameDialogueSpeaker.replaceChildren === "function") {
+    frameDialogueSpeaker.replaceChildren();
+    frameDialogueSpeaker.className = "frame-dialogue-speaker";
+    const panels = frame.panels || [];
+    const currentId = mode === "spoken"
+      ? panels[frame.speakerPanel]?.id
+      : frame.dormantSpeakerPanelId;
+    panels.forEach((panel, index) => {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "frame-dialogue-speaker";
+      input.value = panel.id || "";
+      input.checked = Boolean(panel.id) && panel.id === currentId;
+      const caption = document.createElement("span");
+      caption.textContent = panel.subject || `Панель ${index + 1}`;
+      label.append(input, caption);
+      frameDialogueSpeaker.append(label);
+    });
+  }
+  if (frameDialogueAdd) frameDialogueAdd.hidden = mode === "spoken";
+  if (frameDialogueRemove) frameDialogueRemove.hidden = mode === "hidden";
+  showFrameDialogueError("");
+  syncFrameDialogueFields(frame);
+}
+
+async function saveFrameDialogue(frame, mode) {
+  if (!frame) return;
+  const previousDialogueMode = persistedDialogueMode(frame);
+  let text = null;
+  let speakerPanelId = null;
+  if (mode === "spoken") {
+    text = frameDialogueText?.value ?? "";
+    if (!text.trim()) {
+      showFrameDialogueError("Введите текст реплики.");
+      return;
+    }
+    if ((frame.panels || []).length > 1) {
+      speakerPanelId = selectedSpeakerPanelId();
+      if (!speakerPanelId) {
+        showFrameDialogueError("Выберите панель, которая говорит.");
+        return;
+      }
+    }
+  }
+  showFrameDialogueError("");
+  await runAssembly({
+    op: "setFrameDialogue",
+    ...frameAddress(frame),
+    dialogueMode: mode,
+    ...(mode === "spoken" ? { text, ...(speakerPanelId ? { speakerPanelId } : {}) } : {}),
+  }, "Сохраняю диалог кадра…", { frame, previousDialogueMode });
+}
+
 function openUtteranceEditor(frame) {
   const sourceItemId = sourceItemIdOf(frame);
   if (!sourceItemId || !utteranceEditor) return;
@@ -1075,6 +1227,7 @@ function openDetail(index) {
   if (!frame) return;
   detailIndex = index;
   detailStructureId = frame.structureFrameId || frame.id;
+  detailSegmentIndex = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
   if (detailFrameNumber) detailFrameNumber.textContent = `Кадр ${index + 1}`;
   mountFrame(detailHost, frame, 0.5);
   detailOutside.textContent = frame.outsideFrameText || "";
@@ -1083,6 +1236,7 @@ function openDetail(index) {
     detailRetained.textContent = frame.retainedImageNotice || "";
   }
   prepareUtteranceEditor(frame);
+  renderFrameDialogue(frame);
   renderPanelControls(frame);
   const following = readyFrames[index + 1];
   nextFrame.hidden = !frame.visualReady || !following;
@@ -1107,6 +1261,30 @@ utteranceEdit?.addEventListener("click", () => {
 });
 utteranceCancel?.addEventListener("click", () => {
   if (utteranceEditor) utteranceEditor.hidden = true;
+});
+frameDialogue?.addEventListener("change", (event) => {
+  if (event.target?.name !== "frame-dialogue-mode") return;
+  const frame = readyFrames[detailIndex];
+  showFrameDialogueError("");
+  syncFrameDialogueFields(frame);
+});
+frameDialogueSave?.addEventListener("click", () => {
+  const frame = readyFrames[detailIndex];
+  const mode = selectedFrameDialogueMode();
+  if (!frame || !mode) return;
+  saveFrameDialogue(frame, mode);
+});
+frameDialogueAdd?.addEventListener("click", () => {
+  const spoken = frameDialogue?.querySelector("input[value='spoken']");
+  if (spoken) spoken.checked = true;
+  const frame = readyFrames[detailIndex];
+  showFrameDialogueError("");
+  syncFrameDialogueFields(frame);
+  if (frameDialogueText && !frameDialogueText.value.trim()) frameDialogueText.focus();
+});
+frameDialogueRemove?.addEventListener("click", () => {
+  const frame = readyFrames[detailIndex];
+  if (frame) saveFrameDialogue(frame, "hidden");
 });
 utteranceSave?.addEventListener("click", () => {
   const frame = readyFrames[detailIndex];
@@ -1274,6 +1452,12 @@ export function actionMessage(kind) {
     "image-too-large": "Файл слишком большой. Выберите фото меньшего размера.",
     "structure-rejected": "Не удалось применить эту правку, не меняя реплики. Опишите изменение кадра иначе.",
     "invalid-request": "Не удалось прочитать запрос. Проверьте файл или формулировку правки и попробуйте ещё раз.",
+    "empty-dialogue": "Введите текст реплики.",
+    "speaker-required": "Выберите панель, которая говорит.",
+    "speaker-not-found": "Прежняя панель больше не в кадре. Выберите, кто говорит.",
+    "not-dialogue-frame": "У текстовой карточки нет реплики.",
+    "invalid-mode": "Выберите состояние диалога.",
+    "invalid-text": "Текст реплики слишком длинный.",
     "visual-incomplete": "Сначала создайте изображения для всех панелей.",
     timeout: "Генерация заняла слишком много времени. Попробуйте ещё раз.",
     "reference-payload-too-large": "Подготовка запроса остановлена: изображения-ориентиры не помещаются в безопасный размер. Генерация не отправлялась.",
@@ -1456,7 +1640,11 @@ export function applyVisual(next) {
   syncResearchCommandTargets();
   syncExportRuntime();
   if (detail?.open && detailStructureId) {
-    const nextIndex = readyFrames.findIndex((frame) => (frame.structureFrameId || frame.id) === detailStructureId);
+    const nextIndex = readyFrames.findIndex((frame) => {
+      if ((frame.structureFrameId || frame.id) !== detailStructureId) return false;
+      const segment = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
+      return segment === detailSegmentIndex;
+    });
     if (nextIndex >= 0) openDetail(nextIndex);
     else detail.close();
   }
@@ -1766,7 +1954,7 @@ function bindDetailPan(frame) {
       const deltaY = clientY - drag.lastY;
       if (deltaX === 0 && deltaY === 0) return;
       const current = placementOf(panel);
-      const hasDialogue = typeof frame.dialogue === "string" && frame.dialogue.trim().length > 0;
+      const hasDialogue = FrameRenderer.dialogueRegionVisible(frame);
       const size = FrameRenderer.panelContentSize(frame.panels.length, hasDialogue);
       const nextPan = FrameRenderer.panByPointer({
         positionX: current.positionX,

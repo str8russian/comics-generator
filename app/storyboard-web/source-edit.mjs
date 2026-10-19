@@ -260,6 +260,14 @@ function panelList(frame, panels, excludedName, cast) {
   const subjects = list.map((panel) => subjectOf(panel, cast));
   const kept = list.filter((_, index) => subjects[index] !== excludedName);
   const removed = list.length - kept.length;
+  if (frame?.dialogueMode === "silent" || frame?.dialogueMode === "hidden") {
+    return {
+      removed,
+      panels: kept,
+      layout: kept.length >= 2 ? "split2" : "single",
+      speakerPanel: null,
+    };
+  }
   let speakerPanel = frame?.speakerPanel;
   if (Number.isInteger(speakerPanel)) {
     if (subjects[speakerPanel] === excludedName) speakerPanel = 0;
@@ -271,6 +279,12 @@ function panelList(frame, panels, excludedName, cast) {
     layout: kept.length >= 2 ? "split2" : "single",
     speakerPanel: kept.length === 1 ? 0 : speakerPanel,
   };
+}
+
+function frameSpeaks(frame) {
+  if (frame?.dialogueMode === "silent" || frame?.dialogueMode === "hidden") return false;
+  if (frame?.dialogueMode === "spoken") return true;
+  return typeof frame?.dialogue === "string" && Boolean(frame.dialogue.trim()) && frame.sourceRole !== "action";
 }
 
 function sourceRemark(frame) {
@@ -310,8 +324,7 @@ export function reconcileExclusion(frames, excludedName, cast) {
       next.push(frame);
       continue;
     }
-    const dialogue = typeof frame?.dialogue === "string" && frame.dialogue.trim() && frame.sourceRole !== "action";
-    if (dialogue || frame?.sourceRole === "utterance") {
+    if (frameSpeaks(frame) || frame?.sourceRole === "utterance") {
       if (edited.panels.length === 0) {
         blocked.push(frame.id);
         continue;
