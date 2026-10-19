@@ -16,6 +16,8 @@ export const CONTEXT_KEYS = [
   "panelId",
   "transitionMode",
   "transitionOverlapFrames",
+  "introTemplateId",
+  "introTemplateVersion",
 ];
 
 /** Expanded dock minimums for pointer resize (viewport-safe clamp uses live window size). */

@@ -34,6 +34,8 @@ function nullContext(overrides = {}) {
     panelId: null,
     transitionMode: null,
     transitionOverlapFrames: null,
+    introTemplateId: null,
+    introTemplateVersion: null,
     ...overrides,
   };
 }

@@ -69,6 +69,8 @@ const CONTEXT_KEYS = [
   "panelId",
   "transitionMode",
   "transitionOverlapFrames",
+  "introTemplateId",
+  "introTemplateVersion",
 ];
 
 const COMMAND_TARGET_KEYS = [
@@ -161,6 +163,16 @@ function normalizeContext(context) {
     return null;
   }
   if (!nullableIntegerMin(out.transitionOverlapFrames, 0)) return null;
+  if (!(out.introTemplateId === null
+    || (typeof out.introTemplateId === "string"
+      && out.introTemplateId.length <= 64
+      && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(out.introTemplateId)))) {
+    return null;
+  }
+  if (!(out.introTemplateVersion === null
+    || (Number.isInteger(out.introTemplateVersion) && out.introTemplateVersion >= 1 && out.introTemplateVersion <= 99))) {
+    return null;
+  }
   return out;
 }
 

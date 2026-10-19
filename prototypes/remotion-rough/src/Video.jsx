@@ -1,5 +1,7 @@
 import React from 'react';
 import {AbsoluteFill, Img, Sequence, staticFile, useCurrentFrame} from 'remotion';
+import {introRendererKey} from '../../../app/storyboard-web/intro-templates.mjs';
+import {StoryShardsIntro} from './StoryShardsIntro.jsx';
 
 const fontSizeFor = (text, split) => {
   const length = Array.from(text).length;
@@ -165,8 +167,19 @@ const FrameView = ({frame, spec}) => {
   );
 };
 
+const IntroView = ({intro}) => {
+  const key = introRendererKey(intro?.templateId, intro?.version);
+  if (key === 'story-shards-v1') return <StoryShardsIntro intro={intro} />;
+  throw new Error('unsupported intro template');
+};
+
 export const TelegramUnblockVideo = ({spec}) => (
   <AbsoluteFill style={{backgroundColor: spec.theme.backgroundColor}}>
+    {spec.intro ? (
+      <Sequence from={0} durationInFrames={spec.intro.durationFrames} name="intro">
+        <IntroView intro={spec.intro} />
+      </Sequence>
+    ) : null}
     {spec.frames.map((frame) => (
       <Sequence key={frame.id} from={frame.startFrame} durationInFrames={frame.durationFrames} name={frame.id}>
         <FrameView frame={frame} spec={spec} />

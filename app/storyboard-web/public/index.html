@@ -105,11 +105,22 @@
         </div>
       </div>
       <p id="render-status" class="helper">Ожидание</p>
-      <label for="render-transition">Переходы</label>
-      <select id="render-transition">
-        <option value="hard-cut" selected>Жёсткая склейка</option>
-        <option value="cross-dissolve">Cross dissolve</option>
-      </select>
+      <div class="render-options">
+        <div>
+          <label for="render-transition">Переходы</label>
+          <select id="render-transition">
+            <option value="hard-cut" selected>Жёсткая склейка</option>
+            <option value="cross-dissolve">Cross dissolve</option>
+          </select>
+        </div>
+        <div>
+          <label for="render-intro">Интро</label>
+          <select id="render-intro">
+            <option value="" selected>Без интро</option>
+          </select>
+        </div>
+      </div>
+      <p id="intro-availability" class="helper" hidden></p>
       <p id="render-runtime" class="helper"></p>
       <button id="start-render" type="button">Собрать видео</button>
       <p id="render-error" class="notice" hidden></p>

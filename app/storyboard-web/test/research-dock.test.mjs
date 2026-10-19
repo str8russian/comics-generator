@@ -19,6 +19,8 @@ const CONTEXT_KEYS = [
   "panelId",
   "transitionMode",
   "transitionOverlapFrames",
+  "introTemplateId",
+  "introTemplateVersion",
 ];
 
 function createElement(tag = "div") {

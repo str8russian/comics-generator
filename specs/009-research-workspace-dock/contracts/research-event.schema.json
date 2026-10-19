@@ -125,7 +125,9 @@
         "anchorVersionId",
         "panelId",
         "transitionMode",
-        "transitionOverlapFrames"
+        "transitionOverlapFrames",
+        "introTemplateId",
+        "introTemplateVersion"
       ],
       "properties": {
         "workflowPhase": {
@@ -157,7 +159,9 @@
           "type": ["string", "null"],
           "enum": ["hard-cut", "cross-dissolve", null]
         },
-        "transitionOverlapFrames": { "type": ["integer", "null"], "minimum": 0 }
+        "transitionOverlapFrames": { "type": ["integer", "null"], "minimum": 0 },
+        "introTemplateId": { "type": ["string", "null"], "maxLength": 64 },
+        "introTemplateVersion": { "type": ["integer", "null"], "minimum": 1, "maximum": 99 }
       }
     },
     "outcome": {

@@ -247,6 +247,8 @@ test("populated pre-013 state migrates once and a second project stays isolated"
         panelId: null,
         transitionMode: null,
         transitionOverlapFrames: null,
+        introTemplateId: null,
+        introTemplateVersion: null,
       },
     });
     assert.equal(noted.ok, true);

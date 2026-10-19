@@ -1,3 +1,4 @@
+import { acceptedIntroSegment } from "./intro-templates.mjs";
 import { compileTransitionTimeline } from "./public/export-timing.mjs";
 import {
   CHARACTERS_PER_SECOND,
@@ -9,7 +10,7 @@ import {
   typedDialogue,
 } from "./timing.mjs";
 
-export function compileVideoSpec(visual, { assetOrigin = "", transition = "hard-cut" } = {}) {
+export function compileVideoSpec(visual, { assetOrigin = "", transition = "hard-cut", intro = null } = {}) {
   const frames = Array.isArray(visual?.frames) ? visual.frames : null;
   if (!visual || visual.status !== "ready" || !frames?.length) return { ok: false, kind: "no-storyboard" };
   const compiled = [];
@@ -60,42 +61,54 @@ export function compileVideoSpec(visual, { assetOrigin = "", transition = "hard-
   }
   const timeline = compileTransitionTimeline(compiled, transition);
   if (!timeline.ok) return timeline;
+  const introSegment = intro == null ? null : acceptedIntroSegment(intro);
+  if (intro != null && !introSegment) return { ok: false, kind: "unknown-intro" };
+  const offset = introSegment ? introSegment.durationFrames : 0;
   const timed = compiled.map((frame, index) => ({
     ...frame,
-    startFrame: timeline.frames[index].startFrame,
+    startFrame: timeline.frames[index].startFrame + offset,
     transitionIn: timeline.frames[index].transitionIn,
     transitionOut: timeline.frames[index].transitionOut,
   }));
-  return {
-    ok: true,
-    spec: {
-      schemaVersion: "storyboard-video-spec-1",
-      project: {
-        width: 1920,
-        height: 1080,
-        fps: FPS,
-        totalDurationFrames: timeline.totalDurationFrames,
-        nominalDurationFrames: timeline.nominalDurationFrames,
-        exportTransition: {
-          mode: timeline.mode,
-          overlapFrames: timeline.overlapFrames,
-        },
+  const spec = {
+    schemaVersion: "storyboard-video-spec-1",
+    project: {
+      width: 1920,
+      height: 1080,
+      fps: FPS,
+      totalDurationFrames: timeline.totalDurationFrames + offset,
+      nominalDurationFrames: timeline.nominalDurationFrames + offset,
+      exportTransition: {
+        mode: timeline.mode,
+        overlapFrames: timeline.overlapFrames,
       },
-      timing: {
-        mode: "typed-dialogue",
-        charactersPerSecond: CHARACTERS_PER_SECOND,
-        preRollFrames: PRE_ROLL_FRAMES,
-        ordinaryHoldFrames: ORDINARY_HOLD_FRAMES,
-      },
-      theme: {
-        backgroundColor: "#02090b",
-        panelGutterPx: 48,
-        dialogueBarHeightPx: 300,
-        dialogueBarColor: "#030607",
-        textColor: "#f6f4ed",
-        fontFamily: "Arial, Helvetica, sans-serif",
-      },
-      frames: timed,
     },
+    timing: {
+      mode: "typed-dialogue",
+      charactersPerSecond: CHARACTERS_PER_SECOND,
+      preRollFrames: PRE_ROLL_FRAMES,
+      ordinaryHoldFrames: ORDINARY_HOLD_FRAMES,
+    },
+    theme: {
+      backgroundColor: "#02090b",
+      panelGutterPx: 48,
+      dialogueBarHeightPx: 300,
+      dialogueBarColor: "#030607",
+      textColor: "#f6f4ed",
+      fontFamily: "Arial, Helvetica, sans-serif",
+    },
+    frames: timed,
   };
+  if (introSegment) {
+    spec.intro = {
+      templateId: introSegment.templateId,
+      version: introSegment.version,
+      durationFrames: introSegment.durationFrames,
+      text: { ...introSegment.text },
+      characters: introSegment.characters.map((character) => ({ ...character })),
+      shards: introSegment.shards.map((shard) => ({ ...shard })),
+      sequence: { ...introSegment.sequence },
+    };
+  }
+  return { ok: true, spec };
 }

@@ -56,6 +56,8 @@ const actionStatus = document.querySelector("#action-status");
 const detailFrameNumber = document.querySelector("#detail-frame-number");
 const detailGenerationStatus = document.querySelector("#detail-generation-status");
 const renderTransition = document.querySelector("#render-transition");
+const renderIntro = document.querySelector("#render-intro");
+const introAvailability = document.querySelector("#intro-availability");
 const renderRuntime = document.querySelector("#render-runtime");
 const charactersWorkspace = document.querySelector("#characters-workspace");
 const characterCards = document.querySelector("#character-cards");
@@ -1490,6 +1492,13 @@ export function actionMessage(kind) {
     "render-busy": "Сборка видео уже идёт.",
     "no-storyboard": "Сначала откройте готовую раскадровку.",
     "render-failed": "Не удалось собрать видео.",
+    "unknown-intro": "Этот шаблон интро недоступен.",
+    "invalid-intro-version": "Версия шаблона интро не поддерживается.",
+    "intro-cast-count": "Этот шаблон интро недоступен для текущего состава.",
+    "intro-no-cast": "Не удалось определить персонажей текущей раскадровки для интро.",
+    "intro-missing-title": "У проекта нет названия для интро.",
+    "intro-missing-anchor": "Для интро нужен утверждённый базовый образ каждого участвующего персонажа.",
+    "intro-asset": "Изображение для интро не принадлежит этому проекту.",
   };
   return messages[kind] || "Не удалось выполнить действие. Попробуйте ещё раз.";
 }
@@ -1639,6 +1648,7 @@ export function applyVisual(next) {
   syncGlobalUndo(next);
   syncResearchCommandTargets();
   syncExportRuntime();
+  refreshIntroTemplates();
   if (detail?.open && detailStructureId) {
     const nextIndex = readyFrames.findIndex((frame) => {
       if ((frame.structureFrameId || frame.id) !== detailStructureId) return false;
@@ -2842,6 +2852,69 @@ function selectedTransition() {
   return renderTransition?.value === "cross-dissolve" ? "cross-dissolve" : "hard-cut";
 }
 
+let introTemplates = [];
+
+function selectedIntroTemplate() {
+  const id = renderIntro?.value || "";
+  if (!id) return null;
+  const template = introTemplates.find((entry) => entry.id === id);
+  if (!template || template.available === false) return null;
+  return template;
+}
+
+function renderFailureText(error) {
+  const message = typeof error?.payload?.message === "string"
+    ? error.payload.message.replace(/\s+/g, " ").trim()
+    : "";
+  if (message && message.length <= 240 && !/postgres:\/\/|password|secret|api[_-]?key|authorization|bearer /i.test(message)) {
+    return message;
+  }
+  return actionMessage(error?.kind);
+}
+
+function renderIntroOptions(templates) {
+  if (!renderIntro?.replaceChildren) return;
+  const current = renderIntro.value || "";
+  renderIntro.replaceChildren();
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "Без интро";
+  renderIntro.append(none);
+  for (const template of templates) {
+    const option = document.createElement("option");
+    option.value = template.id;
+    option.textContent = template.label;
+    option.disabled = template.available === false;
+    renderIntro.append(option);
+  }
+  const still = templates.some((template) => template.id === current && template.available !== false);
+  renderIntro.value = still ? current : "";
+}
+
+function syncIntroAvailability() {
+  if (!introAvailability) return;
+  const note = introTemplates.find((template) => template.available === false && template.message);
+  introAvailability.hidden = !note;
+  introAvailability.textContent = note?.message || "";
+}
+
+function refreshIntroTemplates() {
+  if (!renderIntro) return;
+  fetchJson("/api/visual/intro-templates")
+    .then((payload) => {
+      introTemplates = Array.isArray(payload?.templates) ? payload.templates : [];
+      renderIntroOptions(introTemplates);
+      syncIntroAvailability();
+      syncExportRuntime();
+    })
+    .catch(() => {
+      introTemplates = [];
+      renderIntroOptions([]);
+      syncIntroAvailability();
+      syncExportRuntime();
+    });
+}
+
 function syncExportRuntime() {
   if (!renderRuntime) return;
   const frames = (visual?.frames || []).map((frame) => ({
@@ -2853,29 +2926,42 @@ function syncExportRuntime() {
     return;
   }
   const timeline = compileTransitionTimeline(frames, selectedTransition());
+  const introFrames = selectedIntroTemplate()?.durationFrames || 0;
   renderRuntime.textContent = timeline.ok
     ? formatExportRuntime({
-      totalDurationFrames: timeline.totalDurationFrames,
-      nominalDurationFrames: timeline.nominalDurationFrames,
+      totalDurationFrames: timeline.totalDurationFrames + introFrames,
+      nominalDurationFrames: timeline.nominalDurationFrames + introFrames,
       mode: timeline.mode,
       overlapFrames: timeline.overlapFrames,
     })
     : "";
 }
 
-renderTransition?.addEventListener("change", () => {
+renderTransition?.addEventListener?.("change", () => {
+  syncExportRuntime();
+});
+
+renderIntro?.addEventListener?.("change", () => {
+  syncIntroAvailability();
   syncExportRuntime();
 });
 
 startRender?.addEventListener("click", async () => {
   if (renderError) renderError.hidden = true;
+  if (busy) return;
+  busy = true;
+  document.body.dataset.busy = "true";
+  showActionNotice("Запускаю сборку видео…", "running");
   const versionBefore = visual?.storyboardVersionId || null;
   try {
-    const started = await runBusy("Запускаю сборку видео…", () => fetchJson("/api/visual/render", {
+    const started = await fetchJson("/api/visual/render", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ transition: selectedTransition() }),
-    }));
+      body: JSON.stringify({
+        transition: selectedTransition(),
+        introTemplateId: selectedIntroTemplate()?.id || null,
+      }),
+    });
     if (visual?.storyboardVersionId && versionBefore && visual.storyboardVersionId !== versionBefore) {
       showActionNotice("Сборка не должна менять раскадровку.", "error");
     }
@@ -2891,8 +2977,17 @@ startRender?.addEventListener("click", async () => {
       }
       renderTimer = globalThis.setTimeout(refreshRenderStatus, 1000);
     }
-  } catch {
+  } catch (error) {
+    const message = renderFailureText(error);
+    showActionNotice(message, "error");
     if (renderStatus) renderStatus.textContent = renderLabels.failure;
+    if (renderError) {
+      renderError.hidden = false;
+      renderError.textContent = message;
+    }
+  } finally {
+    busy = false;
+    delete document.body.dataset.busy;
   }
 });
 

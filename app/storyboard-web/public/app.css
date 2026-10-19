@@ -1017,6 +1017,26 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   font-size: 13px;
 }
 
+.render-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+}
+
+.render-options label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+.render-options select {
+  min-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid #9aa3a8;
+  background: #fff;
+  font: 15px/1.2 Arial, Helvetica, sans-serif;
+}
+
 .render-preview {
   display: block;
   width: min(100%, 640px);

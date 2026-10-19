@@ -26,6 +26,12 @@ import {
 } from "./image-reference-strategy.mjs";
 import { editStoryboard } from "./storyboard-edit.mjs";
 import { compileVideoSpec } from "./video-spec.mjs";
+import {
+  collectIntroAssetIds,
+  listIntroTemplates,
+  normalizeIntroSelection,
+  resolveIntro,
+} from "./intro-templates.mjs";
 import { createEmptyContext, createEmptyCommandTarget } from "./public/research-dock.mjs";
 import { normalizeExportTransition } from "./public/export-timing.mjs";
 import {
@@ -1006,6 +1012,15 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
     sendJson(res, 400, { status: "failed", kind: "invalid-transition" });
     return;
   }
+  const selection = normalizeIntroSelection(payload);
+  if (!selection.ok) {
+    sendJson(res, selection.httpStatus || 400, {
+      status: "failed",
+      kind: selection.kind,
+      message: selection.message,
+    });
+    return;
+  }
   if (!runtime.visualStore) {
     sendJson(res, 503, { status: "failed", kind: "database" });
     return;
@@ -1021,9 +1036,44 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
     return;
   }
   const projectId = requireProjectId();
+  const assetOrigin = `http://127.0.0.1:${port}/api/projects/${projectId}`;
+  let intro = null;
+  if (selection.templateId) {
+    const project = runtime.projectStore?.loadProject
+      ? await runtime.projectStore.loadProject()
+      : null;
+    const owned = new Set();
+    try {
+      for (const assetId of collectIntroAssetIds(visual)) {
+        const asset = await runtime.visualStore.readAsset?.(assetId);
+        if (asset) owned.add(assetId);
+      }
+    } catch {
+      sendJson(res, 503, { status: "failed", kind: "database" });
+      return;
+    }
+    const resolved = resolveIntro({
+      templateId: selection.templateId,
+      version: selection.version,
+      visual,
+      title: typeof project?.title === "string" ? project.title : "",
+      assetOrigin,
+      ownsAsset: (assetId) => owned.has(assetId),
+    });
+    if (!resolved.ok) {
+      sendJson(res, resolved.httpStatus || 400, {
+        status: "failed",
+        kind: resolved.kind,
+        message: resolved.message,
+      });
+      return;
+    }
+    intro = resolved.intro;
+  }
   const compiled = compileVideoSpec(visual, {
-    assetOrigin: `http://127.0.0.1:${port}/api/projects/${projectId}`,
+    assetOrigin,
     transition,
+    intro,
   });
   if (!compiled.ok) {
     sendJson(res, 400, { status: "failed", kind: safeKind(compiled.kind) || "invalid-request" });
@@ -1040,6 +1090,8 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
     storyboardVersionId: visual.storyboardVersionId ?? null,
     transitionMode: transition,
     transitionOverlapFrames: overlapFrames,
+    introTemplateId: selection.templateId,
+    introTemplateVersion: selection.version,
   });
   const started = controller.start(compiled.spec, {
     onStart: async () => {
@@ -1085,7 +1137,47 @@ async function handleRender(req, res, { runtime, logger, nextRequest }) {
     overlapFrames,
     totalDurationFrames: compiled.spec.project.totalDurationFrames,
     nominalDurationFrames: compiled.spec.project.nominalDurationFrames,
+    introTemplateId: selection.templateId,
+    introTemplateVersion: selection.version,
   });
+}
+
+async function handleIntroTemplates(req, res, { runtime }) {
+  if ((req.method || "GET") !== "GET") {
+    sendEmpty(res, 405, { Allow: "GET" });
+    req.resume();
+    return;
+  }
+  req.resume();
+  if (!runtime.visualStore?.load) {
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  const visual = await runtime.visualStore.load();
+  if (!visual || visual.ok === false) {
+    sendJson(res, visual?.httpStatus || 503, { status: "failed", kind: visual?.kind || "database" });
+    return;
+  }
+  let title = "";
+  if (runtime.projectStore?.loadProject) {
+    const project = await runtime.projectStore.loadProject();
+    title = typeof project?.title === "string" ? project.title : "";
+  }
+  const owned = new Set();
+  try {
+    for (const assetId of collectIntroAssetIds(visual)) {
+      const asset = await runtime.visualStore.readAsset?.(assetId);
+      if (asset) owned.add(assetId);
+    }
+  } catch {
+    sendJson(res, 503, { status: "failed", kind: "database" });
+    return;
+  }
+  sendJson(res, 200, listIntroTemplates({
+    visual,
+    title,
+    ownsAsset: (assetId) => owned.has(assetId),
+  }));
 }
 
 async function recordRenderEvent(runtime, input) {
@@ -2317,6 +2409,10 @@ async function routeProduct(req, res, {
   }
   if (pathname === "/api/visual/operations") {
     await handleOperations(req, res, { runtime, logger, nextRequest });
+    return;
+  }
+  if (pathname === "/api/visual/intro-templates") {
+    await handleIntroTemplates(req, res, { runtime });
     return;
   }
   if (pathname === "/api/visual/render") {

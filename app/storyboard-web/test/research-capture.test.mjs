@@ -1938,6 +1938,75 @@ test("cross dissolve is sent with render and does not post a storyboard operatio
   assert.equal(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations"), false);
 });
 
+test("the intro selector is filled from the catalog response and only changes the render request", async () => {
+  await ensurePage();
+  const versionBefore = "version-locked";
+  globalThis.__visualScript = [{
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/intro-templates",
+    method: "GET",
+    body: {
+      templates: [{
+        id: "story-shards-v1",
+        version: 1,
+        label: "Шаблон из каталога",
+        durationFrames: 180,
+        available: true,
+        reason: null,
+        message: null,
+      }],
+    },
+  }];
+  page.applyVisual(readyVisual({
+    storyboardVersionId: versionBefore,
+    frames: [{
+      ...readyVisual().frames[0],
+      durationFrames: 36,
+    }, {
+      id: "display-2",
+      structureFrameId: "structure-2",
+      durationFrames: 36,
+      frameKind: "image",
+      dialogue: "",
+      layout: "single",
+      panels: [{ id: "panel-b", description: "" }],
+    }],
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const transition = document.querySelector("#render-transition");
+  transition.value = "hard-cut";
+  transition.dispatchEvent({ type: "change" });
+  const select = document.querySelector("#render-intro");
+  assert.equal(select.value, "");
+  const labels = select.querySelectorAll("option").map((option) => option.textContent);
+  assert.deepEqual(labels, ["Без интро", "Шаблон из каталога"]);
+  assert.match(document.querySelector("#render-runtime").textContent, /Итого 2\.4 с/);
+  select.value = "story-shards-v1";
+  select.dispatchEvent({ type: "change" });
+  assert.match(document.querySelector("#render-runtime").textContent, /Итого 8\.4 с/);
+  assert.equal(document.querySelector("#start-render").disabled, false);
+  productPosts.length = 0;
+  globalThis.__visualScript = [{
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/render",
+    status: 400,
+    body: {
+      status: "failed",
+      kind: "intro-cast-count",
+      message: "Осколки истории доступны только для двух или трёх персонажей текущей раскадровки.",
+    },
+  }];
+  document.querySelector("#start-render").dispatchEvent({ type: "click" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const renderPost = productPosts.find((entry) => entry.method === "POST" && entry.path.endsWith("/visual/render"));
+  assert.equal(renderPost.body.introTemplateId, "story-shards-v1");
+  assert.equal(Object.hasOwn(renderPost.body, "title"), false);
+  assert.equal(Object.hasOwn(renderPost.body, "names"), false);
+  assert.equal(Object.hasOwn(renderPost.body, "assetIds"), false);
+  assert.equal(productPosts.some((entry) => entry.path.endsWith("/visual/operations")), false);
+  const error = document.querySelector("#render-error");
+  assert.equal(error.hidden, false);
+  assert.match(error.textContent, /двух или трёх/);
+});
+
 function panelRegenerateButton() {
   const section = document.querySelector("#detail-panel-controls").children[0];
   return [...section.querySelectorAll("button")].find((button) => /Переделать|Создать/i.test(button.textContent));
