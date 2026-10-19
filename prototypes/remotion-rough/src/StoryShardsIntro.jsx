@@ -1,5 +1,17 @@
 import React from 'react';
-import {AbsoluteFill, Img, useCurrentFrame, useVideoConfig} from 'remotion';
+import {AbsoluteFill, Img, cancelRender, continueRender, delayRender, staticFile, useCurrentFrame, useVideoConfig} from 'remotion';
+import {
+  DISPLAY_FONT_FAMILY,
+  DISPLAY_FONT_FILE,
+  DISPLAY_FONT_WEIGHT_RANGE,
+  EYEBROW_FONT_WEIGHT,
+  NAME_FONT_WEIGHT,
+  TITLE_FONT_WEIGHT,
+  nameSize,
+  titleLines,
+  titleSize,
+} from './story-shards-display.mjs';
+import {shardFrame} from './story-shards-motion.mjs';
 
 const SX = 1920 / 1280;
 const SY = 1080 / 720;
@@ -8,51 +20,6 @@ const PAPER = '#f2ede0';
 const GOLD = '#f0d699';
 const EYEBROW = '#949494';
 const RULE = '#c2c2c2';
-
-const SHARD_GEOMETRY = {
-  'left-top': {
-    points: [[30, 78], [510, 24], [438, 282], [4, 338]],
-    entry: [-360, -80],
-    zoom: 1.08,
-    pan: [-12, 6],
-    dots: true,
-  },
-  'left-bottom': {
-    points: [[85, 382], [470, 318], [550, 704], [0, 652]],
-    entry: [-420, 120],
-    zoom: 1.04,
-    pan: [18, -4],
-    dots: true,
-  },
-  'right-top': {
-    points: [[780, 18], [1220, 70], [1278, 340], [846, 280]],
-    entry: [390, -90],
-    zoom: 1.12,
-    pan: [22, 8],
-    dots: true,
-  },
-  'right-bottom': {
-    points: [[748, 365], [1276, 390], [1188, 706], [690, 652]],
-    entry: [430, 100],
-    zoom: 1.05,
-    pan: [-12, -6],
-    dots: true,
-  },
-  'center-top': {
-    points: [[486, 0], [642, 0], [552, 250], [430, 282]],
-    entry: [-120, -260],
-    zoom: 1.28,
-    pan: [4, 8],
-    dots: false,
-  },
-  'center-bottom': {
-    points: [[544, 468], [710, 430], [770, 720], [598, 720]],
-    entry: [30, 260],
-    zoom: 1.24,
-    pan: [-6, -4],
-    dots: false,
-  },
-};
 
 const NAME_PLACEMENTS = {
   2: [
@@ -68,6 +35,34 @@ const NAME_PLACEMENTS = {
 
 const TITLE_POLYGON = [[406, 230], [866, 218], [918, 506], [356, 520]];
 const TITLE_CENTER = [637, 368];
+
+function installDisplayFont() {
+  if (typeof document === 'undefined' || typeof FontFace === 'undefined') return;
+  const handle = delayRender('story-shards display font');
+  const face = new FontFace(
+    DISPLAY_FONT_FAMILY,
+    `url(${staticFile(DISPLAY_FONT_FILE)}) format('truetype')`,
+    {weight: DISPLAY_FONT_WEIGHT_RANGE, style: 'normal', display: 'block'},
+  );
+  face.load()
+    .then((loaded) => {
+      document.fonts.add(loaded);
+      return Promise.all([
+        document.fonts.load(`${EYEBROW_FONT_WEIGHT} 32px "${DISPLAY_FONT_FAMILY}"`),
+        document.fonts.load(`${NAME_FONT_WEIGHT} 64px "${DISPLAY_FONT_FAMILY}"`),
+      ]);
+    })
+    .then((loaded) => {
+      if (loaded.some((faces) => faces.length === 0)) {
+        throw new Error('story-shards display font did not become ready');
+      }
+      return document.fonts.ready;
+    })
+    .then(() => continueRender(handle))
+    .catch((error) => cancelRender(error));
+}
+
+installDisplayFont();
 
 function clamp(value, lo = 0, hi = 1) {
   return Math.min(hi, Math.max(lo, value));
@@ -92,80 +87,32 @@ function scalePoint([x, y]) {
   return [x * SX, y * SY];
 }
 
-function bounds(points) {
-  const xs = points.map((point) => point[0]);
-  const ys = points.map((point) => point[1]);
-  const left = Math.min(...xs);
-  const top = Math.min(...ys);
-  return {
-    left,
-    top,
-    width: Math.max(1, Math.max(...xs) - left),
-    height: Math.max(1, Math.max(...ys) - top),
-  };
-}
-
-function clipPath(points, box) {
-  return `polygon(${points.map(([x, y]) => {
-    const px = ((x - box.left) / box.width) * 100;
-    const py = ((y - box.top) / box.height) * 100;
-    return `${px}% ${py}%`;
-  }).join(', ')})`;
-}
-
 function imageSource(asset) {
   if (!asset) return null;
   if (asset.startsWith('http://') || asset.startsWith('https://') || asset.startsWith('data:')) return asset;
   return asset;
 }
 
-function titleLines(title) {
-  const words = String(title || '').trim().split(/\s+/).filter(Boolean);
-  if (words.length <= 1) return words;
-  const mid = Math.ceil(words.length / 2);
-  return [words.slice(0, mid).join(' '), words.slice(mid).join(' ')];
-}
-
-function titleSize(line, index, count) {
-  const length = Array.from(line).length;
-  const base = count === 1 ? 96 : (index === count - 1 ? 112 : 78);
-  if (length > 18) return Math.round(base * 0.55);
-  if (length > 12) return Math.round(base * 0.72);
-  return base;
-}
-
-function nameSize(name) {
-  const length = Array.from(name).length;
-  if (length > 18) return 36;
-  if (length > 12) return 44;
-  return 54;
-}
-
-const Shard = ({shard, index, time, lock}) => {
-  const geometry = SHARD_GEOMETRY[shard.slot];
-  if (!geometry) throw new Error('unsupported intro shard');
-  const enter = easeOut(progress(time, shard.enterStartFrame / 30, shard.enterDurationFrames / 30));
-  if (enter <= 0) return null;
-  const drift = Math.sin((time + index * 0.31) * 0.58) * 4;
-  const dx = (geometry.entry[0] * (1 - enter) + drift * (1 - lock * 0.72)) * SX;
-  const dy = (geometry.entry[1] * (1 - enter) - drift * 0.35) * SY;
-  const slow = progress(time, shard.enterStartFrame / 30, 4.9);
-  const points = geometry.points.map(([x, y]) => [x * SX + dx, y * SY + dy]);
-  const box = bounds(points);
-  const zoom = geometry.zoom - 0.035 * slow;
-  const panX = (geometry.pan[0] + slow * (index % 2 === 0 ? 12 : -12)) * SX;
-  const panY = (geometry.pan[1] - slow * 7) * SY;
+const Shard = ({shard, frame, fps}) => {
+  const state = shardFrame({
+    slot: shard.slot,
+    frame,
+    fps,
+    enterStartFrame: shard.enterStartFrame,
+    enterDurationFrames: shard.enterDurationFrames,
+  });
+  if (state.enter <= 0) return null;
   const src = imageSource(shard.asset);
   return (
     <div
       style={{
         position: 'absolute',
-        left: box.left,
-        top: box.top,
-        width: box.width,
-        height: box.height,
+        left: state.box.left,
+        top: state.box.top,
+        width: state.box.width,
+        height: state.box.height,
         overflow: 'hidden',
-        clipPath: clipPath(points, box),
+        clipPath: state.clipPath,
         backgroundColor: '#061016',
       }}
     >
@@ -173,14 +120,16 @@ const Shard = ({shard, index, time, lock}) => {
         <Img
           src={src}
           style={{
-            width: '100%',
-            height: '100%',
+            position: 'absolute',
+            left: state.image.left,
+            top: state.image.top,
+            width: state.image.width,
+            height: state.image.height,
             objectFit: 'cover',
-            transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
           }}
         />
       ) : null}
-      {geometry.dots ? (
+      {state.dots ? (
         <div
           style={{
             position: 'absolute',
@@ -190,9 +139,9 @@ const Shard = ({shard, index, time, lock}) => {
           }}
         />
       ) : null}
-      <svg width={box.width} height={box.height} style={{position: 'absolute', inset: 0}}>
+      <svg width={state.box.width} height={state.box.height} style={{position: 'absolute', inset: 0}}>
         <polygon
-          points={points.map(([x, y]) => `${x - box.left},${y - box.top}`).join(' ')}
+          points={state.points.map(([x, y]) => `${x - state.box.left},${y - state.box.top}`).join(' ')}
           fill="none"
           stroke={INK}
           strokeWidth={16}
@@ -209,7 +158,6 @@ export const StoryShardsIntro = ({intro}) => {
   const sequence = intro?.sequence || {};
   const characters = Array.isArray(intro?.characters) ? intro.characters : [];
   const placements = NAME_PLACEMENTS[characters.length] || NAME_PLACEMENTS[2];
-  const lock = easeInOut(progress(time, 2.46, 0.66));
   const titleIn = easeOut(progress(
     time,
     (sequence.titleStartFrame || 0) / fps,
@@ -235,9 +183,9 @@ export const StoryShardsIntro = ({intro}) => {
   ].map(scalePoint);
 
   return (
-    <AbsoluteFill style={{backgroundColor: INK, color: PAPER, fontFamily: 'Arial, Helvetica, sans-serif', overflow: 'hidden'}}>
-      {(intro?.shards || []).map((shard, index) => (
-        <Shard key={shard.slot || index} shard={shard} index={index} time={time} lock={lock} />
+    <AbsoluteFill style={{backgroundColor: INK, color: PAPER, fontFamily: `"${DISPLAY_FONT_FAMILY}"`, overflow: 'hidden'}}>
+      {(intro?.shards || []).map((shard) => (
+        <Shard key={shard.slot} shard={shard} frame={frame} fps={fps} />
       ))}
       {characters.map((character, index) => {
         const place = placements[index];
@@ -257,8 +205,9 @@ export const StoryShardsIntro = ({intro}) => {
           <div key={character.name} style={{position: 'absolute', left: place.x * SX, top: place.y * SY, width: place.width * SX, opacity: alpha}}>
             <div style={{
               fontSize: nameSize(character.name),
-              fontWeight: 700,
-              letterSpacing: 1.6,
+              fontWeight: NAME_FONT_WEIGHT,
+              fontVariationSettings: `"wght" ${NAME_FONT_WEIGHT}`,
+              letterSpacing: 1.8,
               lineHeight: 1,
               textAlign: place.align,
               color: PAPER,
@@ -291,14 +240,21 @@ export const StoryShardsIntro = ({intro}) => {
           textAlign: 'center',
           opacity: titleIn,
         }}>
-          <div style={{fontSize: 30, fontWeight: 700, letterSpacing: 8, color: EYEBROW}}>
+          <div style={{
+            fontSize: 30,
+            fontWeight: EYEBROW_FONT_WEIGHT,
+            fontVariationSettings: `"wght" ${EYEBROW_FONT_WEIGHT}`,
+            letterSpacing: 7.5,
+            color: EYEBROW,
+          }}>
             {intro?.text?.eyebrow}
           </div>
           {lines.map((line, index) => (
             <div key={`${index}-${line}`} style={{
               fontSize: titleSize(line, index, lines.length),
-              fontWeight: 700,
-              letterSpacing: index === lines.length - 1 ? 1.5 : 4,
+              fontWeight: TITLE_FONT_WEIGHT,
+              fontVariationSettings: `"wght" ${TITLE_FONT_WEIGHT}`,
+              letterSpacing: index === lines.length - 1 ? 1.5 : 4.8,
               lineHeight: 0.95,
               color: GOLD,
             }}>

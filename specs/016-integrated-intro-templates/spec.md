@@ -67,6 +67,16 @@ The accepted reference is the revised story-shards opener: six polygonal images 
 
 The reference was drawn at 1280×720. The product frame is 1920×1080. The motion is translated, not stretched from the reference file, and the reference renderer is not part of the product.
 
+The owner rejected a production render of this opener. The accepted picture is:
+
+Display type for the names, the eyebrow, and the title is one bundled condensed bold face with Cyrillic and Latin coverage. The renderer loads that face from the repository before capturing any intro frame. A generic Arial or Helvetica fallback is not the display face. Character names keep the casing stored for those characters. The title lock-up is drawn in uppercase, including Cyrillic. That casing is not written back into the project title or the Video Spec.
+
+The hierarchy stays compact and heavy. Names are large. **ВИДЕОКОМИКС** is small, widely tracked, and muted gray. The project title is warm light gold, on two lines when it has more than one word, and the lower line is the larger one. Underlines and rules stay neutral white or gray.
+
+After a shard finishes entering, its polygon stays still. The image inside that settled shard pans continuously in one direction. The pan is sampled smoothly from frame to frame. It does not step, stick, snap, pause and jump, or reverse every few frames, and it does not uncover the shard background. Portrait and landscape sources stay covered by a fixed overscan. A tiny animated zoom is not part of the pan.
+
+Offline tests can guard the font, the title casing, and the pan calculation. They still do not accept the feature. The owner compares the next rendered video with the manual reference.
+
 ## Research trace
 
 A render records the selected template id and version on both the start and the terminal research event. **Без интро** records an empty choice. The trace does not record source dialogue, prompts, image bytes, credentials, or secret-bearing URLs.
@@ -77,14 +87,15 @@ Offline tests do not accept this feature. The owner starts the render and watche
 
 1. **Без интро** is selected by default, shows the previous runtime, and renders the previous way.
 2. **Осколки истории** can be selected from the catalog and the runtime grows by 201 frames.
-3. The opener shows this project’s title and canonical names.
+3. The opener shows this project’s canonical names in their stored casing, and draws the project title in uppercase without changing the stored title.
 4. Six shards use this project’s images, including distinct images when the project has them.
 5. The shards finish entering before the names become prominent. The title follows the names.
-6. The names are large, with neutral white or gray underlines.
-7. **ВИДЕОКОМИКС** is muted gray and the title is warm light gold.
+6. The names are large and condensed, with neutral white or gray underlines.
+7. **ВИДЕОКОМИКС** is small, widely tracked, and muted gray. The title is warm light gold, condensed, and its lower line is larger.
 8. Characters are not color-coded, and there is no diagonal opening flash.
 9. The opener closes to black and the first storyboard frame begins cleanly. Body cross dissolves still behave when that transition is selected.
 10. Preview and download are the same single MP4.
+11. After each shard settles, the fragment stays still and the picture inside pans smoothly, without sticking, stepping, or jitter, and without showing the shard background at an edge.
 
 Compare shard assembly, the names, the title lock-up, the close to black, and the first storyboard frame with the manual reference. Code inspection is not that comparison.
 
