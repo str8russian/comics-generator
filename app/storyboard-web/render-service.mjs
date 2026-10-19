@@ -75,6 +75,11 @@ export function createRenderController({
       if (current.status !== "success" || !isSafeResultPath(directory, current.file, projectId)) return null;
       return path.resolve(current.file);
     },
+    async dropCurrent(projectId) {
+      if (!PROJECT_ID_PATTERN.test(String(projectId ?? ""))) return;
+      currents.set(projectId, idle());
+      await rm(path.join(directory, projectId, "current.mp4"), { force: true }).catch(() => {});
+    },
     start(spec, hooks = {}, projectId) {
       if (!PROJECT_ID_PATTERN.test(String(projectId ?? ""))) {
         return { ok: false, kind: "invalid-request", httpStatus: 400 };

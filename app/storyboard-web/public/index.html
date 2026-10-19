@@ -40,6 +40,7 @@
       <ol id="material-sources"></ol>
       <h3>Персонажи</h3>
       <ul id="material-characters"></ul>
+      <p id="material-cast-status" class="material-mismatch" hidden></p>
       <h3>Обращения</h3>
       <ul id="material-aliases"></ul>
       <h3>Говорящие</h3>
@@ -60,7 +61,7 @@
           <h2 id="structure-tools-title">Что изменить в кадрах?</h2>
         </div>
       </div>
-      <p class="helper">Укажите номера кадров обычным текстом. Реплики и описания изображений пока остаются без прямого редактирования.</p>
+      <p class="helper">Укажите номера кадров обычным текстом. Замена реплики делается в Редакторе кадра. Эта команда не меняет текст источника.</p>
       <form id="structure-edit-form" class="instruction-form">
         <textarea id="structure-instruction" placeholder="Например: сделай кадры 8 и 9 split screen, сохрани реплики и добавь слушающего персонажа"></textarea>
         <button type="submit">Применить к раскадровке</button>
@@ -167,10 +168,24 @@
   <dialog id="detail">
     <div id="detail-scroll" class="detail-scroll">
       <div class="detail-layout">
+        <h2 class="detail-title">Редактор кадра</h2>
         <p id="detail-frame-number" class="detail-frame-number"></p>
         <p id="detail-generation-status" class="detail-generation-status" role="status" aria-live="polite" hidden></p>
         <div id="detail-frame" class="frame-host"></div>
+        <p id="detail-retained-notice" class="retained-image-notice" hidden></p>
         <p id="detail-outside" class="outside-frame"></p>
+        <button id="utterance-edit" type="button" hidden>Редактирование реплики</button>
+        <section id="utterance-editor" class="utterance-editor" hidden>
+          <h3>Редактирование реплики</h3>
+          <p id="utterance-speaker"></p>
+          <p id="utterance-source"></p>
+          <p id="utterance-scope" hidden></p>
+          <label for="utterance-text">Новая формулировка</label>
+          <textarea id="utterance-text"></textarea>
+          <p id="utterance-error" hidden></p>
+          <button id="utterance-save" type="button">Сохранить</button>
+          <button id="utterance-cancel" type="button" class="secondary">Отмена</button>
+        </section>
         <div id="detail-panel-controls" class="panel-controls"></div>
       </div>
       <div class="dialog-actions">

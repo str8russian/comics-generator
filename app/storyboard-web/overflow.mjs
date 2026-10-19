@@ -88,6 +88,7 @@ function piece(frame, text, composition, offset, fontSize) {
     fontSize,
     visualReady: frameVisualReady(panels),
   };
+  if (frame.retainedImageNotice) pieceFrame.retainedImageNotice = frame.retainedImageNotice;
   if (text === frame.dialogue) {
     if (frame.frameKind) pieceFrame.frameKind = frame.frameKind;
     if (typeof frame.textCard === "string") pieceFrame.textCard = frame.textCard;

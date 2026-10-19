@@ -25,6 +25,17 @@ const openLast = document.querySelector("#open-last");
 const detail = document.querySelector("#detail");
 const detailHost = document.querySelector("#detail-frame");
 const detailOutside = document.querySelector("#detail-outside");
+const detailRetained = document.querySelector("#detail-retained-notice");
+const utteranceEdit = document.querySelector("#utterance-edit");
+const utteranceEditor = document.querySelector("#utterance-editor");
+const utteranceSpeaker = document.querySelector("#utterance-speaker");
+const utteranceSource = document.querySelector("#utterance-source");
+const utteranceScope = document.querySelector("#utterance-scope");
+const utteranceText = document.querySelector("#utterance-text");
+const utteranceError = document.querySelector("#utterance-error");
+const utteranceSave = document.querySelector("#utterance-save");
+const utteranceCancel = document.querySelector("#utterance-cancel");
+const materialCastStatus = document.querySelector("#material-cast-status");
 const closeDetail = document.querySelector("#close-detail");
 const detailPanelControls = document.querySelector("#detail-panel-controls");
 const nextFrame = document.querySelector("#next-frame");
@@ -633,6 +644,12 @@ function showReady(frames, state = "ready") {
     host.className = "frame-host";
     mountFrame(host, frame, 0.2);
     preview.append(host);
+    if (frame.retainedImageNotice) {
+      const retained = document.createElement("p");
+      retained.className = "retained-image-notice";
+      retained.textContent = frame.retainedImageNotice;
+      preview.append(retained);
+    }
     if (frame.outsideFrameText) {
       const outside = document.createElement("p");
       outside.className = "outside-frame";
@@ -1002,6 +1019,57 @@ function appendPanelAssembly(box, frame, panel, panelIndex) {
   }
 }
 
+function sourceItemIdOf(frame) {
+  return frame?.displayBlock?.sourceItemId || frame?.sourceItemId || null;
+}
+
+function utteranceImpactMessage(count) {
+  const noun = count % 10 === 1 && count % 100 !== 11 ? "реплике" : "репликах";
+  return `Нельзя исключить: персонаж говорит в ${count} ${noun}.`;
+}
+
+function showCastStatus(message) {
+  if (!materialCastStatus) return;
+  materialCastStatus.hidden = !message;
+  materialCastStatus.textContent = message || "";
+}
+
+function prepareUtteranceEditor(frame) {
+  const sourceItemId = sourceItemIdOf(frame);
+  const editable = Boolean(sourceItemId)
+    && String(frame?.dialogue || "").trim()
+    && frame?.sourceRole !== "action"
+    && frame?.frameKind !== "text"
+    && frame?.frameKind !== "image";
+  if (utteranceEdit) utteranceEdit.hidden = !editable;
+  if (utteranceEditor) {
+    utteranceEditor.hidden = true;
+    delete utteranceEditor.dataset.sourceId;
+  }
+  if (utteranceError) utteranceError.hidden = true;
+}
+
+function openUtteranceEditor(frame) {
+  const sourceItemId = sourceItemIdOf(frame);
+  if (!sourceItemId || !utteranceEditor) return;
+  const item = (review?.sourceItems || []).find((entry) => entry.id === sourceItemId);
+  const pieces = readyFrames
+    .filter((entry) => sourceItemIdOf(entry) === sourceItemId)
+    .slice()
+    .sort((left, right) => (left.displayBlock?.start || 0) - (right.displayBlock?.start || 0));
+  const speaker = (review?.cast?.speakers || []).find((entry) => entry.sourceItemId === sourceItemId);
+  utteranceEditor.dataset.sourceId = sourceItemId;
+  if (utteranceSpeaker) utteranceSpeaker.textContent = speaker?.characterName || item?.speakerLabel || "";
+  if (utteranceSource) utteranceSource.textContent = item?.sourceQuote || pieces.map((entry) => entry.dialogue || "").join("");
+  if (utteranceText) utteranceText.value = item?.text || pieces.map((entry) => entry.dialogue || "").join("");
+  if (utteranceScope) {
+    utteranceScope.hidden = pieces.length < 2;
+    utteranceScope.textContent = pieces.length > 1 ? `Будет обновлено кадров: ${pieces.length}` : "";
+  }
+  if (utteranceError) utteranceError.hidden = true;
+  utteranceEditor.hidden = false;
+}
+
 function openDetail(index) {
   const frame = readyFrames[index];
   if (!frame) return;
@@ -1010,6 +1078,11 @@ function openDetail(index) {
   if (detailFrameNumber) detailFrameNumber.textContent = `Кадр ${index + 1}`;
   mountFrame(detailHost, frame, 0.5);
   detailOutside.textContent = frame.outsideFrameText || "";
+  if (detailRetained) {
+    detailRetained.hidden = !frame.retainedImageNotice;
+    detailRetained.textContent = frame.retainedImageNotice || "";
+  }
+  prepareUtteranceEditor(frame);
   renderPanelControls(frame);
   const following = readyFrames[index + 1];
   nextFrame.hidden = !frame.visualReady || !following;
@@ -1028,6 +1101,77 @@ export function openResearchDetail(index) {
 
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
 closeDetail.addEventListener("click", () => detail.close());
+utteranceEdit?.addEventListener("click", () => {
+  const frame = readyFrames[detailIndex];
+  if (frame) openUtteranceEditor(frame);
+});
+utteranceCancel?.addEventListener("click", () => {
+  if (utteranceEditor) utteranceEditor.hidden = true;
+});
+utteranceSave?.addEventListener("click", () => {
+  const frame = readyFrames[detailIndex];
+  const sourceItemId = utteranceEditor?.dataset.sourceId;
+  const spokenText = utteranceText?.value ?? "";
+  if (!frame || !sourceItemId) return;
+  runProductResearchAction({
+    semanticAction: "source_utterance_edit",
+    submittedText: spokenText,
+    commandTarget: createEmptyCommandTarget("frame", {
+      structureFrameId: frame.structureFrameId || frame.id || null,
+      displayFrameId: frame.id || null,
+      displayFrameNumber: detailIndex + 1,
+      characterName: utteranceSpeaker?.textContent || null,
+    }),
+    async operation() {
+      let response;
+      try {
+        response = await fetch(scoped("/api/source-utterances"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            sourceItemId,
+            spokenText,
+            materialStateId: visual?.materialStateId || (review?.mode === "material" ? review.id : null),
+            storyboardVersionId: visual?.storyboardVersionId || null,
+          }),
+        });
+      } catch (error) {
+        if (utteranceError) {
+          utteranceError.hidden = false;
+          utteranceError.textContent = "Не удалось сохранить реплику.";
+        }
+        throw error;
+      }
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      if (!response.ok) {
+        if (utteranceError) {
+          utteranceError.hidden = false;
+          utteranceError.textContent = payload?.message || "Не удалось сохранить реплику.";
+        }
+        const err = new Error(payload?.kind || "request-failed");
+        err.kind = payload?.kind || "request-failed";
+        throw err;
+      }
+      if (payload?.draft && typeof payload.draft.text === "string" && typeof payload.draft.revisionToken === "string") {
+        draftAutosave.replaceAccepted(payload.draft.text, payload.draft.revisionToken);
+      }
+      if (utteranceEditor) utteranceEditor.hidden = true;
+      try {
+        const projectResponse = await fetch(scoped("/api/project"));
+        if (projectResponse.ok) restoreReview(await projectResponse.json());
+      } catch {
+        // The saved revision remains active. The next reload shows it.
+      }
+      await refreshVisual();
+      return payload;
+    },
+  });
+});
 detail.addEventListener("close", () => {
   if (detailGenerationStatus) {
     detailGenerationStatus.hidden = true;
@@ -1910,9 +2054,15 @@ function fillSelect(select, selected) {
 
 function collectCast() {
   const characters = [];
-  for (const input of materialCharacters.querySelectorAll("input")) {
-    if (!input.value) return null;
-    characters.push({ name: input.value });
+  for (const row of materialCharacters.querySelectorAll("li")) {
+    const input = row.querySelector("input");
+    const toggle = row.querySelector(".cast-include");
+    if (!input?.value) return null;
+    characters.push({
+      name: input.value,
+      included: toggle ? toggle.getAttribute("aria-pressed") === "true" : true,
+      extractedName: toggle?.dataset.extractedName || input.value,
+    });
   }
   const aliases = [];
   for (const select of materialAliases.querySelectorAll("select")) {
@@ -1988,13 +2138,16 @@ async function saveCast() {
     return { ok: false, stale: true };
   }
   if (!response.ok) {
-    if (capture) await capture.terminal("failure", { outcomeKind: "request-failed" });
+    if (payload?.message) showCastStatus(payload.message);
+    if (payload?.kind === "speaking-character" || payload?.kind === "cast-reconciliation") renderReview();
+    if (capture) await capture.terminal(payload?.status === "blocked" ? "blocked" : "failure", { outcomeKind: payload?.kind || "request-failed" });
     return { ok: false };
   }
   review.cast = cast;
+  showCastStatus("");
   if (review.mode === "material" && payload?.materialStateId) review.id = payload.materialStateId;
-  renderSources();
-  renderFindings();
+  renderReview();
+  if (payload?.visualChanged) await refreshVisual();
   if (capture) await capture.terminal("success");
   return { ok: true };
 }
@@ -2045,6 +2198,14 @@ function renderReview() {
   for (const character of review.cast?.characters || []) {
     const row = document.createElement("li");
     row.className = "material-row";
+    const included = character.included !== false;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "cast-include";
+    toggle.dataset.extractedName = character.extractedName || character.name;
+    toggle.setAttribute("aria-pressed", included ? "true" : "false");
+    toggle.textContent = included ? "✓" : "○";
+    toggle.setAttribute("aria-label", included ? `В кадре: ${character.name}` : `Не в кадре: ${character.name}`);
     const input = document.createElement("input");
     input.value = character.name;
     input.dataset.previousName = character.name;
@@ -2057,9 +2218,32 @@ function renderReview() {
         previousCharacterName: input.dataset.previousName || null,
       };
       input.dataset.previousName = input.value;
+      const label = toggle.getAttribute("aria-pressed") === "true" ? `В кадре: ${input.value}` : `Не в кадре: ${input.value}`;
+      toggle.setAttribute("aria-label", label);
       scheduleCastSave();
     });
-    row.append(input);
+    toggle.addEventListener("click", () => {
+      const next = toggle.getAttribute("aria-pressed") !== "true";
+      if (!next) {
+        const count = (review.cast?.speakers || []).filter((speaker) => speaker.characterName === input.value).length;
+        if (count > 0) {
+          showCastStatus(utteranceImpactMessage(count));
+          return;
+        }
+      }
+      showCastStatus("");
+      toggle.setAttribute("aria-pressed", next ? "true" : "false");
+      toggle.textContent = next ? "✓" : "○";
+      toggle.setAttribute("aria-label", next ? `В кадре: ${input.value}` : `Не в кадре: ${input.value}`);
+      pendingCastEdit = {
+        editKind: "character_inclusion",
+        submittedText: next ? "included" : "excluded",
+        characterName: input.value,
+        previousCharacterName: input.value,
+      };
+      scheduleCastSave();
+    });
+    row.append(toggle, input);
     materialCharacters.append(row);
   }
   const aliasSurfaces = [];
@@ -2094,6 +2278,12 @@ function renderReview() {
       scheduleCastSave();
     });
     row.append(label, select);
+    const mapped = (review.cast?.characters || []).find((character) => character.name === current?.characterName);
+    if (mapped && mapped.included === false) {
+      const mark = document.createElement("span");
+      mark.textContent = "исключён";
+      row.append(mark);
+    }
     materialAliases.append(row);
   }
   materialSpeakers.replaceChildren();

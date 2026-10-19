@@ -57,6 +57,7 @@ async function castFor(client, materialStateId) {
   const characters = await client.query(`
     SELECT name FROM canonical_character
     WHERE material_state_id = $1
+      AND included = true
     ORDER BY ordinal, id
   `, [materialStateId]);
   const aliases = await client.query(`
@@ -1622,6 +1623,165 @@ export async function restoreRetiredAnchor(pool, { characterName, anchorId }) {
     });
   } catch {
     return failed("database", 503);
+  }
+}
+
+export async function carryCheckedStoryboard(client, {
+  fromMaterialStateId,
+  toMaterialStateId = null,
+  transformFrames,
+  copyApproval = true,
+  preview = false,
+}) {
+  const result = await client.query(`
+    SELECT storyboard_result.id, storyboard_result.stage_payload
+    FROM storyboard_result
+    WHERE storyboard_result.material_state_id = $1
+      AND storyboard_result.status = 'checked'
+    ORDER BY storyboard_result.created_at DESC, storyboard_result.id DESC
+    LIMIT 1
+  `, [fromMaterialStateId]);
+  if (result.rowCount !== 1) return { ok: true, carried: false, invalidateRender: false, previewFrames: null };
+  const head = await client.query(`
+    SELECT storyboard_version.id, storyboard_version.frames
+    FROM storyboard_head
+    JOIN storyboard_version ON storyboard_version.id = storyboard_head.active_storyboard_version_id
+    WHERE storyboard_head.storyboard_result_id = $1
+  `, [result.rows[0].id]);
+  const payload = result.rows[0].stage_payload && typeof result.rows[0].stage_payload === "object"
+    ? result.rows[0].stage_payload
+    : {};
+  const currentFrames = head.rowCount === 1 && Array.isArray(head.rows[0].frames)
+    ? head.rows[0].frames
+    : (Array.isArray(payload.frames) ? payload.frames : []);
+  const transformed = transformFrames(currentFrames);
+  if (!transformed?.ok) return transformed || { ok: false, kind: "invalid-request" };
+  const nextFrames = transformed.frames;
+  if (preview || !toMaterialStateId) {
+    return { ok: true, carried: false, previewFrames: nextFrames, invalidateRender: false };
+  }
+  const fromVersionId = head.rowCount === 1 ? head.rows[0].id : null;
+  const changed = visibleFrameSignature(currentFrames) !== visibleFrameSignature(nextFrames);
+  const resultId = randomUUID();
+  const versionId = randomUUID();
+  await client.query(
+    `INSERT INTO storyboard_result (id, material_state_id, status, failures, stage_payload)
+     VALUES ($1, $2, 'checked', NULL, $3::jsonb)`,
+    [resultId, toMaterialStateId, JSON.stringify({ ...payload, frames: nextFrames })],
+  );
+  await client.query(
+    `INSERT INTO storyboard_version (id, storyboard_result_id, frames)
+     VALUES ($1, $2, $3::jsonb)`,
+    [versionId, resultId, JSON.stringify(nextFrames)],
+  );
+  await client.query(
+    `INSERT INTO storyboard_head (storyboard_result_id, active_storyboard_version_id)
+     VALUES ($1, $2)`,
+    [resultId, versionId],
+  );
+  if (fromVersionId) await copyPanelState(client, fromVersionId, versionId, nextFrames);
+  if (fromVersionId && copyApproval && !changed) {
+    await client.query(`
+      INSERT INTO visual_approval (id, storyboard_version_id, snapshot, approved_at)
+      SELECT $1, $2, snapshot, approved_at
+      FROM visual_approval
+      WHERE storyboard_version_id = $3
+      ORDER BY approved_at DESC, id DESC
+      LIMIT 1
+    `, [randomUUID(), versionId, fromVersionId]);
+  }
+  return { ok: true, carried: true, invalidateRender: changed, versionId, changed };
+}
+
+export async function carryCharacterAnchors(client, { fromMaterialStateId, toMaterialStateId, includedNames }) {
+  const projectId = requireProjectId();
+  await client.query(`
+    INSERT INTO project_style_seed (material_state_id, style_asset_id, source_anchor_version_id)
+    SELECT $2, style_asset_id, source_anchor_version_id
+    FROM project_style_seed
+    WHERE material_state_id = $1
+    ON CONFLICT (material_state_id) DO NOTHING
+  `, [fromMaterialStateId, toMaterialStateId]);
+  for (const name of includedNames || []) {
+    const anchor = await client.query(`
+      WITH RECURSIVE chain AS (
+        SELECT id, parent_material_state_id, 0 AS depth
+        FROM material_state
+        WHERE id = $1
+        UNION ALL
+        SELECT material_state.id, material_state.parent_material_state_id, chain.depth + 1
+        FROM material_state
+        JOIN chain ON material_state.id = chain.parent_material_state_id
+      )
+      SELECT character_anchor_version.*
+      FROM chain
+      JOIN character_anchor_head
+        ON character_anchor_head.material_state_id = chain.id
+       AND character_anchor_head.character_name = $2
+      JOIN character_anchor_version
+        ON character_anchor_version.id = character_anchor_head.anchor_version_id
+       AND character_anchor_version.status = 'approved'
+      JOIN visual_asset
+        ON visual_asset.id = character_anchor_version.output_asset_id
+       AND visual_asset.project_id = $3
+      ORDER BY chain.depth, character_anchor_version.id
+      LIMIT 1
+    `, [fromMaterialStateId, name, projectId]);
+    if (anchor.rowCount === 1) {
+      const row = anchor.rows[0];
+      const anchorId = randomUUID();
+      await client.query(`
+        INSERT INTO character_anchor_version (
+          id, material_state_id, character_name, parent_anchor_version_id,
+          identity_asset_id, output_asset_id, instruction, status, error_kind,
+          provider_metadata, created_at, approved_at, style_asset_id, provenance
+        ) VALUES (
+          $1, $2, $3, NULL, $4, $5, $6, 'approved', $7, $8::jsonb, $9, $10, $11, $12
+        )
+      `, [
+        anchorId,
+        toMaterialStateId,
+        name,
+        row.identity_asset_id,
+        row.output_asset_id,
+        row.instruction || "",
+        row.error_kind,
+        row.provider_metadata == null ? null : JSON.stringify(row.provider_metadata),
+        row.created_at,
+        row.approved_at,
+        row.style_asset_id,
+        row.provenance,
+      ]);
+      await setAnchorHead(client, toMaterialStateId, name, anchorId);
+    }
+    const identity = await client.query(`
+      WITH RECURSIVE chain AS (
+        SELECT id, parent_material_state_id, 0 AS depth
+        FROM material_state
+        WHERE id = $1
+        UNION ALL
+        SELECT material_state.id, material_state.parent_material_state_id, chain.depth + 1
+        FROM material_state
+        JOIN chain ON material_state.id = chain.parent_material_state_id
+      )
+      SELECT character_identity.current_asset_id, character_identity.comment
+      FROM chain
+      JOIN character_identity
+        ON character_identity.material_state_id = chain.id
+       AND character_identity.character_name = $2
+      JOIN visual_asset
+        ON visual_asset.id = character_identity.current_asset_id
+       AND visual_asset.project_id = $3
+      ORDER BY chain.depth
+      LIMIT 1
+    `, [fromMaterialStateId, name, projectId]);
+    if (identity.rowCount === 1) {
+      await client.query(`
+        INSERT INTO character_identity (material_state_id, character_name, current_asset_id, comment)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (material_state_id, character_name) DO NOTHING
+      `, [toMaterialStateId, name, identity.rows[0].current_asset_id, identity.rows[0].comment]);
+    }
   }
 }
 

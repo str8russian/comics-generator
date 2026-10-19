@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { isEmptyDraft } from "./fidelity.mjs";
+import { assessDialogue } from "./overflow.mjs";
 import { createProject, listProjects, markOpened, renameProject } from "./project-catalog.mjs";
 import { requireProjectId, touchProjectContent } from "./project-scope.mjs";
+import {
+  applyExclusions,
+  applyUtteranceToFrames,
+  reconcileExclusion,
+  replaceSpokenSpan,
+  speakingExclusion,
+} from "./source-edit.mjs";
+import { carryCharacterAnchors, carryCheckedStoryboard } from "./visual-store.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -61,8 +70,16 @@ export function normalizeCast(cast) {
       return { error: "invalid-request" };
     }
     if (names.has(character.name)) return { error: "invalid-request" };
+    if (character.included !== undefined && character.included !== true && character.included !== false) {
+      return { error: "invalid-request" };
+    }
+    const extractedName = textValue(character.extractedName) ? character.extractedName : character.name;
     names.add(character.name);
-    characters.push({ name: character.name });
+    characters.push({
+      name: character.name,
+      included: character.included !== false,
+      extractedName,
+    });
   }
   const aliases = [];
   const surfaces = new Set();
@@ -137,7 +154,11 @@ function initialCast(sourceItems, characters, surfaceForms) {
     speakers.push({ sourceItemId: item.id, characterName: name });
   }
   return {
-    characters: characters.map((character) => ({ name: character.name })),
+    characters: characters.map((character) => ({
+      name: character.name,
+      extractedName: character.name,
+      included: true,
+    })),
     aliases,
     speakers,
   };
@@ -223,11 +244,13 @@ async function insertCast(client, readingId, cast) {
   const nameToId = new Map();
   for (let index = 0; index < cast.characters.length; index += 1) {
     const id = randomUUID();
-    const name = cast.characters[index].name;
+    const character = cast.characters[index];
+    const name = character.name;
     if (!nameToId.has(name)) nameToId.set(name, id);
     await client.query(
-      `INSERT INTO pending_character (id, reading_id, ordinal, name) VALUES ($1, $2, $3, $4)`,
-      [id, readingId, index, name],
+      `INSERT INTO pending_character (id, reading_id, ordinal, name, included, extracted_name)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, readingId, index, name, character.included !== false, character.extractedName || name],
     );
   }
   for (const alias of cast.aliases) {
@@ -249,6 +272,26 @@ async function replaceCastRows(client, readingId, cast) {
   await client.query("DELETE FROM pending_alias WHERE reading_id = $1", [readingId]);
   await client.query("DELETE FROM pending_character WHERE reading_id = $1", [readingId]);
   await insertCast(client, readingId, cast);
+}
+
+async function syncExclusions(client, projectId, characters) {
+  for (const character of characters) {
+    const extracted = character.extractedName || character.name;
+    if (!extracted) continue;
+    if (character.included === false) {
+      await client.query(
+        `INSERT INTO character_exclusion (project_id, extracted_name)
+         VALUES ($1, $2)
+         ON CONFLICT (project_id, extracted_name) DO NOTHING`,
+        [projectId, extracted],
+      );
+    } else {
+      await client.query(
+        `DELETE FROM character_exclusion WHERE project_id = $1 AND extracted_name = $2`,
+        [projectId, extracted],
+      );
+    }
+  }
 }
 
 function readingView({ id, text, sourceItems, characters, surfaceForms, cast }) {
@@ -282,7 +325,7 @@ async function presentReading(queryable, readingId) {
   const characters = Array.isArray(snapshot.characters) ? snapshot.characters : [];
   const surfaceForms = Array.isArray(snapshot.surfaceForms) ? snapshot.surfaceForms : [];
   const castRows = await queryable.query(
-    `SELECT name FROM pending_character WHERE reading_id = $1 ORDER BY ordinal, id`,
+    `SELECT name, included, extracted_name FROM pending_character WHERE reading_id = $1 ORDER BY ordinal, id`,
     [readingId],
   );
   const aliasRows = await queryable.query(`
@@ -300,7 +343,11 @@ async function presentReading(queryable, readingId) {
     ORDER BY pending_speaker.source_item_model_id
   `, [readingId]);
   const cast = {
-    characters: castRows.rows.map((character) => ({ name: character.name })),
+    characters: castRows.rows.map((character) => ({
+      name: character.name,
+      included: character.included !== false,
+      extractedName: character.extracted_name || character.name,
+    })),
     aliases: aliasRows.rows.map((alias) => ({ surface: alias.surface_text, characterName: alias.name })),
     speakers: speakerRows.rows.map((speaker) => ({
       sourceItemId: speaker.source_item_model_id,
@@ -337,13 +384,13 @@ async function presentMaterial(queryable, materialStateId) {
   if (state.rowCount !== 1) return null;
   const row = state.rows[0];
   const items = await queryable.query(`
-    SELECT model_id, kind, speaker_status, speaker_label, source_quote
+    SELECT model_id, kind, speaker_status, speaker_label, source_quote, spoken_text
     FROM source_item
     WHERE interpretation_id = $1
     ORDER BY ordinal
   `, [row.interpretation_id]);
   const characters = await queryable.query(`
-    SELECT name FROM canonical_character
+    SELECT name, included, extracted_name FROM canonical_character
     WHERE material_state_id = $1
     ORDER BY ordinal, id
   `, [materialStateId]);
@@ -361,15 +408,22 @@ async function presentMaterial(queryable, materialStateId) {
     WHERE speaker_assignment.material_state_id = $1
     ORDER BY speaker_assignment.source_item_model_id
   `, [materialStateId]);
-  const sourceItems = items.rows.map((item) => publicItem({
-    id: item.model_id,
-    kind: item.kind,
-    speakerStatus: item.speaker_status,
-    speakerLabel: item.speaker_label,
-    sourceQuote: item.source_quote,
+  const sourceItems = items.rows.map((item) => ({
+    ...publicItem({
+      id: item.model_id,
+      kind: item.kind,
+      speakerStatus: item.speaker_status,
+      speakerLabel: item.speaker_label,
+      sourceQuote: item.source_quote,
+    }),
+    text: item.spoken_text,
   }));
   const cast = {
-    characters: characters.rows.map((character) => ({ name: character.name })),
+    characters: characters.rows.map((character) => ({
+      name: character.name,
+      included: character.included !== false,
+      extractedName: character.extracted_name || character.name,
+    })),
     aliases: aliases.rows.map((alias) => ({ surface: alias.surface_text, characterName: alias.name })),
     speakers: speakers.rows.map((speaker) => ({
       sourceItemId: speaker.source_item_model_id,
@@ -576,7 +630,14 @@ export async function finishReading(pool, input) {
       await client.query("COMMIT");
       return { ok: false, httpStatus: 502, status: "failed", kind: "invalid-output" };
     }
-    const cast = initialCast(sourceItems, characters, surfaceForms);
+    const excluded = await client.query(
+      `SELECT extracted_name FROM character_exclusion WHERE project_id = $1`,
+      [locked.project_id],
+    );
+    const cast = applyExclusions(
+      initialCast(sourceItems, characters, surfaceForms),
+      excluded.rows.map((row) => row.extracted_name),
+    );
     await client.query(
       `UPDATE reading
        SET status = 'ready', failure_kind = NULL, blocked_codes = NULL, snapshot = $2::jsonb
@@ -650,7 +711,13 @@ export async function replacePendingCast(pool, readingId, cast) {
       await rollback(client);
       return invalidRequest();
     }
+    const blockedSpeaker = speakingExclusion(normalized);
+    if (blockedSpeaker) {
+      await rollback(client);
+      return blockedSpeaker;
+    }
     await replaceCastRows(client, readingId, normalized);
+    await syncExclusions(client, locked.project_id, normalized.characters);
     await touchProjectContent(client);
     await client.query("COMMIT");
     return { ok: true, httpStatus: 200, status: "ok" };
@@ -750,7 +817,8 @@ export async function confirmReading(pool, input) {
       [materialId, revisionId, interpretationId],
     );
     const characters = await client.query(
-      `SELECT id, ordinal, name FROM pending_character WHERE reading_id = $1 ORDER BY ordinal, id`,
+      `SELECT id, ordinal, name, included, extracted_name
+       FROM pending_character WHERE reading_id = $1 ORDER BY ordinal, id`,
       [readingId],
     );
     const idMap = new Map();
@@ -758,8 +826,16 @@ export async function confirmReading(pool, input) {
       const canonicalId = randomUUID();
       idMap.set(character.id, canonicalId);
       await client.query(
-        `INSERT INTO canonical_character (id, material_state_id, ordinal, name) VALUES ($1, $2, $3, $4)`,
-        [canonicalId, materialId, character.ordinal, character.name],
+        `INSERT INTO canonical_character (id, material_state_id, ordinal, name, included, extracted_name)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          canonicalId,
+          materialId,
+          character.ordinal,
+          character.name,
+          character.included !== false,
+          character.extracted_name || character.name,
+        ],
       );
     }
     const aliases = await client.query(
@@ -789,6 +865,11 @@ export async function confirmReading(pool, input) {
        WHERE id = $3`,
       [revisionId, materialId, locked.project_id],
     );
+    await syncExclusions(client, locked.project_id, characters.rows.map((character) => ({
+      name: character.name,
+      included: character.included !== false,
+      extractedName: character.extracted_name || character.name,
+    })));
     await touchProjectContent(client);
     await client.query("COMMIT");
     return {
@@ -808,8 +889,16 @@ async function insertMaterialCast(client, materialId, cast) {
     const name = cast.characters[index].name;
     if (!nameToId.has(name)) nameToId.set(name, id);
     await client.query(
-      `INSERT INTO canonical_character (id, material_state_id, ordinal, name) VALUES ($1, $2, $3, $4)`,
-      [id, materialId, index, name],
+      `INSERT INTO canonical_character (id, material_state_id, ordinal, name, included, extracted_name)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        id,
+        materialId,
+        index,
+        name,
+        cast.characters[index].included !== false,
+        cast.characters[index].extractedName || name,
+      ],
     );
   }
   for (const alias of cast.aliases) {
@@ -858,6 +947,24 @@ export async function reviseMaterialState(pool, cast) {
       await rollback(client);
       return invalidRequest();
     }
+    const blockedSpeaker = speakingExclusion(normalized);
+    if (blockedSpeaker) {
+      await rollback(client);
+      return blockedSpeaker;
+    }
+    const previousCharacters = await client.query(
+      `SELECT name, included, extracted_name FROM canonical_character WHERE material_state_id = $1`,
+      [state.id],
+    );
+    const previousIncluded = new Map(previousCharacters.rows.map((character) => [
+      character.extracted_name || character.name,
+      character.included !== false,
+    ]));
+    const inclusionChanged = normalized.characters.some((character) => {
+      const key = character.extractedName || character.name;
+      const before = previousIncluded.has(key) ? previousIncluded.get(key) : true;
+      return before !== (character.included !== false);
+    });
     const materialId = randomUUID();
     await client.query(
       `INSERT INTO material_state (id, source_revision_id, interpretation_id, parent_material_state_id)
@@ -865,6 +972,32 @@ export async function reviseMaterialState(pool, cast) {
       [materialId, state.source_revision_id, state.interpretation_id, state.id],
     );
     await insertMaterialCast(client, materialId, normalized);
+    await syncExclusions(client, locked.project_id, normalized.characters);
+    if (inclusionChanged) {
+      const carried = await carryInclusionChange(client, {
+        fromMaterialStateId: state.id,
+        toMaterialStateId: materialId,
+        characters: normalized.characters,
+      });
+      if (!carried.ok) {
+        await rollback(client);
+        return carried;
+      }
+      await client.query(
+        `UPDATE project SET active_material_state_id = $1, updated_at = clock_timestamp() WHERE id = $2`,
+        [materialId, locked.project_id],
+      );
+      await client.query("COMMIT");
+      return {
+        ok: true,
+        httpStatus: 200,
+        materialStateId: materialId,
+        sourceRevisionId: state.source_revision_id,
+        interpretationId: state.interpretation_id,
+        visualChanged: true,
+        invalidateRender: carried.invalidateRender === true,
+      };
+    }
     await client.query(
       `UPDATE project SET active_material_state_id = $1, updated_at = clock_timestamp() WHERE id = $2`,
       [materialId, locked.project_id],
@@ -876,6 +1009,361 @@ export async function reviseMaterialState(pool, cast) {
       materialStateId: materialId,
       sourceRevisionId: state.source_revision_id,
       interpretationId: state.interpretation_id,
+    };
+  });
+}
+
+async function carryInclusionChange(client, { fromMaterialStateId, toMaterialStateId, characters }) {
+  const excluded = characters.filter((character) => character.included === false);
+  const includedNames = characters
+    .filter((character) => character.included !== false)
+    .map((character) => character.name);
+  const aliasRows = await client.query(`
+    SELECT alias.surface_text, canonical_character.name
+    FROM alias
+    JOIN canonical_character ON canonical_character.id = alias.character_id
+    WHERE alias.material_state_id = $1
+  `, [fromMaterialStateId]);
+  const identification = {
+    characters: characters.map((character) => ({ name: character.name })),
+    aliases: aliasRows.rows.map((row) => ({ surface: row.surface_text, characterName: row.name })),
+  };
+  const carried = await carryCheckedStoryboard(client, {
+    fromMaterialStateId,
+    toMaterialStateId,
+    copyApproval: true,
+    transformFrames(frames) {
+      let next = frames;
+      for (const character of excluded) {
+        const step = reconcileExclusion(next, character.name, identification);
+        if (!step.ok) return step;
+        next = step.frames;
+      }
+      return { ok: true, frames: next };
+    },
+  });
+  if (!carried.ok) return carried;
+  await carryCharacterAnchors(client, { fromMaterialStateId, toMaterialStateId, includedNames });
+  return carried;
+}
+
+function visualStageCast(cast) {
+  const included = new Set(
+    (cast.characters || []).filter((character) => character.included !== false).map((character) => character.id),
+  );
+  return {
+    characters: cast.characters.filter((character) => included.has(character.id)),
+    aliases: cast.aliases.filter((alias) => included.has(alias.characterId)),
+    speakers: cast.speakers.filter((speaker) => included.has(speaker.characterId)),
+  };
+}
+
+async function activeStoryboardVersionId(client, materialStateId) {
+  const result = await client.query(`
+    SELECT storyboard_head.active_storyboard_version_id
+    FROM storyboard_result
+    JOIN storyboard_head ON storyboard_head.storyboard_result_id = storyboard_result.id
+    WHERE storyboard_result.material_state_id = $1
+      AND storyboard_result.status = 'checked'
+    ORDER BY storyboard_result.created_at DESC, storyboard_result.id DESC
+    LIMIT 1
+  `, [materialStateId]);
+  return result.rows[0]?.active_storyboard_version_id ?? null;
+}
+
+export async function reviseSourceUtterance(pool, input) {
+  const sourceItemId = input?.sourceItemId;
+  if (typeof sourceItemId !== "string" || !ID_PATTERN.test(sourceItemId)) return notFound();
+  if (input.materialStateId != null && (typeof input.materialStateId !== "string" || !UUID_PATTERN.test(input.materialStateId))) {
+    return invalidRequest();
+  }
+  if (input.storyboardVersionId != null && (typeof input.storyboardVersionId !== "string" || !UUID_PATTERN.test(input.storyboardVersionId))) {
+    return invalidRequest();
+  }
+  return withClient(pool, async (client) => {
+    await client.query("BEGIN");
+    const locked = await lockDraft(client);
+    if (!locked?.active_material_state_id || !locked.active_source_revision_id) {
+      await rollback(client);
+      return notFound();
+    }
+    if (input.materialStateId && input.materialStateId !== locked.active_material_state_id) {
+      await rollback(client);
+      return { ok: false, httpStatus: 409, kind: "stale-version" };
+    }
+    const versionId = await activeStoryboardVersionId(client, locked.active_material_state_id);
+    if (input.storyboardVersionId && input.storyboardVersionId !== versionId) {
+      await rollback(client);
+      return { ok: false, httpStatus: 409, kind: "stale-version" };
+    }
+    const state = await client.query(`
+      SELECT material_state.id,
+             material_state.source_revision_id,
+             material_state.interpretation_id,
+             source_revision.text,
+             source_revision.project_id,
+             reading.snapshot
+      FROM material_state
+      JOIN source_revision ON source_revision.id = material_state.source_revision_id
+      JOIN interpretation ON interpretation.id = material_state.interpretation_id
+      JOIN reading ON reading.id = interpretation.reading_id
+      WHERE material_state.id = $1
+        AND source_revision.project_id = $2
+    `, [locked.active_material_state_id, locked.project_id]);
+    if (state.rowCount !== 1) {
+      await rollback(client);
+      return notFound();
+    }
+    const current = state.rows[0];
+    const itemRows = await client.query(`
+      SELECT ordinal, model_id, kind, speaker_status, speaker_label, draft_start, draft_end, source_quote, spoken_text
+      FROM source_item
+      WHERE interpretation_id = $1
+      ORDER BY ordinal
+    `, [current.interpretation_id]);
+    const items = itemRows.rows.map((item) => ({
+      id: item.model_id,
+      ordinal: item.ordinal,
+      kind: item.kind,
+      speakerStatus: item.speaker_status,
+      speakerLabel: item.speaker_label,
+      draftStart: item.draft_start,
+      draftEnd: item.draft_end,
+      sourceQuote: item.source_quote,
+      spokenText: item.spoken_text,
+      text: item.spoken_text,
+    }));
+    const replaced = replaceSpokenSpan({
+      text: current.text,
+      items,
+      sourceItemId,
+      spokenText: input.spokenText,
+    });
+    if (!replaced.ok) {
+      await rollback(client);
+      return replaced.kind === "not-found" ? notFound() : invalidRequest();
+    }
+    if (replaced.unchanged) {
+      await rollback(client);
+      return {
+        ok: true,
+        httpStatus: 200,
+        unchanged: true,
+        sourceRevisionId: current.source_revision_id,
+        materialStateId: current.id,
+        draft: { text: locked.draft_text, revisionToken: locked.revision_token },
+      };
+    }
+    const carried = await carryCheckedStoryboard(client, {
+      fromMaterialStateId: current.id,
+      toMaterialStateId: null,
+      preview: true,
+      transformFrames(frames) {
+        return applyUtteranceToFrames(frames, sourceItemId, input.spokenText);
+      },
+    });
+    if (!carried.ok) {
+      await rollback(client);
+      return {
+        ok: false,
+        httpStatus: 409,
+        status: "blocked",
+        kind: carried.kind || "directing-repartition",
+        message: "Эту правку нельзя распределить по текущим композициям без пустого фрагмента или потери кадра.",
+      };
+    }
+    if (carried.previewFrames) {
+      const dialogue = assessDialogue(
+        replaced.items.filter((item) => item.kind === "utterance").map((item) => ({
+          id: item.id,
+          kind: item.kind,
+          text: item.text,
+        })),
+        carried.previewFrames,
+      );
+      if (!dialogue.ok) {
+        await rollback(client);
+        return {
+          ok: false,
+          httpStatus: 409,
+          status: "blocked",
+          kind: "dialogue-fidelity",
+          message: "Новая реплика не сходится с кадрами без потери или повтора текста.",
+        };
+      }
+    }
+    const revisionId = randomUUID();
+    const interpretationId = randomUUID();
+    const materialId = randomUUID();
+    const readingId = randomUUID();
+    const draftToken = randomUUID();
+    const snapshot = current.snapshot && typeof current.snapshot === "object" ? current.snapshot : {};
+    const previousSnapshotItems = new Map((snapshot.sourceItems || []).map((item) => [item.id, item]));
+    const snapshotItems = replaced.items.map((item) => {
+      const previous = previousSnapshotItems.get(item.id) || {};
+      const next = {
+        id: item.id,
+        kind: item.kind,
+        speakerStatus: item.speakerStatus,
+        sourceQuote: item.sourceQuote,
+        draftStart: item.draftStart,
+        draftEnd: item.draftEnd,
+        text: item.text,
+      };
+      if (item.speakerLabel) next.speakerLabel = item.speakerLabel;
+      if (previous.segmentIds) next.segmentIds = previous.segmentIds;
+      return next;
+    });
+    await client.query(
+      `INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status, snapshot)
+       VALUES ($1, $2, $3, $4, 'ready', $5::jsonb)`,
+      [readingId, locked.project_id, replaced.text, draftToken, JSON.stringify({
+        sourceItems: snapshotItems,
+        characters: snapshot.characters || [],
+        surfaceForms: (snapshot.surfaceForms || []).filter((form) => replaced.text.includes(form.quote)),
+      })],
+    );
+    await client.query(
+      `INSERT INTO source_revision (id, project_id, parent_source_revision_id, text) VALUES ($1, $2, $3, $4)`,
+      [revisionId, locked.project_id, current.source_revision_id, replaced.text],
+    );
+    await client.query(
+      `INSERT INTO interpretation (id, source_revision_id, reading_id) VALUES ($1, $2, $3)`,
+      [interpretationId, revisionId, readingId],
+    );
+    for (const item of replaced.items) {
+      const labeled = item.speakerStatus === "explicit" || item.speakerStatus === "inferred";
+      await client.query(
+        `INSERT INTO source_item (
+           interpretation_id, ordinal, model_id, kind, speaker_status, speaker_label,
+           draft_start, draft_end, source_quote, spoken_text
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          interpretationId,
+          item.ordinal,
+          item.id,
+          item.kind,
+          item.speakerStatus,
+          labeled ? item.speakerLabel : null,
+          item.draftStart,
+          item.draftEnd,
+          item.sourceQuote,
+          item.text,
+        ],
+      );
+    }
+    const provisional = await client.query(
+      `SELECT model_id, name FROM provisional_character WHERE interpretation_id = $1`,
+      [current.interpretation_id],
+    );
+    for (const character of provisional.rows) {
+      await client.query(
+        `INSERT INTO provisional_character (interpretation_id, model_id, name) VALUES ($1, $2, $3)`,
+        [interpretationId, character.model_id, character.name],
+      );
+    }
+    const surfaces = await client.query(
+      `SELECT model_id, quote, role, proposed_character_model_id FROM surface_form WHERE interpretation_id = $1`,
+      [current.interpretation_id],
+    );
+    for (const form of surfaces.rows) {
+      if (!replaced.text.includes(form.quote)) continue;
+      await client.query(
+        `INSERT INTO surface_form (interpretation_id, model_id, quote, role, proposed_character_model_id)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [interpretationId, form.model_id, form.quote, form.role, form.proposed_character_model_id],
+      );
+    }
+    await client.query(
+      `INSERT INTO material_state (id, source_revision_id, interpretation_id, parent_material_state_id)
+       VALUES ($1, $2, $3, $4)`,
+      [materialId, revisionId, interpretationId, current.id],
+    );
+    const canonical = await client.query(
+      `SELECT id, ordinal, name, included, extracted_name
+       FROM canonical_character WHERE material_state_id = $1 ORDER BY ordinal, id`,
+      [current.id],
+    );
+    const idMap = new Map();
+    const includedNames = [];
+    for (const character of canonical.rows) {
+      const canonicalId = randomUUID();
+      idMap.set(character.id, canonicalId);
+      if (character.included !== false) includedNames.push(character.name);
+      await client.query(
+        `INSERT INTO canonical_character (id, material_state_id, ordinal, name, included, extracted_name)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          canonicalId,
+          materialId,
+          character.ordinal,
+          character.name,
+          character.included !== false,
+          character.extracted_name || character.name,
+        ],
+      );
+    }
+    const aliases = await client.query(
+      `SELECT surface_text, character_id FROM alias WHERE material_state_id = $1`,
+      [current.id],
+    );
+    for (const alias of aliases.rows) {
+      if (!replaced.text.includes(alias.surface_text) || !idMap.has(alias.character_id)) continue;
+      await client.query(
+        `INSERT INTO alias (id, material_state_id, surface_text, character_id) VALUES ($1, $2, $3, $4)`,
+        [randomUUID(), materialId, alias.surface_text, idMap.get(alias.character_id)],
+      );
+    }
+    const speakers = await client.query(
+      `SELECT source_item_model_id, character_id FROM speaker_assignment WHERE material_state_id = $1`,
+      [current.id],
+    );
+    for (const speaker of speakers.rows) {
+      if (!idMap.has(speaker.character_id)) continue;
+      await client.query(
+        `INSERT INTO speaker_assignment (material_state_id, source_item_model_id, character_id)
+         VALUES ($1, $2, $3)`,
+        [materialId, speaker.source_item_model_id, idMap.get(speaker.character_id)],
+      );
+    }
+    const stored = await carryCheckedStoryboard(client, {
+      fromMaterialStateId: current.id,
+      toMaterialStateId: materialId,
+      copyApproval: false,
+      transformFrames(frames) {
+        return applyUtteranceToFrames(frames, sourceItemId, input.spokenText);
+      },
+    });
+    if (!stored.ok) {
+      await rollback(client);
+      return { ok: false, httpStatus: 409, status: "blocked", kind: stored.kind || "directing-repartition" };
+    }
+    await carryCharacterAnchors(client, {
+      fromMaterialStateId: current.id,
+      toMaterialStateId: materialId,
+      includedNames,
+    });
+    await client.query(
+      `UPDATE working_draft SET text = $1, revision_token = $2, updated_at = clock_timestamp() WHERE project_id = $3`,
+      [replaced.text, draftToken, locked.project_id],
+    );
+    await client.query(
+      `UPDATE project
+       SET active_source_revision_id = $1, active_material_state_id = $2, current_reading_id = NULL
+       WHERE id = $3`,
+      [revisionId, materialId, locked.project_id],
+    );
+    await touchProjectContent(client);
+    await client.query("COMMIT");
+    return {
+      ok: true,
+      httpStatus: 200,
+      sourceRevisionId: revisionId,
+      interpretationId,
+      materialStateId: materialId,
+      previousSourceRevisionId: current.source_revision_id,
+      invalidateRender: true,
+      draft: { text: replaced.text, revisionToken: draftToken },
     };
   });
 }
@@ -912,6 +1400,9 @@ function rebuildFrame(frame, revisionText, byId) {
   if (frame?.sourceItemId) next.sourceItemId = frame.sourceItemId;
   if (frame?.sourceRole) next.sourceRole = frame.sourceRole;
   if (frame?.speakerPanel != null) next.speakerPanel = frame.speakerPanel;
+  if (typeof frame?.retainedImageNotice === "string" && frame.retainedImageNotice) {
+    next.retainedImageNotice = frame.retainedImageNotice;
+  }
   const item = byId.get(frame?.sourceItemId);
   if (!item || frame?.origin === "derived") return next;
   const spoken = spokenFromRevision(revisionText, item);
@@ -1033,7 +1524,7 @@ async function loadMaterialContext(queryable, materialStateId) {
     draftEnd: item.draft_end,
   }));
   const characters = await queryable.query(`
-    SELECT id, name FROM canonical_character
+    SELECT id, name, included, extracted_name FROM canonical_character
     WHERE material_state_id = $1
     ORDER BY ordinal, id
   `, [materialStateId]);
@@ -1064,7 +1555,12 @@ async function loadMaterialContext(queryable, materialStateId) {
     return stageItem;
   });
   const cast = {
-    characters: characters.rows.map((character) => ({ id: character.id, name: character.name })),
+    characters: characters.rows.map((character) => ({
+      id: character.id,
+      name: character.name,
+      included: character.included !== false,
+      extractedName: character.extracted_name || character.name,
+    })),
     aliases: aliases.rows.map((alias) => ({ surface: alias.surface_text, characterId: alias.character_id })),
     speakers: speakers.rows.map((speaker) => ({
       sourceItemId: speaker.source_item_model_id,
@@ -1172,7 +1668,7 @@ export async function stageActiveMaterial(pool, options = {}) {
     staged = await stage({
       draftText: captured.context.revisionText,
       sourceItems: captured.context.stageItems,
-      cast: captured.context.cast,
+      cast: visualStageCast(captured.context.cast),
     });
   } catch {
     staged = { ok: false, httpStatus: 502, status: "failed", kind: "provider" };
@@ -1260,6 +1756,7 @@ export function createProjectStore(pool) {
     replacePendingCast: (readingId, cast) => replacePendingCast(pool, readingId, cast),
     confirmReading: (input) => confirmReading(pool, input),
     reviseMaterialState: (cast) => reviseMaterialState(pool, cast),
+    reviseSourceUtterance: (input) => reviseSourceUtterance(pool, input),
     stageActiveMaterial: (options) => stageActiveMaterial(pool, options),
     listProjects: (options) => listProjects(pool, options),
     createProject: () => createProject(pool),

@@ -60,6 +60,19 @@ export function bindDraftAutosave({
     notify();
   }
 
+  function replaceAccepted(text, nextToken) {
+    if (typeof text !== "string" || typeof nextToken !== "string") return false;
+    if (timer != null) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    token = nextToken;
+    savedText = text;
+    textarea.value = text;
+    finishIdle();
+    return true;
+  }
+
   function api(path) {
     const resolved = projectApi(path);
     if (!resolved) throw new Error("project");
@@ -224,5 +237,5 @@ export function bindDraftAutosave({
     }
   })();
 
-  return { ready, flush };
+  return { ready, flush, replaceAccepted };
 }

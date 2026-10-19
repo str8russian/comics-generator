@@ -33,6 +33,7 @@ const SEMANTIC_ACTIONS = new Set([
   "asset_assign",
   "storyboard_undo",
   "render",
+  "source_utterance_edit",
 ]);
 
 const SURFACES = new Set(["dock_notes", "dock_commands", "product_control"]);
@@ -48,7 +49,7 @@ const WORKFLOW_PHASES = new Set([
   "approved",
 ]);
 const COMMAND_KINDS = new Set(["storyboard", "panel", "frame", "character", "none"]);
-const EDIT_KINDS = new Set(["character_rename", "alias_assignment", "speaker_assignment"]);
+const EDIT_KINDS = new Set(["character_rename", "alias_assignment", "speaker_assignment", "character_inclusion"]);
 const CAST_PHASES = new Set(["pending_reading", "material_state"]);
 
 const CONTEXT_KEYS = [

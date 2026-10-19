@@ -346,10 +346,18 @@ function logMaterial(logger, request, result) {
 }
 
 function sendFailure(res, result) {
-  sendJson(res, result.httpStatus || 500, {
-    status: "failed",
-    kind: safeKind(result.kind) || "database",
-  });
+  const blocked = result?.status === "blocked";
+  const body = {
+    status: blocked ? "blocked" : "failed",
+    kind: safeKind(result?.kind) || "database",
+  };
+  if (typeof result?.message === "string" && result.message.length > 0 && result.message.length <= 300) {
+    body.message = result.message;
+  }
+  if (Array.isArray(result?.frameIds)) {
+    body.frameIds = result.frameIds.filter((id) => typeof id === "string").slice(0, 20);
+  }
+  sendJson(res, result?.httpStatus || 500, body);
 }
 
 function readingCastPath(pathname) {
@@ -567,6 +575,9 @@ async function handleMaterialStates(req, res, { maxBodyBytes, logger, nextReques
     result = { ok: false, httpStatus: 503, kind: "database" };
   }
   logMaterial(logger, request, result);
+  if (result?.ok && result.invalidateRender) {
+    await runtime.renderController?.dropCurrent?.(requireProjectId());
+  }
   if (!result?.ok) {
     sendFailure(res, result || { httpStatus: 503, kind: "database" });
     return;
@@ -575,6 +586,51 @@ async function handleMaterialStates(req, res, { maxBodyBytes, logger, nextReques
     materialStateId: result.materialStateId,
     sourceRevisionId: result.sourceRevisionId,
     interpretationId: result.interpretationId,
+    visualChanged: result.visualChanged === true,
+  });
+}
+
+async function handleSourceUtterance(req, res, { maxBodyBytes, logger, nextRequest, runtime }) {
+  const request = nextRequest();
+  if ((req.method || "GET") !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readJsonBody(req, res, maxBodyBytes);
+  if (body.done) return;
+  if (body.invalid || !runtime.projectStore?.reviseSourceUtterance) {
+    const failed = { ok: false, httpStatus: body.invalid ? 400 : 503, kind: body.invalid ? "invalid-request" : "database" };
+    logAllowlisted(logger, request, "source-utterance", failed);
+    sendFailure(res, failed);
+    return;
+  }
+  let result;
+  try {
+    result = await runtime.projectStore.reviseSourceUtterance({
+      sourceItemId: body.payload?.sourceItemId,
+      spokenText: body.payload?.spokenText,
+      materialStateId: body.payload?.materialStateId,
+      storyboardVersionId: body.payload?.storyboardVersionId,
+    });
+  } catch {
+    result = { ok: false, httpStatus: 503, kind: "database" };
+  }
+  logAllowlisted(logger, request, "source-utterance", result);
+  if (result?.ok && result.invalidateRender) {
+    await runtime.renderController?.dropCurrent?.(requireProjectId());
+  }
+  if (!result?.ok) {
+    sendFailure(res, result || { httpStatus: 503, kind: "database" });
+    return;
+  }
+  sendJson(res, 200, {
+    unchanged: result.unchanged === true,
+    sourceRevisionId: result.sourceRevisionId,
+    interpretationId: result.interpretationId,
+    materialStateId: result.materialStateId,
+    previousSourceRevisionId: result.previousSourceRevisionId ?? null,
+    draft: result.draft,
   });
 }
 
@@ -2242,6 +2298,10 @@ async function routeProduct(req, res, {
   }
   if (pathname === "/api/material-states") {
     await handleMaterialStates(req, res, { maxBodyBytes, logger, nextRequest, runtime });
+    return;
+  }
+  if (pathname === "/api/source-utterances") {
+    await handleSourceUtterance(req, res, { maxBodyBytes, logger, nextRequest, runtime });
     return;
   }
   if (pathname === "/api/storyboard-results") {
