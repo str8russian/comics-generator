@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -551,16 +551,7 @@ test("a populated project duplicates as an independent current snapshot", {
       [copyId],
     );
     assert.equal(generations.rows[0].count, 0);
-    const anchors = await pool.query(
-      `SELECT status, parent_anchor_version_id, provider_metadata
-       FROM character_anchor_version
-       JOIN material_state ON material_state.id = character_anchor_version.material_state_id
-       JOIN source_revision ON source_revision.id = material_state.source_revision_id
-       WHERE source_revision.project_id = $1`,
-      [copyId],
-    );
-    assert.equal(anchors.rowCount, 2);
-    assert.equal(anchors.rows.every((row) => row.status === "approved" && row.parent_anchor_version_id == null && row.provider_metadata == null), true);
+    await assertCopiedAnchorBoundary(pool, copyId);
     const notes = await research.listTrace({ projectId: copyId, kind: "note" });
     assert.equal(notes.events.length, 0);
     const sourceNotes = await research.listTrace({ projectId: sourceId, kind: "note" });
@@ -737,6 +728,367 @@ test("a populated project duplicates as an independent current snapshot", {
       });
     }
     await rm(renderDir, { recursive: true, force: true }).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+async function assertCopiedAnchorBoundary(pool, projectId) {
+  const anchors = await pool.query(
+    `SELECT character_anchor_version.id,
+            character_anchor_version.status,
+            character_anchor_version.parent_anchor_version_id,
+            character_anchor_version.provider_metadata
+     FROM character_anchor_version
+     JOIN material_state ON material_state.id = character_anchor_version.material_state_id
+     JOIN source_revision ON source_revision.id = material_state.source_revision_id
+     WHERE source_revision.project_id = $1`,
+    [projectId],
+  );
+  const heads = await pool.query(
+    `SELECT character_anchor_head.anchor_version_id
+     FROM character_anchor_head
+     JOIN material_state ON material_state.id = character_anchor_head.material_state_id
+     JOIN source_revision ON source_revision.id = material_state.source_revision_id
+     WHERE source_revision.project_id = $1
+       AND character_anchor_head.anchor_version_id IS NOT NULL`,
+    [projectId],
+  );
+  const seed = await pool.query(
+    `SELECT project_style_seed.source_anchor_version_id
+     FROM project_style_seed
+     JOIN material_state ON material_state.id = project_style_seed.material_state_id
+     JOIN source_revision ON source_revision.id = material_state.source_revision_id
+     WHERE source_revision.project_id = $1`,
+    [projectId],
+  );
+  const headIds = new Set(heads.rows.map((row) => row.anchor_version_id));
+  const seedAnchorId = seed.rows[0]?.source_anchor_version_id ?? null;
+  const allowed = new Set(headIds);
+  if (seedAnchorId) allowed.add(seedAnchorId);
+  const extras = anchors.rows.map((row) => row.id).filter((id) => !headIds.has(id));
+  assert.equal(extras.length <= 1, true);
+  assert.equal(anchors.rowCount, allowed.size);
+  if (seedAnchorId && !headIds.has(seedAnchorId)) assert.deepEqual(extras, [seedAnchorId]);
+  assert.equal(anchors.rows.every((row) => (
+    allowed.has(row.id)
+    && row.status === "approved"
+    && row.parent_anchor_version_id == null
+    && row.provider_metadata == null
+  )), true);
+}
+
+test("duplication keeps the exact older anchor that established the style seed", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+  timeout: 60000,
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  const created = [];
+  const sourceText = "Анна: Привет";
+  const spoken = "Привет";
+  const seedBytes = Buffer.concat([png, Buffer.from([1])]);
+  const headBytes = Buffer.concat([png, Buffer.from([2])]);
+  const otherBytes = Buffer.concat([png, Buffer.from([3])]);
+  const identityBytes = Buffer.concat([png, Buffer.from([4])]);
+  const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    const project = await createProject(pool);
+    assertOk(project, "create-seed-source");
+    const sourceId = project.project.id;
+    created.push(sourceId);
+    enterProject(sourceId);
+    const empty = await loadProject(pool);
+    assertOk(await saveDraft(pool, { text: sourceText, revisionToken: empty.draft.revisionToken }), "seed-draft");
+
+    const revisionId = randomUUID();
+    const readingId = randomUUID();
+    const interpretationId = randomUUID();
+    const materialId = randomUUID();
+    const annaId = randomUUID();
+    const borisId = randomUUID();
+    const retiredId = randomUUID();
+    const oldAnchorId = randomUUID();
+    const newAnchorId = randomUUID();
+    const otherAnchorId = randomUUID();
+    const pendingId = randomUUID();
+    const resultId = randomUUID();
+    const versionId = randomUUID();
+    const frames = [{
+      id: "f-seed",
+      sourceItemId: "u1",
+      sourceRole: "utterance",
+      origin: "source",
+      layout: "single",
+      dialogueMode: "spoken",
+      speakerPanel: 0,
+      dialogue: spoken,
+      durationFrames: 180,
+      displayBlock: { sourceItemId: "u1", start: 0, end: spoken.length },
+      panels: [{ id: "p-seed", description: "Анна" }],
+    }];
+    async function insertAsset(bytes) {
+      const id = randomUUID();
+      await pool.query(
+        `INSERT INTO visual_asset (id, project_id, kind, mime, width, height, byte_length, sha256, bytes)
+         VALUES ($1, $2, 'base-anchor', 'image/png', 1, 1, $3, $4, $5)`,
+        [id, sourceId, bytes.length, sha(bytes), bytes],
+      );
+      return id;
+    }
+    const seedAssetId = await insertAsset(seedBytes);
+    const headAssetId = await insertAsset(headBytes);
+    const otherAssetId = await insertAsset(otherBytes);
+    const identityAssetId = await insertAsset(identityBytes);
+    await pool.query(
+      `INSERT INTO source_revision (id, project_id, text) VALUES ($1, $2, $3)`,
+      [revisionId, sourceId, sourceText],
+    );
+    await pool.query(
+      `INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status)
+       VALUES ($1, $2, $3, $4, 'ready')`,
+      [readingId, sourceId, sourceText, randomUUID()],
+    );
+    await pool.query(
+      `INSERT INTO interpretation (id, source_revision_id, reading_id) VALUES ($1, $2, $3)`,
+      [interpretationId, revisionId, readingId],
+    );
+    await pool.query(
+      `INSERT INTO source_item (
+         interpretation_id, ordinal, model_id, kind, speaker_status, speaker_label,
+         draft_start, draft_end, source_quote, spoken_text
+       ) VALUES ($1, 0, 'u1', 'utterance', 'explicit', 'Анна', 0, $2, $3, $4)`,
+      [interpretationId, sourceText.length, sourceText, spoken],
+    );
+    await pool.query(
+      `INSERT INTO material_state (id, source_revision_id, interpretation_id) VALUES ($1, $2, $3)`,
+      [materialId, revisionId, interpretationId],
+    );
+    await pool.query(
+      `INSERT INTO canonical_character (id, material_state_id, ordinal, name, included, extracted_name)
+       VALUES ($1, $2, 0, 'Анна', true, 'Анна'), ($3, $2, 1, 'Борис', true, 'Борис')`,
+      [annaId, materialId, borisId],
+    );
+    await pool.query(
+      `INSERT INTO speaker_assignment (material_state_id, source_item_model_id, character_id)
+       VALUES ($1, 'u1', $2)`,
+      [materialId, annaId],
+    );
+    await pool.query(
+      `INSERT INTO character_anchor_version (
+         id, material_state_id, character_name, instruction, status, provider_metadata
+       ) VALUES ($1, $2, 'Анна', 'retired-history', 'retired', '{"hidden":true}'::jsonb)`,
+      [retiredId, materialId],
+    );
+    await pool.query(
+      `INSERT INTO character_anchor_version (
+         id, material_state_id, character_name, parent_anchor_version_id,
+         identity_asset_id, output_asset_id, style_asset_id, instruction, status,
+         provenance, provider_metadata, approved_at
+       ) VALUES (
+         $1, $2, 'Анна', $3, $4, $5, $5, 'первый стиль', 'approved',
+         'generated_from_source', '{"provider":"secret"}'::jsonb, clock_timestamp()
+       )`,
+      [oldAnchorId, materialId, retiredId, identityAssetId, seedAssetId],
+    );
+    await pool.query(
+      `INSERT INTO character_anchor_version (
+         id, material_state_id, character_name, parent_anchor_version_id,
+         output_asset_id, instruction, status, provenance, approved_at
+       ) VALUES (
+         $1, $2, 'Анна', $3, $4, 'новый якорь', 'approved',
+         'refined_from_accepted_anchor', clock_timestamp()
+       )`,
+      [newAnchorId, materialId, oldAnchorId, headAssetId],
+    );
+    await pool.query(
+      `INSERT INTO character_anchor_version (
+         id, material_state_id, character_name, output_asset_id, instruction, status, provenance, approved_at
+       ) VALUES ($1, $2, 'Борис', $3, 'другой персонаж', 'approved', 'uploaded_as_ready_anchor', clock_timestamp())`,
+      [otherAnchorId, materialId, otherAssetId],
+    );
+    await pool.query(
+      `INSERT INTO character_anchor_version (
+         id, material_state_id, character_name, instruction, status, provider_metadata
+       ) VALUES ($1, $2, 'Анна', 'не копировать', 'pending', '{"hidden":true}'::jsonb)`,
+      [pendingId, materialId],
+    );
+    await pool.query(
+      `INSERT INTO character_anchor_head (material_state_id, character_name, anchor_version_id)
+       VALUES ($1, 'Анна', $2), ($1, 'Борис', $3)`,
+      [materialId, newAnchorId, otherAnchorId],
+    );
+    await pool.query(
+      `INSERT INTO project_style_seed (material_state_id, style_asset_id, source_anchor_version_id)
+       VALUES ($1, $2, $3)`,
+      [materialId, seedAssetId, oldAnchorId],
+    );
+    await pool.query(
+      `INSERT INTO storyboard_result (id, material_state_id, status, stage_payload)
+       VALUES ($1, $2, 'checked', $3::jsonb)`,
+      [resultId, materialId, JSON.stringify({ frames })],
+    );
+    await pool.query(
+      `INSERT INTO storyboard_version (id, storyboard_result_id, frames) VALUES ($1, $2, $3::jsonb)`,
+      [versionId, resultId, JSON.stringify(frames)],
+    );
+    await pool.query(
+      `INSERT INTO storyboard_head (storyboard_result_id, active_storyboard_version_id) VALUES ($1, $2)`,
+      [resultId, versionId],
+    );
+    await pool.query(
+      `INSERT INTO panel_visual_state (
+         id, storyboard_version_id, frame_id, panel_index, panel_id, subject,
+         current_asset_id, current_asset_origin
+       ) VALUES ($1, $2, 'f-seed', 0, 'p-seed', 'Анна', $3, 'generation')`,
+      [randomUUID(), versionId, headAssetId],
+    );
+    await pool.query(
+      `UPDATE project
+       SET active_source_revision_id = $2, active_material_state_id = $3, current_reading_id = NULL
+       WHERE id = $1`,
+      [sourceId, revisionId, materialId],
+    );
+
+    const copied = await duplicateProject(pool, sourceId, "Копия стиля");
+    assertOk(copied, "duplicate-style-seed");
+    const copyId = copied.project.id;
+    created.push(copyId);
+
+    const heads = await pool.query(
+      `SELECT character_anchor_head.character_name,
+              character_anchor_head.anchor_version_id,
+              character_anchor_version.instruction,
+              character_anchor_version.output_asset_id
+       FROM character_anchor_head
+       JOIN character_anchor_version ON character_anchor_version.id = character_anchor_head.anchor_version_id
+       JOIN material_state ON material_state.id = character_anchor_head.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       WHERE source_revision.project_id = $1`,
+      [copyId],
+    );
+    const seed = await pool.query(
+      `SELECT project_style_seed.source_anchor_version_id, project_style_seed.style_asset_id
+       FROM project_style_seed
+       JOIN material_state ON material_state.id = project_style_seed.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       WHERE source_revision.project_id = $1`,
+      [copyId],
+    );
+    assert.equal(seed.rowCount, 1);
+    const annaHead = heads.rows.find((row) => row.character_name === "Анна");
+    const borisHead = heads.rows.find((row) => row.character_name === "Борис");
+    assert.equal(annaHead.instruction, "новый якорь");
+    assert.equal(borisHead.instruction, "другой персонаж");
+    assert.notEqual(seed.rows[0].source_anchor_version_id, annaHead.anchor_version_id);
+    assert.notEqual(seed.rows[0].source_anchor_version_id, borisHead.anchor_version_id);
+    const seedAnchor = await pool.query(
+      `SELECT id, character_name, instruction, provenance, status, parent_anchor_version_id,
+              provider_metadata, error_kind, identity_asset_id, output_asset_id, style_asset_id
+       FROM character_anchor_version
+       WHERE id = $1`,
+      [seed.rows[0].source_anchor_version_id],
+    );
+    assert.equal(seedAnchor.rowCount, 1);
+    assert.equal(seedAnchor.rows[0].character_name, "Анна");
+    assert.equal(seedAnchor.rows[0].instruction, "первый стиль");
+    assert.equal(seedAnchor.rows[0].provenance, "generated_from_source");
+    assert.equal(seedAnchor.rows[0].status, "approved");
+    assert.equal(seedAnchor.rows[0].parent_anchor_version_id, null);
+    assert.equal(seedAnchor.rows[0].provider_metadata, null);
+    assert.equal(seedAnchor.rows[0].error_kind, null);
+    assert.equal(heads.rows.some((row) => row.anchor_version_id === seedAnchor.rows[0].id), false);
+    const copiedAnchors = await pool.query(
+      `SELECT instruction
+       FROM character_anchor_version
+       JOIN material_state ON material_state.id = character_anchor_version.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       WHERE source_revision.project_id = $1`,
+      [copyId],
+    );
+    assert.deepEqual(copiedAnchors.rows.map((row) => row.instruction).sort(), [
+      "другой персонаж",
+      "новый якорь",
+      "первый стиль",
+    ]);
+    await assertCopiedAnchorBoundary(pool, copyId);
+
+    async function ownedAsset(assetId) {
+      const row = await pool.query(
+        `SELECT id, project_id, sha256, mime, width, height, byte_length FROM visual_asset WHERE id = $1`,
+        [assetId],
+      );
+      assert.equal(row.rowCount, 1);
+      assert.equal(row.rows[0].project_id, copyId);
+      assert.equal([seedAssetId, headAssetId, otherAssetId, identityAssetId].includes(row.rows[0].id), false);
+      return row.rows[0];
+    }
+    const copiedSeedAsset = await ownedAsset(seed.rows[0].style_asset_id);
+    assert.equal(copiedSeedAsset.sha256, sha(seedBytes));
+    assert.equal(copiedSeedAsset.mime, "image/png");
+    assert.equal(copiedSeedAsset.byte_length, seedBytes.length);
+    const copiedHeadAsset = await ownedAsset(annaHead.output_asset_id);
+    assert.equal(copiedHeadAsset.sha256, sha(headBytes));
+    const copiedIdentity = await ownedAsset(seedAnchor.rows[0].identity_asset_id);
+    assert.equal(copiedIdentity.sha256, sha(identityBytes));
+    const copiedSeedOutput = await ownedAsset(seedAnchor.rows[0].output_asset_id);
+    assert.equal(copiedSeedOutput.sha256, sha(seedBytes));
+    assert.equal(copiedSeedOutput.id, copiedSeedAsset.id);
+
+    const sourceIdentities = [
+      sourceId, revisionId, readingId, interpretationId, materialId,
+      retiredId, oldAnchorId, newAnchorId, otherAnchorId, pendingId,
+      seedAssetId, headAssetId, otherAssetId, identityAssetId, resultId, versionId,
+    ];
+    const destinationRefs = await pool.query(
+      `SELECT character_anchor_version.id::text,
+              character_anchor_version.identity_asset_id::text,
+              character_anchor_version.output_asset_id::text,
+              character_anchor_version.style_asset_id::text,
+              character_anchor_version.parent_anchor_version_id::text,
+              visual_asset.provenance::text
+       FROM character_anchor_version
+       JOIN material_state ON material_state.id = character_anchor_version.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       LEFT JOIN visual_asset ON visual_asset.project_id = source_revision.project_id
+         AND visual_asset.id IN (
+           character_anchor_version.identity_asset_id,
+           character_anchor_version.output_asset_id,
+           character_anchor_version.style_asset_id
+         )
+       WHERE source_revision.project_id = $1`,
+      [copyId],
+    );
+    const serialized = JSON.stringify(destinationRefs.rows) + seed.rows[0].source_anchor_version_id + seed.rows[0].style_asset_id;
+    assert.equal(sourceIdentities.some((id) => serialized.includes(id)), false);
+
+    enterProject(copyId);
+    const visual = await createVisualStore(pool).load();
+    assert.equal(visual.status, "ready");
+    assert.equal(visual.characters.find((character) => character.name === "Анна").approvedAnchorId, annaHead.anchor_version_id);
+    const compiled = compileVideoSpec(visual, {
+      assetOrigin: `http://127.0.0.1:9/api/projects/${copyId}`,
+    });
+    assert.equal(compiled.ok, true, compiled.kind);
+    await purgeProject(guard, sourceId);
+    created.splice(created.indexOf(sourceId), 1);
+    enterProject(copyId);
+    const survived = await createVisualStore(pool).load();
+    assert.equal(survived.status, "ready");
+    assert.equal((await readAsset(pool, seed.rows[0].style_asset_id))?.sha256, sha(seedBytes));
+    await purgeProject(guard, copyId);
+    created.splice(created.indexOf(copyId), 1);
+  } finally {
+    for (const projectId of created) {
+      await purgeProject(guard, projectId).catch(async () => {
+        await guard.query("ROLLBACK").catch(() => {});
+      });
+    }
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
     guard.release();
     await pool.end();

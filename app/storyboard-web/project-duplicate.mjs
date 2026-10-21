@@ -133,6 +133,36 @@ function mappedAsset(maps, assetId) {
   return maps.assets.get(assetId) ?? null;
 }
 
+function styleSeedUnavailable() {
+  const error = new Error("style-seed-anchor-unavailable");
+  error.code = "STYLE_SEED_ANCHOR_UNAVAILABLE";
+  return error;
+}
+
+async function insertCopiedAnchor(client, anchor, destinationAnchorId, materialStateId, maps) {
+  await client.query(
+    `INSERT INTO character_anchor_version (
+       id, material_state_id, character_name, parent_anchor_version_id,
+       identity_asset_id, output_asset_id, instruction, status, error_kind,
+       provider_metadata, created_at, approved_at, style_asset_id, provenance
+     ) VALUES (
+       $1, $2, $3, NULL, $4, $5, $6, 'approved', NULL, NULL, $7, $8, $9, $10
+     )`,
+    [
+      destinationAnchorId,
+      materialStateId,
+      anchor.character_name,
+      mappedAsset(maps, anchor.identity_asset_id),
+      mappedAsset(maps, anchor.output_asset_id),
+      anchor.instruction || "",
+      anchor.created_at,
+      anchor.approved_at,
+      mappedAsset(maps, anchor.style_asset_id),
+      anchor.provenance,
+    ],
+  );
+}
+
 async function copyActiveGraph(client, { sourceProjectId, destinationId, materialId }) {
   const material = await client.query(
     `SELECT material_state.id,
@@ -312,6 +342,16 @@ async function copyStoryboard(client, {
     `SELECT style_asset_id, source_anchor_version_id FROM project_style_seed WHERE material_state_id = $1`,
     [materialId],
   );
+  let seedAnchor = null;
+  if (seed.rowCount === 1) {
+    const loaded = await client.query(
+      `SELECT * FROM character_anchor_version
+       WHERE id = $1 AND material_state_id = $2`,
+      [seed.rows[0].source_anchor_version_id, materialId],
+    );
+    if (loaded.rowCount !== 1 || loaded.rows[0].status !== "approved") throw styleSeedUnavailable();
+    seedAnchor = loaded.rows[0];
+  }
   let version = null;
   let states = [];
   if (result.rowCount === 1) {
@@ -353,6 +393,12 @@ async function copyStoryboard(client, {
     remember(anchor.identity_asset_id);
     remember(anchor.output_asset_id);
     remember(anchor.style_asset_id);
+  }
+  if (seedAnchor && !maps.anchors.has(seedAnchor.id)) {
+    maps.anchors.set(seedAnchor.id, randomUUID());
+    remember(seedAnchor.identity_asset_id);
+    remember(seedAnchor.output_asset_id);
+    remember(seedAnchor.style_asset_id);
   }
   for (const identity of identities.rows) remember(identity.current_asset_id);
   if (seed.rowCount === 1) remember(seed.rows[0].style_asset_id);
@@ -403,26 +449,7 @@ async function copyStoryboard(client, {
     );
   }
   for (const anchor of anchors.rows) {
-    await client.query(
-      `INSERT INTO character_anchor_version (
-         id, material_state_id, character_name, parent_anchor_version_id,
-         identity_asset_id, output_asset_id, instruction, status, error_kind,
-         provider_metadata, approved_at, style_asset_id, provenance
-       ) VALUES (
-         $1, $2, $3, NULL, $4, $5, $6, 'approved', NULL, NULL, $7, $8, $9
-       )`,
-      [
-        maps.anchors.get(anchor.id),
-        nextMaterialId,
-        anchor.character_name,
-        mappedAsset(maps, anchor.identity_asset_id),
-        mappedAsset(maps, anchor.output_asset_id),
-        anchor.instruction || "",
-        anchor.approved_at,
-        mappedAsset(maps, anchor.style_asset_id),
-        anchor.provenance,
-      ],
-    );
+    await insertCopiedAnchor(client, anchor, maps.anchors.get(anchor.id), nextMaterialId, maps);
     await client.query(
       `INSERT INTO character_anchor_head (material_state_id, character_name, anchor_version_id)
        VALUES ($1, $2, $3)`,
@@ -430,17 +457,19 @@ async function copyStoryboard(client, {
     );
   }
   if (seed.rowCount === 1) {
+    const sourceAnchorId = seed.rows[0].source_anchor_version_id;
+    const destinationAnchorId = maps.anchors.get(sourceAnchorId);
     const styleAssetId = mappedAsset(maps, seed.rows[0].style_asset_id);
-    const anchorId = maps.anchors.get(seed.rows[0].source_anchor_version_id)
-      ?? maps.anchors.values().next().value
-      ?? null;
-    if (styleAssetId && anchorId) {
-      await client.query(
-        `INSERT INTO project_style_seed (material_state_id, style_asset_id, source_anchor_version_id)
-         VALUES ($1, $2, $3)`,
-        [nextMaterialId, styleAssetId, anchorId],
-      );
+    if (!destinationAnchorId || !styleAssetId) throw styleSeedUnavailable();
+    const copiedAsHead = anchors.rows.some((anchor) => anchor.id === sourceAnchorId);
+    if (!copiedAsHead) {
+      await insertCopiedAnchor(client, seedAnchor, destinationAnchorId, nextMaterialId, maps);
     }
+    await client.query(
+      `INSERT INTO project_style_seed (material_state_id, style_asset_id, source_anchor_version_id)
+       VALUES ($1, $2, $3)`,
+      [nextMaterialId, styleAssetId, destinationAnchorId],
+    );
   }
   for (const state of states) {
     const currentId = mappedAsset(maps, state.effective_asset_id);
