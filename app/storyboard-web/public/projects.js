@@ -1,8 +1,22 @@
+import { bindDuplicateDialog, DUPLICATE_LABEL, requestProjectDuplicate } from "./duplicate-project.mjs";
+
 const list = document.querySelector("#project-list");
 const status = document.querySelector("#project-list-status");
 const continueRow = document.querySelector("#continue-row");
 const continueLink = document.querySelector("#continue-project");
 const newProject = document.querySelector("#new-project");
+const duplicateControl = bindDuplicateDialog({
+  dialog: document.querySelector("#duplicate-project-dialog"),
+  form: document.querySelector("#duplicate-project-form"),
+  titleInput: document.querySelector("#duplicate-project-title"),
+  statusNode: document.querySelector("#duplicate-project-status"),
+  submitButton: document.querySelector("#duplicate-project-submit"),
+  cancelButton: document.querySelector("#duplicate-project-cancel"),
+  requestDuplicate: requestProjectDuplicate,
+  onSuccess(project) {
+    if (project?.id) window.location.assign(`/projects/${project.id}`);
+  },
+});
 
 function showStatus(text) {
   status.hidden = !text;
@@ -66,7 +80,14 @@ function card(project, continueId) {
     }
     await load();
   });
-  article.append(open, form);
+  const duplicate = document.createElement("button");
+  duplicate.type = "button";
+  duplicate.className = "duplicate-project";
+  duplicate.textContent = DUPLICATE_LABEL;
+  duplicate.addEventListener("click", () => {
+    duplicateControl.open({ id: project.id, title: project.title });
+  });
+  article.append(open, form, duplicate);
   return article;
 }
 

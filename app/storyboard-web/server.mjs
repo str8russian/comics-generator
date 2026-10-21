@@ -11,7 +11,7 @@ import { loadConfig } from "./config.mjs";
 import { isEmptyDraft } from "./fidelity.mjs";
 import { interpretDraft } from "./interpret.mjs";
 import { draftInputError, createProjectStore } from "./project-store.mjs";
-import { requireProjectId, withProject } from "./project-scope.mjs";
+import { normalizeTitle, requireProjectId, withProject } from "./project-scope.mjs";
 import { createRenderController } from "./render-service.mjs";
 import { stageStoryboard } from "./stage.mjs";
 import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
@@ -70,6 +70,7 @@ export const routes = [
   { method: "GET", path: "/visual-anchors.mjs", file: "app/storyboard-web/public/visual-anchors.mjs" },
   { method: "GET", path: "/asset-picker.mjs", file: "app/storyboard-web/public/asset-picker.mjs" },
   { method: "GET", path: "/export-timing.mjs", file: "app/storyboard-web/public/export-timing.mjs" },
+  { method: "GET", path: "/duplicate-project.mjs", file: "app/storyboard-web/public/duplicate-project.mjs" },
   { method: "GET", path: "/character-anchors/putin.png", file: "app/storyboard-web/public/character-anchors/putin.png" },
   { method: "GET", path: "/character-anchors/durov.png", file: "app/storyboard-web/public/character-anchors/durov.png" },
   { method: "GET", path: "/character-anchors/peskov.png", file: "app/storyboard-web/public/character-anchors/peskov.png" },
@@ -2268,6 +2269,33 @@ async function handleProjectRename(req, res, { runtime, maxBodyBytes }) {
   sendJson(res, 200, { id: result.id, title: result.title, updatedAt: result.updatedAt });
 }
 
+async function handleProjectDuplicate(req, res, { runtime, maxBodyBytes }) {
+  if ((req.method || "GET") !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const body = await readJsonBody(req, res, maxBodyBytes);
+  if (body.done) return;
+  if (body.invalid || !body.payload || typeof body.payload !== "object" || Array.isArray(body.payload)) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  if (!normalizeTitle(body.payload.title) || !runtime.projectStore?.duplicateProject) {
+    sendJson(res, runtime.projectStore?.duplicateProject ? 400 : 503, {
+      status: "failed",
+      kind: runtime.projectStore?.duplicateProject ? "invalid-request" : "database",
+    });
+    return;
+  }
+  const result = await runtime.projectStore.duplicateProject(requireProjectId(), body.payload.title);
+  if (!result?.ok) {
+    sendJson(res, result?.httpStatus || 503, { status: "failed", kind: result?.kind || "database" });
+    return;
+  }
+  sendJson(res, 201, result.project);
+}
+
 async function handleProjectOpen(req, res, { runtime }) {
   if ((req.method || "GET") !== "POST") {
     sendEmpty(res, 405, { Allow: "POST" });
@@ -2315,6 +2343,10 @@ async function handle(req, res, options) {
     const rest = scoped[2] || "";
     if (rest === "/open") {
       await withProject(projectId, () => handleProjectOpen(req, res, options));
+      return;
+    }
+    if (rest === "/duplicate") {
+      await withProject(projectId, () => handleProjectDuplicate(req, res, options));
       return;
     }
     if ((rest === "" || rest === "/") && method === "PATCH") {

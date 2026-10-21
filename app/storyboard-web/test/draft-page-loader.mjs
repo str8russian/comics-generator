@@ -11,6 +11,7 @@ const files = {
   "/visual-anchors.mjs": "app/storyboard-web/public/visual-anchors.mjs",
   "/asset-picker.mjs": "app/storyboard-web/public/asset-picker.mjs",
   "/export-timing.mjs": "app/storyboard-web/public/export-timing.mjs",
+  "/duplicate-project.mjs": "app/storyboard-web/public/duplicate-project.mjs",
   "/app.js": "app/storyboard-web/public/app.js",
 };
 

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { duplicateProject as copyCurrentProject } from "./project-duplicate.mjs";
 import { normalizeTitle, PROJECT_ID_PATTERN } from "./project-scope.mjs";
 
 const NEW_PROJECT_TITLE = "Новый проект";
@@ -172,6 +173,30 @@ export async function createProject(pool) {
   } finally {
     client.release();
   }
+}
+
+export async function duplicateProject(pool, sourceProjectId, title, options) {
+  const copied = await copyCurrentProject(pool, sourceProjectId, title, options);
+  if (!copied.ok) return copied;
+  return {
+    ok: true,
+    httpStatus: 201,
+    project: {
+      id: copied.destinationId,
+      title: copied.title,
+      createdAt: copied.createdAt,
+      updatedAt: copied.updatedAt,
+      lastOpenedAt: null,
+      snippet: snippetFromDraft(copied.draftText),
+      stage: deriveStage({
+        hasMaterial: copied.hasMaterial,
+        hasStoryboard: copied.hasStoryboard,
+        hasVisual: copied.hasVisual,
+        visualApproved: copied.visualApproved,
+        renderReady: false,
+      }),
+    },
+  };
 }
 
 export async function renameProject(pool, projectId, title) {

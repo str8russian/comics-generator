@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isEmptyDraft } from "./fidelity.mjs";
 import { assessDialogue } from "./overflow.mjs";
-import { createProject, listProjects, markOpened, renameProject } from "./project-catalog.mjs";
+import { createProject, duplicateProject, listProjects, markOpened, renameProject } from "./project-catalog.mjs";
 import { requireProjectId, touchProjectContent } from "./project-scope.mjs";
 import {
   applyExclusions,
@@ -1760,6 +1760,7 @@ export function createProjectStore(pool) {
     stageActiveMaterial: (options) => stageActiveMaterial(pool, options),
     listProjects: (options) => listProjects(pool, options),
     createProject: () => createProject(pool),
+    duplicateProject: (projectId, title, options) => duplicateProject(pool, projectId, title, options),
     renameProject: (projectId, title) => renameProject(pool, projectId, title),
     markOpened: (projectId) => markOpened(pool, projectId),
   };

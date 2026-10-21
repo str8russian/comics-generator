@@ -16,6 +16,18 @@
     <p id="continue-row" hidden><a id="continue-project" href="/">Продолжить</a></p>
     <p id="project-list-status" class="notice" hidden></p>
     <div id="project-list" class="project-list"></div>
+    <dialog id="duplicate-project-dialog" class="duplicate-dialog" aria-labelledby="duplicate-dialog-title">
+      <form id="duplicate-project-form">
+        <h2 id="duplicate-dialog-title">Дублировать проект</h2>
+        <label for="duplicate-project-title">Название копии</label>
+        <input id="duplicate-project-title" name="title" maxlength="120" required autocomplete="off">
+        <p id="duplicate-project-status" class="notice" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="duplicate-project-cancel" type="button">Отмена</button>
+          <button id="duplicate-project-submit" type="submit">Создать копию</button>
+        </div>
+      </form>
+    </dialog>
   </main>
   <script type="module" src="/projects.js"></script>
 </body>

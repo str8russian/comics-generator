@@ -17,6 +17,7 @@
         <input id="project-title" name="title" maxlength="120" required>
         <button type="submit">Сохранить название</button>
       </form>
+      <button id="duplicate-project" type="button">Дублировать проект</button>
     </header>
     <section id="project-missing" class="project-missing" hidden>
       <h1>Проект не найден</h1>
@@ -225,6 +226,18 @@
         <button id="close-detail" type="button" class="secondary">Закрыть</button>
       </div>
     </div>
+  </dialog>
+  <dialog id="duplicate-project-dialog" class="duplicate-dialog" aria-labelledby="duplicate-dialog-title">
+    <form id="duplicate-project-form">
+      <h2 id="duplicate-dialog-title">Дублировать проект</h2>
+      <label for="duplicate-project-title">Название копии</label>
+      <input id="duplicate-project-title" name="title" maxlength="120" required autocomplete="off">
+      <p id="duplicate-project-status" class="notice" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="duplicate-project-cancel" type="button">Отмена</button>
+        <button id="duplicate-project-submit" type="submit">Создать копию</button>
+      </div>
+    </form>
   </dialog>
   <script type="module" src="/app.js"></script>
 </body>

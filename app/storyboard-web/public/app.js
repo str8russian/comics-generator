@@ -1,4 +1,5 @@
 import { projectApi, projectIdFromLocation } from "./project-api.mjs";
+import { bindDuplicateDialog, DUPLICATE_LABEL, requestProjectDuplicate } from "./duplicate-project.mjs";
 import { bindDraftAutosave } from "/draft-autosave.mjs";
 import { assessDialogue, compileOverflow, pageState } from "/overflow.mjs";
 import * as FrameRenderer from "/frame-renderer.mjs";
@@ -2662,13 +2663,18 @@ function showMissingProject() {
   if (workspace) workspace.hidden = true;
   const rename = document.querySelector("#rename-form");
   if (rename) rename.hidden = true;
+  const duplicate = document.querySelector("#duplicate-project");
+  if (duplicate) duplicate.hidden = true;
   const dock = document.querySelector("#research-dock-host");
   if (dock) dock.hidden = true;
 }
 
+let savedProjectTitle = "";
+
 function showProjectTitle(title) {
+  savedProjectTitle = typeof title === "string" ? title : "";
   const input = document.querySelector("#project-title");
-  if (input && document.activeElement !== input) input.value = title || "";
+  if (input && document.activeElement !== input) input.value = savedProjectTitle;
 }
 
 draftAutosave.ready.then(async () => {
@@ -2706,6 +2712,23 @@ document.querySelector("#rename-form")?.addEventListener("submit", async (event)
   } catch {
     // The visible title stays as the user left it. The next reload shows the stored title.
   }
+});
+
+const duplicateButton = document.querySelector("#duplicate-project");
+if (duplicateButton) duplicateButton.textContent = DUPLICATE_LABEL;
+bindDuplicateDialog({
+  dialog: document.querySelector("#duplicate-project-dialog"),
+  form: document.querySelector("#duplicate-project-form"),
+  titleInput: document.querySelector("#duplicate-project-title"),
+  statusNode: document.querySelector("#duplicate-project-status"),
+  submitButton: document.querySelector("#duplicate-project-submit"),
+  cancelButton: document.querySelector("#duplicate-project-cancel"),
+  openButton: duplicateButton,
+  getSource: () => ({ id: projectIdFromLocation(), title: savedProjectTitle }),
+  requestDuplicate: requestProjectDuplicate,
+  onSuccess(project) {
+    if (project?.id) window.location.assign(`/projects/${project.id}`);
+  },
 });
 
 form.addEventListener("submit", async (event) => {
