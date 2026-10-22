@@ -19,7 +19,13 @@
     "spike:image-api:limit-check": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/limit-check.mjs",
     "spike:image-api:payload-threshold": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/payload-threshold.mjs",
     "spike:image-api:image-threshold": "node --env-file-if-exists=.env.local spikes/image-api-diagnostics/image-threshold.mjs",
-    "spike:base-anchor-ui": "node --test spikes/base-anchor-ui-prototype/test/*.test.mjs"
+    "spike:base-anchor-ui": "node --test spikes/base-anchor-ui-prototype/test/*.test.mjs",
+    "spike:style-determinism": "node --test spikes/style-determinism-generation/test/*.test.mjs",
+    "spike:style-determinism:manifest": "node spikes/style-determinism-generation/write-runtime-manifest.mjs",
+    "spike:style-determinism:check": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/live.mjs --check",
+    "spike:style-determinism:fake": "node spikes/style-determinism-generation/live.mjs --fake",
+    "spike:style-determinism:live": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/live.mjs",
+    "spike:style-determinism:review": "node spikes/style-determinism-generation/review.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",

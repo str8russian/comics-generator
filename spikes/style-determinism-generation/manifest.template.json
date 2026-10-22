@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "samePerson": true,
+  "inputs": {
+    "source-a": {
+      "logicalId": "source-a",
+      "role": "identity",
+      "sha256": "b4e3eec69f14c21e910ba45f6cf80d23098026a70f5258cf5c8c509f5c364827",
+      "mime": "image/jpeg",
+      "width": 640,
+      "height": 640
+    },
+    "source-b": {
+      "logicalId": "source-b",
+      "role": "identity",
+      "sha256": "59f457cc2f66d675e2198f56e45c93aa23f3200fd09b38d546442f9f217be2d1",
+      "mime": "image/jpeg",
+      "width": 640,
+      "height": 640
+    },
+    "style-reference": {
+      "logicalId": "style-reference",
+      "role": "style",
+      "sha256": "2b4faa44c888c5282781bf10c83d4fcd41301c9a0903c2b68dec8d8e47a13fdb",
+      "mime": "image/png",
+      "width": 928,
+      "height": 1152
+    }
+  }
+}
