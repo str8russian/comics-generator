@@ -4,7 +4,7 @@
 
 `POST /api/projects/{sourceProjectId}/duplicate` with `{ title }` → one repeatable-read transaction → a new project whose current draft, active material, latest checked storyboard, current visual rows, and reachable assets are new rows → `201` project presentation → the browser opens that project.
 
-No migration. No generic graph copier. No shared asset rows. No provider call.
+Migration `015_storyboard_reusable_asset.sql` adds `storyboard_reusable_asset`, explicit reusable-image membership for one storyboard result. Existing projects have no membership rows, so their picker stays derived from current and assigned panels and ready generation outputs. A duplicate records the source picker set in that table, which keeps those images selectable without copying generation rows or older storyboard versions. There is still no generic graph copier, no shared asset row, and no provider call.
 
 ## Copy
 

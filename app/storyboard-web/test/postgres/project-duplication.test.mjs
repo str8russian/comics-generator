@@ -1232,23 +1232,33 @@ test("duplication accepts a style seed whose approved anchor belongs to an earli
     const destSeed = await pool.query(
       `SELECT project_style_seed.source_anchor_version_id,
               project_style_seed.style_asset_id,
+              project_style_seed.material_state_id AS seed_material_state_id,
               character_anchor_version.instruction,
-              character_anchor_version.material_state_id,
-              source_revision.project_id
+              character_anchor_version.material_state_id AS anchor_material_state_id,
+              anchor_revision.project_id AS anchor_project_id,
+              project.active_material_state_id
        FROM project_style_seed
        JOIN character_anchor_version
          ON character_anchor_version.id = project_style_seed.source_anchor_version_id
-       JOIN material_state ON material_state.id = character_anchor_version.material_state_id
-       JOIN source_revision ON source_revision.id = material_state.source_revision_id
-       JOIN material_state AS seed_material ON seed_material.id = project_style_seed.material_state_id
-       JOIN source_revision AS seed_revision ON seed_revision.id = seed_material.source_revision_id
-       WHERE seed_revision.project_id = $1`,
+       JOIN material_state AS anchor_material
+         ON anchor_material.id = character_anchor_version.material_state_id
+       JOIN source_revision AS anchor_revision
+         ON anchor_revision.id = anchor_material.source_revision_id
+       JOIN material_state AS seed_material
+         ON seed_material.id = project_style_seed.material_state_id
+       JOIN source_revision AS seed_revision
+         ON seed_revision.id = seed_material.source_revision_id
+       JOIN project ON project.id = seed_revision.project_id
+       WHERE project.id = $1`,
       [copyId],
     );
     assert.equal(destSeed.rowCount, 1);
     assert.equal(destSeed.rows[0].instruction, "исходный стиль");
-    assert.equal(destSeed.rows[0].project_id, copyId);
-    assert.equal(destSeed.rows[0].material_state_id, destSeed.rows[0].material_state_id);
+    assert.equal(destSeed.rows[0].anchor_project_id, copyId);
+    assert.equal(destSeed.rows[0].anchor_material_state_id, destSeed.rows[0].seed_material_state_id);
+    assert.equal(destSeed.rows[0].anchor_material_state_id, destSeed.rows[0].active_material_state_id);
+    assert.notEqual(destSeed.rows[0].anchor_material_state_id, confirmed.materialStateId);
+    assert.notEqual(destSeed.rows[0].anchor_material_state_id, editedSource.materialStateId);
     const destHeads = await pool.query(
       `SELECT character_name, anchor_version_id
        FROM character_anchor_head
@@ -1274,8 +1284,6 @@ test("duplication accepts a style seed whose approved anchor belongs to an earli
     assert.equal(styleAsset.rows[0].project_id, copyId);
     assert.notEqual(destSeed.rows[0].style_asset_id, originalSeed.rows[0].style_asset_id);
     assert.notEqual(destSeed.rows[0].source_anchor_version_id, anna.anchorId);
-    const sourceMaterialIds = [confirmed.materialStateId, editedSource.materialStateId];
-    assert.equal(sourceMaterialIds.includes(destSeed.rows[0].material_state_id), false);
 
     const foreign = await createProject(pool);
     assertOk(foreign, "foreign-create");
