@@ -49,13 +49,25 @@ export const STYLE_AUTHORITY = [
 
 export const HYBRID_PRECEDENCE = "The written rendering contract wins over incidental identity, clothing, pose, crop, or lighting in the style image.";
 
+export const IDENTITY_COLOR_SAFEGUARD = [
+  "Identity, apparent-age, and source-color safeguards:",
+  "- Preserve the person's apparent age and stable facial proportions. Do not rejuvenate, age up, beautify, idealize, or average the face.",
+  "- Preserve age- and identity-bearing traits visible in the identity reference, including hairline, gray or natural hair color, eyebrow density, mustache, beard or stubble shape and color, jaw, eyes, nose, mouth, cheeks, and under-eye structure.",
+  "- Express age and identity with selective contour and form detail plus the same limited broad tonal planes required by the rendering profile. Do not replace identity detail with wrinkle noise, skin texture, blemish clusters, or many small shadow islands.",
+  "- Ignore the source photograph's background color, white balance, color temperature, exposure, colored bounce, and environmental lighting. Do not transfer a global warm, cool, blue, gray, purple, orange, or green cast.",
+  "- Keep skin and hair colors faithful to the person rather than to the source lighting. Do not materially lighten or darken skin, recolor hair, or suppress visible gray hair.",
+].join("\n");
+
 export function referencePlan(condition) {
+  if (condition === "prompt-baseline" || condition === "prompt-identity-color") return ["identity"];
   if (condition === "prompt-only") return ["identity"];
   if (condition === "style-reference-only" || condition === "hybrid") return ["identity", "style"];
   throw new Error(`unknown condition: ${condition}`);
 }
 
 export function compileConditionPrompt(condition) {
+  if (condition === "prompt-baseline") return compileConditionPrompt("prompt-only");
+  if (condition === "prompt-identity-color") return `${compileConditionPrompt("prompt-only")}\n\n${IDENTITY_COLOR_SAFEGUARD}`;
   if (!CONDITIONS.includes(condition)) throw new Error(`unknown condition: ${condition}`);
   const parts = [OPENING, "", IDENTITY_LINE, "", COMMON_CONSTRAINTS];
   if (condition === "prompt-only" || condition === "hybrid") parts.push("", ACCEPTED_STYLE_BLOCK);

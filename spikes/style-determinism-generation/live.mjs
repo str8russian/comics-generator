@@ -4,7 +4,18 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { generateImage } from "../../app/storyboard-web/image-provider.mjs";
+import { createCallCeiling } from "./lib/ceiling.mjs";
 import { buildPreflight, resolveRunConfig } from "./lib/config.mjs";
+import {
+  CROSS_ATTEMPT_ORDER,
+  CROSS_DISPLAY_CODE_ORDER,
+  CROSS_IDENTITY_INVOCATION_CEILING,
+  CROSS_IDENTITY_PLANNED,
+  CROSS_IDENTITY_STATEMENT,
+  CROSS_INPUT_IDS,
+  buildCrossIdentityMatrix,
+  crossIdentityPromptHashes,
+} from "./lib/cross-identity.mjs";
 import { createFakeImageGenerator } from "./lib/fake-provider.mjs";
 import { snapshotRunInputs, verifyInputs } from "./lib/inputs.mjs";
 import { assertEvidenceDirectory, writeRunSnapshot } from "./lib/persist.mjs";
@@ -12,30 +23,33 @@ import { assertSafeEvidence } from "./lib/evidence.mjs";
 import { executeRun } from "./lib/runner.mjs";
 
 const SPIKE_ROOT = fileURLToPath(new URL(".", import.meta.url));
-const RUN_ID = /^(?:fake-smoke|sdg-\d{8}T\d{6}Z)$/;
 
 export function parseArgs(argv) {
-  const args = { fake: false, check: false, runDir: null, runtime: null, template: null, runId: null };
+  const args = { fake: false, check: false, runDir: null, runtime: null, template: null, runId: null, profile: null };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === "--fake") args.fake = true;
     else if (token === "--check") args.check = true;
+    else if (token === "--profile") args.profile = requiredValue(argv, ++index);
     else if (token === "--run-dir") args.runDir = requiredValue(argv, ++index);
     else if (token === "--runtime") args.runtime = requiredValue(argv, ++index);
     else if (token === "--template") args.template = requiredValue(argv, ++index);
     else if (token === "--run-id") args.runId = requiredValue(argv, ++index);
     else throw new Error("unknown argument");
   }
+  if (args.profile && args.profile !== "cross-identity") throw new Error("unknown profile");
   return args;
 }
 
 export async function main(argv = [], options = {}) {
   const args = parseArgs(argv);
+  const crossIdentity = args.profile === "cross-identity";
   const logger = options.logger || ((line) => console.log(line));
   const env = options.env || process.env;
   const verified = await verifyInputs({
-    runtimePath: args.runtime || join(SPIKE_ROOT, "runtime-manifest.json"),
-    templatePath: args.template || join(SPIKE_ROOT, "manifest.template.json"),
+    runtimePath: args.runtime || join(SPIKE_ROOT, crossIdentity ? "runtime-manifest.cross-identity.json" : "runtime-manifest.json"),
+    templatePath: args.template || join(SPIKE_ROOT, crossIdentity ? "manifest.cross-identity.template.json" : "manifest.template.json"),
+    ...(crossIdentity ? { inputIds: CROSS_INPUT_IDS, samePerson: false } : {}),
   });
   if (!verified.ok) {
     logger(JSON.stringify({ ok: false, kind: "input-validation", attempted: 0, failures: verified.failures || [], reason: verified.reason || verified.detail || null }));
@@ -51,7 +65,18 @@ export async function main(argv = [], options = {}) {
     return { exitCode: 2, attempted: 0 };
   }
   const git = options.git || readGitState();
-  const preflight = assertSafeEvidence(buildPreflight({ config, inputs: verified.inputs, git }));
+  const preflight = buildPreflight({ config, inputs: verified.inputs, git });
+  if (crossIdentity) {
+    preflight.profile = "cross-identity";
+    preflight.sameIdentityStatement = CROSS_IDENTITY_STATEMENT;
+    preflight.attemptOrder = CROSS_ATTEMPT_ORDER;
+    preflight.displayCodeOrder = CROSS_DISPLAY_CODE_ORDER;
+    preflight.planned = CROSS_IDENTITY_PLANNED;
+    preflight.invocationCeiling = CROSS_IDENTITY_INVOCATION_CEILING;
+    preflight.promptHashes = crossIdentityPromptHashes();
+    preflight.callCounter = 0;
+  }
+  assertSafeEvidence(preflight);
   if (!args.fake && preflight.gitStatus.trim() !== "") {
     logger(JSON.stringify({ ok: false, kind: "dirty-worktree", attempted: 0, callCounter: 0 }));
     return { exitCode: 2, attempted: 0 };
@@ -59,8 +84,9 @@ export async function main(argv = [], options = {}) {
   logger(`PREFLIGHT ${JSON.stringify(preflight)}`);
   if (args.check) return { exitCode: 0, attempted: 0, preflight };
 
-  const runId = args.runId || (args.fake ? "fake-smoke" : stamp());
-  if (!RUN_ID.test(runId) || (!args.fake && runId === "fake-smoke")) {
+  const runId = args.runId || (args.fake ? (crossIdentity ? "fake-cross" : "fake-smoke") : stamp(crossIdentity ? "sdc" : "sdg"));
+  const runPattern = crossIdentity ? /^(?:fake-cross|sdc-\d{8}T\d{6}Z)$/ : /^(?:fake-smoke|sdg-\d{8}T\d{6}Z)$/;
+  if (!runPattern.test(runId) || (!args.fake && (runId === "fake-smoke" || runId === "fake-cross"))) {
     logger(JSON.stringify({ ok: false, kind: "run-id", attempted: 0 }));
     return { exitCode: 2, attempted: 0 };
   }
@@ -79,7 +105,7 @@ export async function main(argv = [], options = {}) {
   await writeFile(join(runDir, "preflight.json"), `${JSON.stringify(preflight, null, 2)}\n`);
   let snapshotted;
   try {
-    snapshotted = await snapshotRunInputs(runDir, verified.inputs);
+    snapshotted = await snapshotRunInputs(runDir, verified.inputs, crossIdentity ? CROSS_INPUT_IDS : undefined);
   } catch {
     logger(JSON.stringify({ ok: false, kind: "input-snapshot", attempted: 0, providerCalls: 0 }));
     return { exitCode: 2, attempted: 0, providerCalls: 0 };
@@ -105,10 +131,16 @@ export async function main(argv = [], options = {}) {
     budgetBytes: config.referenceConfig.budgetBytes,
     inputs: snapshotted,
     preflight,
-    planned: 12,
+    planned: crossIdentity ? CROSS_IDENTITY_PLANNED : 12,
+    ...(crossIdentity ? { profile: "cross-identity" } : {}),
   };
   const result = await executeRun({
     verified,
+    ...(crossIdentity ? {
+      cells: buildCrossIdentityMatrix(),
+      ceiling: createCallCeiling({ limit: CROSS_IDENTITY_INVOCATION_CEILING }),
+      planned: CROSS_IDENTITY_PLANNED,
+    } : {}),
     imageGenerator,
     model: config.model,
     timeoutMs: config.timeoutMs,
@@ -145,8 +177,8 @@ export async function main(argv = [], options = {}) {
   return { exitCode: 0, ...summary, runDir };
 }
 
-function stamp(date = new Date()) {
-  return `sdg-${date.toISOString().slice(0, 19).replace(/[-:]/g, "")}Z`;
+function stamp(prefix, date = new Date()) {
+  return `${prefix}-${date.toISOString().slice(0, 19).replace(/[-:]/g, "")}Z`;
 }
 
 function readGitState() {

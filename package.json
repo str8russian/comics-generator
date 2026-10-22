@@ -27,7 +27,12 @@
     "spike:style-determinism:live": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/live.mjs",
     "spike:style-determinism:review": "node spikes/style-determinism-generation/review.mjs",
     "spike:style-determinism:backfill": "node spikes/style-determinism-generation/backfill-inputs.mjs",
-    "spike:style-determinism:recover": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/recover.mjs"
+    "spike:style-determinism:recover": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/recover.mjs",
+    "spike:style-determinism:cross-identity:manifest": "node spikes/style-determinism-generation/write-runtime-manifest.mjs --profile cross-identity",
+    "spike:style-determinism:cross-identity:check": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/live.mjs --profile cross-identity --check",
+    "spike:style-determinism:cross-identity:fake": "node spikes/style-determinism-generation/live.mjs --profile cross-identity --fake",
+    "spike:style-determinism:cross-identity:live": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/live.mjs --profile cross-identity",
+    "spike:style-determinism:cross-identity:review": "node spikes/style-determinism-generation/review.mjs --profile cross-identity"
   },
   "dependencies": {
     "ajv": "^8.17.1",

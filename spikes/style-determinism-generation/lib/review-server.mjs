@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyJudgement, emptyJudgements, judgementPassComplete } from "./judgements.mjs";
+import { applyJudgement, emptyJudgements, judgementFieldsFor, judgementPassComplete } from "./judgements.mjs";
 import { verifyRunInputs } from "./inputs.mjs";
 import { renderMatchedFaceCrop } from "./crops.mjs";
 import { assertSafeEvidence } from "./evidence.mjs";
@@ -13,7 +13,7 @@ import { REVIEW_HOST } from "./constants.mjs";
 
 const writeQueues = new Map();
 
-const PUBLIC_ID = /^source-[ab]\.C-(?:K4|M9|R2)\.r[12]$/;
+const PUBLIC_ID = /^source-[ab]\.C-(?:K4|M9|R2|H6|N8)\.r[12]$/;
 const INPUT_ID = /^(?:source-a|source-b|style-reference)$/;
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -73,6 +73,7 @@ async function sendInput(res, context, rawId) {
     return sendJson(res, 409, { ok: false, kind: failure?.problem || "input-validation" });
   }
   const input = verified.inputs[logicalId];
+  if (!input?.bytes) return sendJson(res, 404, { ok: false, kind: "not-found" });
   sendBytes(res, 200, input.mime, input.bytes);
 }
 
@@ -117,7 +118,7 @@ export function persistJudgement(runDir, fields) {
   return withRunLock(runDir, async () => {
     const loaded = await loadRun(runDir);
     const known = new Set((loaded.manifest.cells || []).filter((cell) => cell.status === "succeeded").map((cell) => cell.publicId));
-    const applied = applyJudgement(loaded.judgements, fields.publicId, fields, known);
+    const applied = applyJudgement(loaded.judgements, fields.publicId, fields, known, judgementFieldsFor(loaded.manifest));
     if (!applied.ok) return applied;
     assertSafeEvidence(applied.judgements);
     await writeJsonAtomic(join(runDir, "review", "judgements.json"), applied.judgements);

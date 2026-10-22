@@ -14,9 +14,11 @@ test("local results and the runtime manifest are ignored", async () => {
     path: "/tmp/probe-image.jpeg",
   }));
   const runtime = join(root, "spikes/style-determinism-generation/runtime-manifest.json");
+  const crossRuntime = join(root, "spikes/style-determinism-generation/runtime-manifest.cross-identity.json");
   await writeFile(runtime, JSON.stringify({ inputs: { "source-a": { path: "/tmp/probe-image.jpeg" } } }));
+  await writeFile(crossRuntime, JSON.stringify({ inputs: { "source-a": { path: "/tmp/probe-image.jpeg" } } }));
   try {
-    for (const path of [probe, runtime, join(root, "spikes/style-determinism-generation/results/probe/outputs/cell.png")]) {
+    for (const path of [probe, runtime, crossRuntime, join(root, "spikes/style-determinism-generation/results/probe/outputs/cell.png")]) {
       const ignored = spawnSync("git", ["check-ignore", "--", path], { cwd: root, encoding: "utf8" });
       assert.equal(ignored.status, 0, path);
       const status = spawnSync("git", ["status", "--porcelain", "--", path], { cwd: root, encoding: "utf8" });
@@ -31,6 +33,7 @@ test("local results and the runtime manifest are ignored", async () => {
   } finally {
     await rm(join(root, "spikes/style-determinism-generation/results/probe"), { recursive: true, force: true });
     await rm(runtime, { force: true });
+    await rm(crossRuntime, { force: true });
   }
 });
 
@@ -58,7 +61,7 @@ async function textFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
-    if (entry.name === "results" || entry.name === "node_modules" || entry.name === "test" || entry.name === "runtime-manifest.json") continue;
+    if (entry.name === "results" || entry.name === "node_modules" || entry.name === "test" || entry.name.startsWith("runtime-manifest")) continue;
     const path = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...await textFiles(path));
     else if (/\.(mjs|json|css|js|md)$/.test(entry.name)) files.push(path);

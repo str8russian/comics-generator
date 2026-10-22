@@ -1,7 +1,10 @@
 import { INVOCATION_CEILING, SYSTEMIC_FAILURE_KINDS } from "./constants.mjs";
+import { CROSS_IDENTITY_INVOCATION_CEILING } from "./cross-identity.mjs";
 
 export function createCallCeiling({ limit = INVOCATION_CEILING } = {}) {
-  if (limit !== INVOCATION_CEILING) throw new Error("the provider invocation ceiling is fixed at 24");
+  if (limit !== INVOCATION_CEILING && limit !== CROSS_IDENTITY_INVOCATION_CEILING) {
+    throw new Error("the provider invocation ceiling is fixed at 24");
+  }
   let attempted = 0;
   let previousTerminalKind = null;
   let halted = false;
@@ -10,6 +13,7 @@ export function createCallCeiling({ limit = INVOCATION_CEILING } = {}) {
   let maxActive = 0;
 
   return {
+    limit,
     get attempted() {
       return attempted;
     },

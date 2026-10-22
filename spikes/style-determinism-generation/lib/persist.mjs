@@ -12,6 +12,13 @@ import {
   SAME_IDENTITY_STATEMENT,
   SEED_NOTE,
 } from "./constants.mjs";
+import {
+  CROSS_ATTEMPT_ORDER,
+  CROSS_CONDITION_BY_CODE,
+  CROSS_DISPLAY_CODE_ORDER,
+  CROSS_IDENTITY_INVOCATION_CEILING,
+  CROSS_IDENTITY_STATEMENT,
+} from "./cross-identity.mjs";
 import { assertSafeEvidence, publicInputRecord } from "./evidence.mjs";
 
 export function assertEvidenceDirectory(runDir) {
@@ -36,10 +43,11 @@ export async function writeRunSnapshot(runDir, snapshot) {
     await writeFile(join(root, "outputs", `${id}.${extension}`), output.bytes);
   }
   const manifest = buildManifest(snapshot);
+  const crossIdentity = snapshot.profile === "cross-identity";
   const conditionMap = {
     note: BLIND_NOTE,
-    codes: CONDITION_BY_CODE,
-    displayCodeOrder: DISPLAY_CODE_ORDER,
+    codes: crossIdentity ? CROSS_CONDITION_BY_CODE : CONDITION_BY_CODE,
+    displayCodeOrder: crossIdentity ? CROSS_DISPLAY_CODE_ORDER : DISPLAY_CODE_ORDER,
   };
   assertSafeEvidence(manifest);
   assertSafeEvidence(conditionMap);
@@ -54,6 +62,7 @@ export async function writeRunSnapshot(runDir, snapshot) {
 
 export function buildManifest(snapshot) {
   const cells = snapshot.cells || [];
+  const crossIdentity = snapshot.profile === "cross-identity";
   const planned = snapshot.planned ?? CALL_CEILING;
   const attempted = cells.filter((cell) => cell.attemptNumber != null).length;
   const succeeded = cells.filter((cell) => cell.status === "succeeded").length;
@@ -64,8 +73,9 @@ export function buildManifest(snapshot) {
     runId: snapshot.runId,
     mode: snapshot.mode,
     createdAt: snapshot.createdAt,
-    sameIdentity: true,
-    sameIdentityStatement: SAME_IDENTITY_STATEMENT,
+    ...(crossIdentity ? { profile: "cross-identity", invocationCeiling: CROSS_IDENTITY_INVOCATION_CEILING } : {}),
+    sameIdentity: crossIdentity ? false : true,
+    sameIdentityStatement: crossIdentity ? CROSS_IDENTITY_STATEMENT : SAME_IDENTITY_STATEMENT,
     seed: null,
     repeatVariation: SEED_NOTE,
     model: snapshot.model,
@@ -81,8 +91,9 @@ export function buildManifest(snapshot) {
     providerInvocations: snapshot.providerCalls ?? countProviderInvocations(cells),
     failedInvocations: countFailedInvocations(cells),
     stopReason: snapshot.stopReason || null,
-    attemptOrder: ATTEMPT_ORDER,
-    displayCodeOrder: DISPLAY_CODE_ORDER,
+    attemptOrder: crossIdentity ? CROSS_ATTEMPT_ORDER : ATTEMPT_ORDER,
+    displayCodeOrder: crossIdentity ? CROSS_DISPLAY_CODE_ORDER : DISPLAY_CODE_ORDER,
+    ...(crossIdentity ? { conditionByCode: CROSS_CONDITION_BY_CODE } : {}),
     inputs: Object.fromEntries(Object.entries(snapshot.inputs || {}).map(([id, input]) => [id, publicInputRecord(input)])),
     cells,
   };

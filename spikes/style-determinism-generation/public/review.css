@@ -29,6 +29,10 @@ h1, h2, h3 { font-family: "Avenir Next", "Segoe UI", sans-serif; }
   gap: 16px;
 }
 
+.input-row.is-pair, .cell-row.is-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 figure, .cell {
   margin: 0;
   background: white;
@@ -120,5 +124,5 @@ table { width: 100%; border-collapse: collapse; background: white; }
 th, td { border: 1px solid #cfc6b8; padding: 6px; vertical-align: top; text-align: left; font-size: 0.82rem; }
 
 @media (max-width: 900px) {
-  .input-row, .cell-row { grid-template-columns: 1fr; }
+  .input-row, .cell-row, .input-row.is-pair, .cell-row.is-pair { grid-template-columns: 1fr; }
 }

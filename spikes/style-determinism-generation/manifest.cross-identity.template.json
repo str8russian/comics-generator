@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "profile": "cross-identity",
+  "samePerson": false,
+  "inputs": {
+    "source-a": {
+      "logicalId": "source-a",
+      "role": "identity",
+      "sha256": "a0b84af7f7330d3c713a1fb5ff5d79a4b51cd29093897d5103fa53fb9b6b5ba4",
+      "mime": "image/jpeg",
+      "width": 900,
+      "height": 600
+    },
+    "source-b": {
+      "logicalId": "source-b",
+      "role": "identity",
+      "sha256": "1931b220eeeacfa82c24aa88f370b05a2fbc47e56173f3b3c00a4ed4e33e4c3e",
+      "mime": "image/png",
+      "width": 348,
+      "height": 439
+    }
+  }
+}

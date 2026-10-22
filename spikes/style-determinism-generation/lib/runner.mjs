@@ -15,17 +15,18 @@ import { countFailedInvocations } from "./persist.mjs";
 
 const RETRYABLE = new Set(RETRYABLE_FAILURE_KINDS);
 
-export async function executeRun({ verified, ...options }) {
+export async function executeRun({ verified, cells, ceiling, planned, ...options }) {
+  const count = planned ?? cells?.length ?? CALL_CEILING;
   if (!verified?.ok) {
     return {
       ok: false,
       kind: "input-validation",
       stopReason: "input-validation",
-      planned: CALL_CEILING,
+      planned: count,
       attempted: 0,
       succeeded: 0,
       failed: 0,
-      unattempted: CALL_CEILING,
+      unattempted: count,
       providerCalls: 0,
       failedInvocations: 0,
       cells: [],
@@ -33,7 +34,12 @@ export async function executeRun({ verified, ...options }) {
       outputs: {},
     };
   }
-  return runMatrix({ ...options, inputs: verified.inputs });
+  return runMatrix({
+    ...options,
+    inputs: verified.inputs,
+    ...(cells ? { cells } : {}),
+    ...(ceiling ? { ceiling } : {}),
+  });
 }
 
 export async function prepareCellRequest({
@@ -73,16 +79,17 @@ export async function runMatrix({
   onCell,
 } = {}) {
   if (!referenceConfig?.ok || !model || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_PROVIDER_TIMEOUT_MS || typeof imageGenerator !== "function") {
-    return emptyStop("configuration");
+    return emptyStop("configuration", cells.length);
   }
   const prompts = Object.fromEntries(cells.map((cell) => [cell.id, compileConditionPrompt(cell.condition)]));
   const results = [];
   const outputs = {};
   let stopReason = null;
+  const invocationLimit = Number.isInteger(ceiling?.limit) ? ceiling.limit : INVOCATION_CEILING;
 
   for (const cell of cells) {
     const prompt = prompts[cell.id];
-    if (stopReason || ceiling.halted || ceiling.attempted >= INVOCATION_CEILING) {
+    if (stopReason || ceiling.halted || ceiling.attempted >= invocationLimit) {
       results.push(unattemptedCell(cell, stopReason || ceiling.haltReason || "ceiling", prompt, model));
       stopReason = await notify(onCell, snapshot(results, prompts, outputs, stopReason || ceiling.haltReason || "ceiling", ceiling)) || stopReason;
       continue;
@@ -320,16 +327,16 @@ function snapshot(cells, prompts, outputs, stopReason, ceiling) {
   return { cells, prompts, outputs, stopReason, providerCalls: ceiling.attempted };
 }
 
-function emptyStop(stopReason) {
+function emptyStop(stopReason, planned = CALL_CEILING) {
   return {
     ok: false,
     kind: stopReason,
     stopReason,
-    planned: CALL_CEILING,
+    planned,
     attempted: 0,
     succeeded: 0,
     failed: 0,
-    unattempted: CALL_CEILING,
+    unattempted: planned,
     providerCalls: 0,
     failedInvocations: 0,
     cells: [],

@@ -10,6 +10,7 @@ spikes/image-api-diagnostics/fixtures/
 spikes/image-api-diagnostics/results/
 spikes/style-determinism-generation/results/
 spikes/style-determinism-generation/runtime-manifest.json
+spikes/style-determinism-generation/runtime-manifest.cross-identity.json
 
 # One approved Stage artistic baseline. Do not commit the saved candidate.
 app/storyboard-web/eval/stage-artistic/results/

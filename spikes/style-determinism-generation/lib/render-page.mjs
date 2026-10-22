@@ -10,7 +10,7 @@ import {
   SOURCES,
 } from "./constants.mjs";
 import { ACCEPTED_STYLE_BLOCK, COMMON_CONSTRAINTS } from "./prompts.mjs";
-import { categoricalCounts, judgementPassComplete } from "./judgements.mjs";
+import { categoricalCounts, judgementFieldsFor, judgementPassComplete } from "./judgements.mjs";
 
 const SOURCE_LABELS = {
   "source-a": "Source photograph A",
@@ -21,20 +21,24 @@ const SOURCE_LABELS = {
 export function buildReviewModel({ manifest, judgements, reveal = false }) {
   const pass = judgementPassComplete(manifest, judgements);
   const showNames = Boolean(reveal && pass.complete);
+  const fields = judgementFieldsFor(manifest);
   return {
     manifest,
     judgements,
+    fields,
     revealLocked: Boolean(reveal && !pass.complete),
     showNames,
     pass,
     counts: showNames ? categoricalCounts(manifest, judgements) : null,
-    groups: reviewGroups(manifest.cells || []),
+    groups: reviewGroups(manifest),
   };
 }
 
 export function renderReviewPage(model) {
-  const { manifest, judgements, showNames, revealLocked, pass, groups } = model;
+  const { manifest, judgements, showNames, revealLocked, pass, groups, fields } = model;
   const saved = judgements?.cells || {};
+  const inputIds = ["source-a", "source-b"].concat(manifest.inputs?.["style-reference"] ? ["style-reference"] : []);
+  const title = manifest.profile === "cross-identity" ? "Cross-identity prompt comparison" : "Base-anchor style comparison";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -47,17 +51,15 @@ export function renderReviewPage(model) {
 <body>
   <header class="page-header">
     <p class="eyebrow">${manifest.mode === "fake" ? "Fake-provider smoke" : "Live raw outputs"}</p>
-    <h1>Base-anchor style comparison</h1>
+    <h1>${escapeHtml(title)}</h1>
     <p class="identity-banner">${escapeHtml(manifest.sameIdentityStatement || SAME_IDENTITY_STATEMENT)}</p>
     ${manifest.mode === "fake" ? `<p class="fake-banner">These images were produced by the local fake provider. No external provider request was made.</p>` : `<p class="live-banner">These are raw provider outputs. Nothing here was corrected, cropped, or recolored after generation.</p>`}
   </header>
   <main>
     <section>
       <h2>Inputs</h2>
-      <div class="input-row">
-        ${renderInput("source-a", manifest)}
-        ${renderInput("source-b", manifest)}
-        ${renderInput("style-reference", manifest)}
+      <div class="input-row${inputIds.length === 2 ? " is-pair" : ""}">
+        ${inputIds.map((id) => renderInput(id, manifest)).join("")}
       </div>
     </section>
     <section>
@@ -79,7 +81,7 @@ export function renderReviewPage(model) {
       <pre class="profile">${escapeHtml(`${COMMON_CONSTRAINTS}\n\n${ACCEPTED_STYLE_BLOCK}`)}</pre>
       <p>For each successful output, record separate observations. Leave a field blank until you decide.</p>
       <ul>
-        ${JUDGEMENT_FIELDS.map(([, label, options]) => `<li><strong>${escapeHtml(label)}:</strong> ${options.map((option) => escapeHtml(option)).join(", ")}</li>`).join("")}
+        ${fields.map(([, label, options]) => `<li><strong>${escapeHtml(label)}:</strong> ${options.map((option) => escapeHtml(option)).join(", ")}</li>`).join("")}
       </ul>
       <p>Anatomy/artifact note is optional short text. ${escapeHtml(NO_WINNER_NOTE)}</p>
     </section>
@@ -91,7 +93,7 @@ export function renderReviewPage(model) {
       <p id="reveal-action">${pass.complete ? `<a class="reveal-link" href="/?reveal=1">Reveal condition labels</a>` : `<span class="reveal-link is-locked">Reveal condition labels</span>`}</p>
       ${showNames ? renderCounts(model) : ""}
     </section>
-    ${groups.map((group) => renderGroup(group, saved, showNames)).join("")}
+    ${groups.map((group) => renderGroup(group, saved, showNames, manifest, fields)).join("")}
     <p><a href="/api/judgements.json">Download judgement JSON</a></p>
   </main>
   <script src="/review.js"></script>
@@ -101,7 +103,11 @@ export function renderReviewPage(model) {
 
 function renderInput(id, manifest) {
   const input = manifest.inputs?.[id];
-  const role = id === "style-reference" ? "Experiment-only style reference. Not a production-wide style authority." : "Identity reference. Same person as the other source photograph.";
+  const role = id === "style-reference"
+    ? "Experiment-only style reference. Not a production-wide style authority."
+    : manifest.sameIdentity === false
+      ? "Identity reference for this person only. Not a style authority."
+      : "Identity reference. Same person as the other source photograph.";
   return `<figure>
     <img src="/media/input/${escapeHtml(id)}" alt="${escapeHtml(SOURCE_LABELS[id])}">
     <figcaption>
@@ -113,18 +119,21 @@ function renderInput(id, manifest) {
   </figure>`;
 }
 
-function renderGroup(group, saved, showNames) {
+function renderGroup(group, saved, showNames, manifest, fields) {
   const sourceLabel = SOURCE_LABELS[group.sourceId];
+  const identityLine = manifest.sameIdentity === false
+    ? "Different person from the other source photograph."
+    : "Same identity as the other source photograph.";
   return `<section>
     <h2>${escapeHtml(sourceLabel)}, repetition ${escapeHtml(group.repetition)}</h2>
-    <p>Same identity as the other source photograph.</p>
-    <div class="cell-row">
-      ${group.cells.map((cell) => cell ? renderCell(cell, saved[cell.publicId], showNames) : `<article class="cell"><p>Not recorded</p></article>`).join("")}
+    <p>${escapeHtml(identityLine)}</p>
+    <div class="cell-row${group.cells.length === 2 ? " is-pair" : ""}">
+      ${group.cells.map((cell) => cell ? renderCell(cell, saved[cell.publicId], showNames, fields) : `<article class="cell"><p>Not recorded</p></article>`).join("")}
     </div>
   </section>`;
 }
 
-function renderCell(cell, judgement, showNames) {
+function renderCell(cell, judgement, showNames, fields) {
   const label = showNames ? `${cell.blindCode} · ${cell.condition}` : cell.blindCode;
   const media = cell.status === "succeeded"
     ? `<div class="output-frame"><img src="/media/output/${escapeHtml(cell.publicId)}" alt="Raw output ${escapeHtml(cell.publicId)}"></div>
@@ -149,12 +158,12 @@ function renderCell(cell, judgement, showNames) {
       ${fact("Transform", cell.transformStep || "—")}
     </dl>
     ${showNames ? `<pre class="prompt-text">${escapeHtml(cell.promptText || "")}</pre>` : ""}
-    ${cell.status === "succeeded" ? renderJudgement(cell, judgement) : ""}
+    ${cell.status === "succeeded" ? renderJudgement(cell, judgement, fields) : ""}
   </article>`;
 }
 
-function renderJudgement(cell, judgement = {}) {
-  const fields = JUDGEMENT_FIELDS.map(([key, label, options]) => `<label>${escapeHtml(label)}
+function renderJudgement(cell, judgement = {}, fields = JUDGEMENT_FIELDS) {
+  const controls = fields.map(([key, label, options]) => `<label>${escapeHtml(label)}
     <select name="${escapeHtml(key)}">
       <option value="">—</option>
       ${options.map((option) => `<option value="${escapeHtml(option)}"${judgement[key] === option ? " selected" : ""}>${escapeHtml(option)}</option>`).join("")}
@@ -162,7 +171,7 @@ function renderJudgement(cell, judgement = {}) {
   </label>`).join("");
   return `<form class="judgement" method="post" action="/api/judgements">
     <input type="hidden" name="publicId" value="${escapeHtml(cell.publicId)}">
-    ${fields}
+    ${controls}
     <label>Anatomy/artifact note
       <textarea name="anatomyNote" maxlength="400" rows="3">${escapeHtml(judgement.anatomyNote || "")}</textarea>
     </label>
@@ -195,11 +204,14 @@ function renderAttemptText(cell) {
 
 function renderCounts(model) {
   const counts = model.counts || {};
-  const header = JUDGEMENT_FIELDS.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("");
-  const rows = DISPLAY_CODE_ORDER.map((code) => {
-    const condition = CONDITION_BY_CODE[code];
+  const fields = model.fields || JUDGEMENT_FIELDS;
+  const order = model.manifest.displayCodeOrder || DISPLAY_CODE_ORDER;
+  const byCode = model.manifest.conditionByCode || CONDITION_BY_CODE;
+  const header = fields.map(([, label]) => `<th>${escapeHtml(label)}</th>`).join("");
+  const rows = order.map((code) => {
+    const condition = byCode[code];
     const bucket = counts[condition] || {};
-    const cells = JUDGEMENT_FIELDS.map(([key, , options]) => {
+    const cells = fields.map(([key, , options]) => {
       const parts = options.map((option) => `${option}: ${bucket[key]?.[option] || 0}`);
       return `<td>${escapeHtml(parts.join("; "))}</td>`;
     }).join("");
@@ -228,14 +240,16 @@ function fact(label, value) {
   return `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`;
 }
 
-function reviewGroups(cells) {
+function reviewGroups(manifest) {
+  const cells = manifest.cells || [];
+  const order = manifest.displayCodeOrder || DISPLAY_CODE_ORDER;
   const groups = [];
   for (const sourceId of SOURCES) {
     for (const repetition of REPETITIONS) {
       groups.push({
         sourceId,
         repetition,
-        cells: DISPLAY_CODE_ORDER.map((blindCode) => cells.find((cell) => cell.sourceId === sourceId && cell.repetition === repetition && cell.blindCode === blindCode) || null),
+        cells: order.map((blindCode) => cells.find((cell) => cell.sourceId === sourceId && cell.repetition === repetition && cell.blindCode === blindCode) || null),
       });
     }
   }
