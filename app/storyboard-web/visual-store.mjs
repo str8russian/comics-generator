@@ -670,30 +670,7 @@ async function loadVisualWithClient(client) {
     const approved = approval.rowCount === 1
       && JSON.stringify(normalizeApprovalSnapshot(approval.rows[0].snapshot)) === JSON.stringify(normalizeApprovalSnapshot(snapshot));
     const styleSeed = await backfillStyleSeed(client, context.result.material_state_id);
-    const reusable = await client.query(`
-      SELECT DISTINCT a.id, a.kind, a.mime, a.width, a.height, a.provenance, a.created_at
-      FROM visual_asset a
-      WHERE a.project_id = $2
-        AND a.kind IN ('uploaded-image', 'panel-image')
-        AND a.id IN (
-          SELECT pvs.assigned_asset_id
-          FROM panel_visual_state pvs
-          JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
-          WHERE sv.storyboard_result_id = $1 AND pvs.assigned_asset_id IS NOT NULL
-          UNION
-          SELECT pvs.current_asset_id
-          FROM panel_visual_state pvs
-          JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
-          WHERE sv.storyboard_result_id = $1 AND pvs.current_asset_id IS NOT NULL
-          UNION
-          SELECT pg.output_asset_id
-          FROM panel_generation pg
-          JOIN panel_visual_state pvs ON pvs.id = pg.panel_visual_state_id
-          JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
-          WHERE sv.storyboard_result_id = $1 AND pg.status = 'ready' AND pg.output_asset_id IS NOT NULL
-        )
-      ORDER BY a.id
-    `, [context.result.id, requireProjectId()]);
+    const reusable = await listReusableAssetRows(client, context.result.id, requireProjectId());
     return {
       ok: true,
       status: "ready",
@@ -1238,38 +1215,49 @@ export async function loadStoryboardStructure(pool) {
   }
 }
 
-async function assetIsReusable(client, storyboardResultId, assetId) {
-  if (typeof assetId !== "string" || !assetId) return false;
-  const result = await client.query(`
-    SELECT 1
+export async function listReusableAssetRows(client, storyboardResultId, projectId, assetId = null) {
+  return client.query(`
+    SELECT DISTINCT a.id, a.kind, a.mime, a.width, a.height, a.provenance, a.created_at
     FROM visual_asset a
-    WHERE a.id = $1
-      AND a.project_id = $3
+    WHERE a.project_id = $2
       AND a.kind IN ('uploaded-image', 'panel-image')
+      AND ($3::uuid IS NULL OR a.id = $3::uuid)
       AND (
         EXISTS (
           SELECT 1
           FROM panel_visual_state pvs
           JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
-          WHERE sv.storyboard_result_id = $2 AND pvs.assigned_asset_id = a.id
+          WHERE sv.storyboard_result_id = $1 AND pvs.assigned_asset_id = a.id
         )
         OR EXISTS (
           SELECT 1
           FROM panel_visual_state pvs
           JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
-          WHERE sv.storyboard_result_id = $2 AND pvs.current_asset_id = a.id
+          WHERE sv.storyboard_result_id = $1 AND pvs.current_asset_id = a.id
         )
         OR EXISTS (
           SELECT 1
           FROM panel_generation pg
           JOIN panel_visual_state pvs ON pvs.id = pg.panel_visual_state_id
           JOIN storyboard_version sv ON sv.id = pvs.storyboard_version_id
-          WHERE sv.storyboard_result_id = $2
+          WHERE sv.storyboard_result_id = $1
             AND pg.status = 'ready'
             AND pg.output_asset_id = a.id
         )
+        OR EXISTS (
+          SELECT 1
+          FROM storyboard_reusable_asset membership
+          WHERE membership.storyboard_result_id = $1
+            AND membership.asset_id = a.id
+        )
       )
-  `, [assetId, storyboardResultId, requireProjectId()]);
+    ORDER BY a.id
+  `, [storyboardResultId, projectId, assetId]);
+}
+
+async function assetIsReusable(client, storyboardResultId, assetId) {
+  if (typeof assetId !== "string" || !assetId) return false;
+  const result = await listReusableAssetRows(client, storyboardResultId, requireProjectId(), assetId);
   return result.rowCount > 0;
 }
 

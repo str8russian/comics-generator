@@ -263,6 +263,7 @@ async function purgeProject(client, projectId) {
     await client.query(`DELETE FROM panel_visual_state WHERE storyboard_version_id = ANY($1::uuid[])`, [versionIds]);
   }
   if (resultIds.length) {
+    await client.query(`DELETE FROM storyboard_reusable_asset WHERE storyboard_result_id = ANY($1::uuid[])`, [resultIds]);
     await client.query(`DELETE FROM storyboard_head WHERE storyboard_result_id = ANY($1::uuid[])`, [resultIds]);
   }
   if (versionIds.length) {
@@ -1081,6 +1082,472 @@ test("duplication keeps the exact older anchor that established the style seed",
     const survived = await createVisualStore(pool).load();
     assert.equal(survived.status, "ready");
     assert.equal((await readAsset(pool, seed.rows[0].style_asset_id))?.sha256, sha(seedBytes));
+    await purgeProject(guard, copyId);
+    created.splice(created.indexOf(copyId), 1);
+  } finally {
+    for (const projectId of created) {
+      await purgeProject(guard, projectId).catch(async () => {
+        await guard.query("ROLLBACK").catch(() => {});
+      });
+    }
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+test("duplication accepts a style seed whose approved anchor belongs to an earlier material", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+  timeout: 120000,
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  const created = [];
+  const line = "Анна: Привет";
+  const spoken = "Привет";
+  const edited = "Привет!";
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    const project = await createProject(pool);
+    assertOk(project, "cross-create");
+    const sourceId = project.project.id;
+    created.push(sourceId);
+    enterProject(sourceId);
+    const empty = await loadProject(pool);
+    assertOk(await saveDraft(pool, { text: line, revisionToken: empty.draft.revisionToken }), "cross-draft");
+    const started = await beginReading(pool);
+    assertOk(started, "cross-reading");
+    assertOk(await finishReading(pool, {
+      readingId: started.readingId,
+      sourceItems: [{
+        id: "u1",
+        kind: "utterance",
+        segmentIds: ["seg-0"],
+        speakerStatus: "explicit",
+        speakerLabel: "Анна",
+        sourceQuote: line,
+        draftStart: 0,
+        draftEnd: line.length,
+        text: spoken,
+      }],
+      characters: [
+        { id: "anna", name: "Анна" },
+        { id: "boris", name: "Борис" },
+      ],
+      surfaceForms: [
+        { id: "label", quote: "Анна", role: "speaker-label", characterId: "anna" },
+      ],
+    }), "cross-finish");
+    assertOk(await replacePendingCast(pool, started.readingId, {
+      characters: [
+        { name: "Анна", extractedName: "Анна", included: true },
+        { name: "Борис", extractedName: "Борис", included: true },
+      ],
+      aliases: [{ surface: "Анна", characterName: "Анна" }],
+      speakers: [{ sourceItemId: "u1", characterName: "Анна" }],
+    }), "cross-cast");
+    const confirmed = await confirmReading(pool, { readingId: started.readingId });
+    assertOk(confirmed, "cross-confirm");
+    const frames = [{
+      id: "f1",
+      sourceItemId: "u1",
+      sourceRole: "utterance",
+      origin: "source",
+      layout: "single",
+      dialogueMode: "spoken",
+      speakerPanel: 0,
+      dialogue: spoken,
+      durationFrames: 180,
+      displayBlock: { sourceItemId: "u1", start: 0, end: spoken.length },
+      panels: [{ id: "p1", description: "Анна" }],
+    }];
+    const resultId = randomUUID();
+    const versionId = randomUUID();
+    await pool.query(
+      `INSERT INTO storyboard_result (id, material_state_id, status, stage_payload)
+       VALUES ($1, $2, 'checked', $3::jsonb)`,
+      [resultId, confirmed.materialStateId, JSON.stringify({ frames })],
+    );
+    await pool.query(
+      `INSERT INTO storyboard_version (id, storyboard_result_id, frames) VALUES ($1, $2, $3::jsonb)`,
+      [versionId, resultId, JSON.stringify(frames)],
+    );
+    await pool.query(
+      `INSERT INTO storyboard_head (storyboard_result_id, active_storyboard_version_id) VALUES ($1, $2)`,
+      [resultId, versionId],
+    );
+    const store = createVisualStore(pool);
+    const anna = await store.acceptSessionAnchor({
+      characterName: "Анна",
+      provenance: "generated_from_source",
+      image: { bytes: png },
+      sourceImage: { bytes: png },
+      instruction: "контур",
+    });
+    assertOk(anna, "cross-anna");
+    const boris = await store.acceptSessionAnchor({
+      characterName: "Борис",
+      provenance: "uploaded_as_ready_anchor",
+      image: { bytes: png },
+      instruction: "борис",
+    });
+    assertOk(boris, "cross-boris");
+    const originalSeed = await pool.query(
+      `SELECT source_anchor_version_id, style_asset_id
+       FROM project_style_seed WHERE material_state_id = $1`,
+      [confirmed.materialStateId],
+    );
+    assert.equal(originalSeed.rows[0].source_anchor_version_id, anna.anchorId);
+    const editedSource = await reviseSourceUtterance(pool, {
+      sourceItemId: "u1",
+      spokenText: edited,
+      materialStateId: confirmed.materialStateId,
+      storyboardVersionId: versionId,
+    });
+    assertOk(editedSource, "cross-later-material");
+    assert.notEqual(editedSource.materialStateId, confirmed.materialStateId);
+    const carriedSeed = await pool.query(
+      `SELECT source_anchor_version_id FROM project_style_seed WHERE material_state_id = $1`,
+      [editedSource.materialStateId],
+    );
+    assert.equal(carriedSeed.rows[0].source_anchor_version_id, anna.anchorId);
+    const laterHead = await pool.query(
+      `SELECT anchor_version_id FROM character_anchor_head
+       WHERE material_state_id = $1 AND character_name = 'Анна'`,
+      [editedSource.materialStateId],
+    );
+    assert.notEqual(laterHead.rows[0].anchor_version_id, anna.anchorId);
+    await pool.query(
+      `UPDATE character_anchor_version SET instruction = 'исходный стиль' WHERE id = $1`,
+      [anna.anchorId],
+    );
+
+    const copied = await duplicateProject(pool, sourceId, "Копия через материал");
+    assertOk(copied, "cross-duplicate");
+    const copyId = copied.project.id;
+    created.push(copyId);
+    const destSeed = await pool.query(
+      `SELECT project_style_seed.source_anchor_version_id,
+              project_style_seed.style_asset_id,
+              character_anchor_version.instruction,
+              character_anchor_version.material_state_id,
+              source_revision.project_id
+       FROM project_style_seed
+       JOIN character_anchor_version
+         ON character_anchor_version.id = project_style_seed.source_anchor_version_id
+       JOIN material_state ON material_state.id = character_anchor_version.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       JOIN material_state AS seed_material ON seed_material.id = project_style_seed.material_state_id
+       JOIN source_revision AS seed_revision ON seed_revision.id = seed_material.source_revision_id
+       WHERE seed_revision.project_id = $1`,
+      [copyId],
+    );
+    assert.equal(destSeed.rowCount, 1);
+    assert.equal(destSeed.rows[0].instruction, "исходный стиль");
+    assert.equal(destSeed.rows[0].project_id, copyId);
+    assert.equal(destSeed.rows[0].material_state_id, destSeed.rows[0].material_state_id);
+    const destHeads = await pool.query(
+      `SELECT character_name, anchor_version_id
+       FROM character_anchor_head
+       JOIN material_state ON material_state.id = character_anchor_head.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       WHERE source_revision.project_id = $1`,
+      [copyId],
+    );
+    const annaHead = destHeads.rows.find((row) => row.character_name === "Анна");
+    const borisHead = destHeads.rows.find((row) => row.character_name === "Борис");
+    assert.notEqual(destSeed.rows[0].source_anchor_version_id, annaHead.anchor_version_id);
+    assert.notEqual(destSeed.rows[0].source_anchor_version_id, borisHead.anchor_version_id);
+    assert.equal(destHeads.rows.some((row) => row.anchor_version_id === destSeed.rows[0].source_anchor_version_id), false);
+    const headInstruction = await pool.query(
+      `SELECT instruction FROM character_anchor_version WHERE id = $1`,
+      [annaHead.anchor_version_id],
+    );
+    assert.equal(headInstruction.rows[0].instruction, "контур");
+    const styleAsset = await pool.query(
+      `SELECT project_id FROM visual_asset WHERE id = $1`,
+      [destSeed.rows[0].style_asset_id],
+    );
+    assert.equal(styleAsset.rows[0].project_id, copyId);
+    assert.notEqual(destSeed.rows[0].style_asset_id, originalSeed.rows[0].style_asset_id);
+    assert.notEqual(destSeed.rows[0].source_anchor_version_id, anna.anchorId);
+    const sourceMaterialIds = [confirmed.materialStateId, editedSource.materialStateId];
+    assert.equal(sourceMaterialIds.includes(destSeed.rows[0].material_state_id), false);
+
+    const foreign = await createProject(pool);
+    assertOk(foreign, "foreign-create");
+    created.push(foreign.project.id);
+    const foreignAnchorId = randomUUID();
+    const foreignMaterialId = randomUUID();
+    const foreignRevisionId = randomUUID();
+    const foreignReadingId = randomUUID();
+    const foreignInterpretationId = randomUUID();
+    await pool.query(`INSERT INTO source_revision (id, project_id, text) VALUES ($1, $2, 'чужой')`, [foreignRevisionId, foreign.project.id]);
+    await pool.query(
+      `INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status)
+       VALUES ($1, $2, 'чужой', $3, 'ready')`,
+      [foreignReadingId, foreign.project.id, randomUUID()],
+    );
+    await pool.query(
+      `INSERT INTO interpretation (id, source_revision_id, reading_id) VALUES ($1, $2, $3)`,
+      [foreignInterpretationId, foreignRevisionId, foreignReadingId],
+    );
+    await pool.query(
+      `INSERT INTO material_state (id, source_revision_id, interpretation_id) VALUES ($1, $2, $3)`,
+      [foreignMaterialId, foreignRevisionId, foreignInterpretationId],
+    );
+    await pool.query(
+      `INSERT INTO character_anchor_version (
+         id, material_state_id, character_name, instruction, status, provenance, approved_at
+       ) VALUES ($1, $2, 'Анна', 'чужой якорь', 'approved', 'uploaded_as_ready_anchor', clock_timestamp())`,
+      [foreignAnchorId, foreignMaterialId],
+    );
+    await pool.query(
+      `UPDATE project_style_seed SET source_anchor_version_id = $2 WHERE material_state_id = $1`,
+      [editedSource.materialStateId, foreignAnchorId],
+    );
+    const before = await pool.query(`SELECT count(*)::int AS count FROM project`);
+    const rejected = await duplicateProject(pool, sourceId, "Чужая копия");
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.kind, "database");
+    const after = await pool.query(`SELECT count(*)::int AS count FROM project`);
+    assert.equal(after.rows[0].count, before.rows[0].count);
+    const titled = await pool.query(`SELECT count(*)::int AS count FROM project WHERE title = 'Чужая копия'`);
+    assert.equal(titled.rows[0].count, 0);
+  } finally {
+    for (const projectId of created) {
+      await purgeProject(guard, projectId).catch(async () => {
+        await guard.query("ROLLBACK").catch(() => {});
+      });
+    }
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+test("duplication keeps picker-visible images and omits hidden orphan assets", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+  timeout: 60000,
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  const created = [];
+  const selectedBytes = Buffer.concat([png, Buffer.from([11])]);
+  const reusableBytes = Buffer.concat([png, Buffer.from([12])]);
+  const orphanBytes = Buffer.concat([png, Buffer.from([13])]);
+  const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    const project = await createProject(pool);
+    assertOk(project, "reuse-create");
+    const sourceId = project.project.id;
+    created.push(sourceId);
+    enterProject(sourceId);
+    const empty = await loadProject(pool);
+    assertOk(await saveDraft(pool, { text: "Анна: Привет", revisionToken: empty.draft.revisionToken }), "reuse-draft");
+    const revisionId = randomUUID();
+    const readingId = randomUUID();
+    const interpretationId = randomUUID();
+    const materialId = randomUUID();
+    const characterId = randomUUID();
+    const anchorId = randomUUID();
+    const resultId = randomUUID();
+    const versionId = randomUUID();
+    const stateId = randomUUID();
+    const selectedId = randomUUID();
+    const reusableId = randomUUID();
+    const orphanId = randomUUID();
+    const anchorAssetId = randomUUID();
+    async function insertAsset(id, bytes, kind) {
+      await pool.query(
+        `INSERT INTO visual_asset (id, project_id, kind, mime, width, height, byte_length, sha256, bytes)
+         VALUES ($1, $2, $3, 'image/png', 1, 1, $4, $5, $6)`,
+        [id, sourceId, kind, bytes.length, sha(bytes), bytes],
+      );
+    }
+    await insertAsset(selectedId, selectedBytes, "panel-image");
+    await insertAsset(reusableId, reusableBytes, "panel-image");
+    await insertAsset(orphanId, orphanBytes, "panel-image");
+    await insertAsset(anchorAssetId, png, "base-anchor");
+    await pool.query(`INSERT INTO source_revision (id, project_id, text) VALUES ($1, $2, 'Анна: Привет')`, [revisionId, sourceId]);
+    await pool.query(
+      `INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status)
+       VALUES ($1, $2, 'Анна: Привет', $3, 'ready')`,
+      [readingId, sourceId, randomUUID()],
+    );
+    await pool.query(
+      `INSERT INTO interpretation (id, source_revision_id, reading_id) VALUES ($1, $2, $3)`,
+      [interpretationId, revisionId, readingId],
+    );
+    await pool.query(
+      `INSERT INTO source_item (
+         interpretation_id, ordinal, model_id, kind, speaker_status, speaker_label,
+         draft_start, draft_end, source_quote, spoken_text
+       ) VALUES ($1, 0, 'u1', 'utterance', 'explicit', 'Анна', 0, 12, 'Анна: Привет', 'Привет')`,
+      [interpretationId],
+    );
+    await pool.query(
+      `INSERT INTO material_state (id, source_revision_id, interpretation_id) VALUES ($1, $2, $3)`,
+      [materialId, revisionId, interpretationId],
+    );
+    await pool.query(
+      `INSERT INTO canonical_character (id, material_state_id, ordinal, name) VALUES ($1, $2, 0, 'Анна')`,
+      [characterId, materialId],
+    );
+    const frames = [{
+      id: "f-reuse",
+      sourceItemId: "u1",
+      sourceRole: "utterance",
+      origin: "source",
+      layout: "single",
+      dialogueMode: "spoken",
+      speakerPanel: 0,
+      dialogue: "Привет",
+      durationFrames: 180,
+      panels: [{ id: "p-reuse", description: "Анна" }],
+    }];
+    await pool.query(
+      `INSERT INTO storyboard_result (id, material_state_id, status, stage_payload)
+       VALUES ($1, $2, 'checked', $3::jsonb)`,
+      [resultId, materialId, JSON.stringify({ frames })],
+    );
+    await pool.query(
+      `INSERT INTO storyboard_version (id, storyboard_result_id, frames) VALUES ($1, $2, $3::jsonb)`,
+      [versionId, resultId, JSON.stringify(frames)],
+    );
+    await pool.query(
+      `INSERT INTO storyboard_head (storyboard_result_id, active_storyboard_version_id) VALUES ($1, $2)`,
+      [resultId, versionId],
+    );
+    await pool.query(
+      `INSERT INTO panel_visual_state (
+         id, storyboard_version_id, frame_id, panel_index, panel_id, subject,
+         current_asset_id, current_asset_origin
+       ) VALUES ($1, $2, 'f-reuse', 0, 'p-reuse', 'Анна', $3, 'generation')`,
+      [stateId, versionId, selectedId],
+    );
+    await pool.query(
+      `INSERT INTO panel_generation (
+         id, panel_visual_state_id, output_asset_id, resolved_description, instruction, status
+       ) VALUES ($1, $2, $3, 'запас', 'не выбрано', 'ready')`,
+      [randomUUID(), stateId, reusableId],
+    );
+    await pool.query(
+      `INSERT INTO character_anchor_version (
+         id, material_state_id, character_name, output_asset_id, instruction, status, provenance, approved_at
+       ) VALUES ($1, $2, 'Анна', $3, 'якорь', 'approved', 'uploaded_as_ready_anchor', clock_timestamp())`,
+      [anchorId, materialId, anchorAssetId],
+    );
+    await pool.query(
+      `INSERT INTO character_anchor_head (material_state_id, character_name, anchor_version_id)
+       VALUES ($1, 'Анна', $2)`,
+      [materialId, anchorId],
+    );
+    await pool.query(
+      `INSERT INTO project_style_seed (material_state_id, style_asset_id, source_anchor_version_id)
+       VALUES ($1, $2, $3)`,
+      [materialId, anchorAssetId, anchorId],
+    );
+    await pool.query(
+      `INSERT INTO visual_approval (id, storyboard_version_id, snapshot)
+       VALUES ($1, $2, $3::jsonb)`,
+      [randomUUID(), versionId, JSON.stringify([{
+        id: "f-reuse",
+        panels: [{ assetId: selectedId, zoom: 1, position: "50% 30%", mirrored: false }],
+      }])],
+    );
+    await pool.query(
+      `UPDATE project SET active_source_revision_id = $2, active_material_state_id = $3, current_reading_id = NULL
+       WHERE id = $1`,
+      [sourceId, revisionId, materialId],
+    );
+
+    enterProject(sourceId);
+    const sourceVisual = await createVisualStore(pool).load();
+    assert.equal(sourceVisual.reusableAssets.some((asset) => asset.id === reusableId), true);
+    assert.equal(sourceVisual.reusableAssets.some((asset) => asset.id === orphanId), false);
+    const copied = await duplicateProject(pool, sourceId, "Копия ресурсов");
+    assertOk(copied, "reuse-duplicate");
+    const copyId = copied.project.id;
+    created.push(copyId);
+
+    const destAssets = await pool.query(
+      `SELECT id, sha256, kind FROM visual_asset WHERE project_id = $1`,
+      [copyId],
+    );
+    const bySha = new Map(destAssets.rows.map((row) => [row.sha256, row]));
+    assert.equal(bySha.has(sha(selectedBytes)), true);
+    assert.equal(bySha.has(sha(reusableBytes)), true);
+    assert.equal(bySha.has(sha(orphanBytes)), false);
+    assert.equal(bySha.has(sha(png)), true);
+    assert.equal(destAssets.rows.some((row) => row.id === selectedId || row.id === reusableId || row.id === orphanId), false);
+    const generations = await pool.query(
+      `SELECT count(*)::int AS count
+       FROM panel_generation
+       JOIN panel_visual_state ON panel_visual_state.id = panel_generation.panel_visual_state_id
+       JOIN storyboard_version ON storyboard_version.id = panel_visual_state.storyboard_version_id
+       JOIN storyboard_result ON storyboard_result.id = storyboard_version.storyboard_result_id
+       JOIN material_state ON material_state.id = storyboard_result.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       WHERE source_revision.project_id = $1`,
+      [copyId],
+    );
+    assert.equal(generations.rows[0].count, 0);
+    const versions = await pool.query(
+      `SELECT count(*)::int AS count
+       FROM storyboard_version
+       JOIN storyboard_result ON storyboard_result.id = storyboard_version.storyboard_result_id
+       JOIN material_state ON material_state.id = storyboard_result.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       WHERE source_revision.project_id = $1`,
+      [copyId],
+    );
+    assert.equal(versions.rows[0].count, 1);
+
+    enterProject(copyId);
+    const copyStore = createVisualStore(pool);
+    const copyVisual = await copyStore.load();
+    assert.equal(copyVisual.status, "ready");
+    assert.equal(copyVisual.approved, true);
+    assert.equal(copyVisual.frames[0].panels[0].assetId, bySha.get(sha(selectedBytes)).id);
+    const reusableChoice = copyVisual.reusableAssets.find((asset) => asset.id === bySha.get(sha(reusableBytes)).id);
+    assert.equal(Boolean(reusableChoice), true);
+    assert.equal(copyVisual.reusableAssets.some((asset) => asset.id === bySha.get(sha(orphanBytes))?.id), false);
+    const sourceChoices = new Set(sourceVisual.reusableAssets.map((asset) => asset.id));
+    const sourceShas = new Set((await pool.query(
+      `SELECT sha256 FROM visual_asset WHERE id = ANY($1::uuid[])`,
+      [[...sourceChoices]],
+    )).rows.map((row) => row.sha256));
+    const destShas = new Set((await pool.query(
+      `SELECT sha256 FROM visual_asset WHERE id = ANY($1::uuid[])`,
+      [copyVisual.reusableAssets.map((asset) => asset.id)],
+    )).rows.map((row) => row.sha256));
+    assert.deepEqual([...destShas].sort(), [...sourceShas].sort());
+
+    const assigned = await copyStore.applyOperation({
+      op: "assignAsset",
+      assetId: reusableChoice.id,
+      targets: [{ panelId: "p-reuse" }],
+    });
+    assertOk(assigned, "reuse-assign");
+    const afterAssign = await copyStore.load();
+    assert.equal(afterAssign.frames[0].panels[0].assetId, reusableChoice.id);
+    enterProject(sourceId);
+    const sourceAfter = await createVisualStore(pool).load();
+    assert.equal(sourceAfter.frames[0].panels[0].assetId, selectedId);
+
+    await purgeProject(guard, sourceId);
+    created.splice(created.indexOf(sourceId), 1);
+    enterProject(copyId);
+    const survived = await createVisualStore(pool).load();
+    assert.equal(survived.frames[0].panels[0].assetId, reusableChoice.id);
     await purgeProject(guard, copyId);
     created.splice(created.indexOf(copyId), 1);
   } finally {

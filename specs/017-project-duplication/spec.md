@@ -42,7 +42,8 @@ The copy includes:
 - project character exclusions;
 - the latest checked storyboard for that material, its payload, and one active version with the current frames, dialogue modes, panel identities, frame timing, and text-card state, plus a new head;
 - the current panel rows for that version: subject, performance reference, current and assigned image meaning, zoom, pan, mirror, and current image;
-- current character identity, the current approved anchor for each anchor head, the provenance needed for a ready upload or a source photo, and the current style seed. The seed keeps the exact anchor that established it. When that anchor is still a current head, the copy reuses that head. When it is an older approved anchor, the copy adds that one anchor as a destination row with a new id, no parent, no provider metadata, and no head, and points the seed at that row. Its identity, output, and style assets are new destination-owned rows. If that exact anchor cannot be loaded, is not approved, or its seed asset cannot be copied, duplication fails and rolls back;
+- current character identity, the current approved anchor for each anchor head, the provenance needed for a ready upload or a source photo, and the current style seed. The seed keeps the exact approved anchor that established it, even when that anchor belongs to an earlier material state of the same project. When that anchor is still a current head, the copy reuses that head. Otherwise the copy adds that one anchor under the destination material, with a new id, no parent, no provider metadata, and no head. Its identity, output, and style assets are new destination-owned rows. A missing anchor, an anchor that is not approved, an anchor from another project, or a seed asset that cannot be copied fails the duplication and rolls it back;
+- every image the source image picker can offer, including one that is not currently selected, plus the assets required by the current accepted graph. A project-owned image that the picker does not offer and that the current graph does not use stays behind;
 - the current Visual approval only when that copied visual state is approved. Its snapshot refers only to copied asset ids and still matches the copied current state;
 - a new project-owned asset for every asset reachable from that copied graph. Bytes, media metadata, kind, and accepted provenance are kept. Provenance ids that point at copied assets, anchors, or storyboards are remapped. Provenance ids that cannot be remapped are omitted.
 
@@ -55,7 +56,8 @@ The structural reading is not `project.current_reading_id` and does not carry pe
 - source revision history and material history before the active snapshot;
 - storyboard parent versions, undo and redo, version instruction, and operation context;
 - panel generation rows and generation history. `current_generation_id` is empty even when the current image bytes are copied;
-- anchor candidates other than the current approved heads and, when needed, the single older approved anchor named by the current style seed. That seed dependency is not a head, a candidate, or a history chain. Parent anchor links and provider operation metadata are omitted;
+- anchor candidates other than the current approved heads and, when needed, the single approved anchor named by the current style seed, including one that lives on an earlier material state of the same project. That seed dependency is not a head, a candidate, or a history chain. Parent anchor links and provider operation metadata are omitted;
+- hidden image rows that the source picker cannot offer and that the current accepted graph does not use;
 - render controller state, render files, prior MP4, render history, and the remembered transition or intro choice;
 - any unapproved temporary candidate not listed above.
 

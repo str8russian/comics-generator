@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { normalizeTitle, PROJECT_ID_PATTERN } from "./project-scope.mjs";
-import { sanitizeProvenance } from "./visual-store.mjs";
+import { listReusableAssetRows, sanitizeProvenance } from "./visual-store.mjs";
 import { expandStoryboardFrames, placement } from "./visual-model.mjs";
 
 function databaseFailure() {
@@ -345,11 +345,16 @@ async function copyStoryboard(client, {
   let seedAnchor = null;
   if (seed.rowCount === 1) {
     const loaded = await client.query(
-      `SELECT * FROM character_anchor_version
-       WHERE id = $1 AND material_state_id = $2`,
-      [seed.rows[0].source_anchor_version_id, materialId],
+      `SELECT character_anchor_version.*
+       FROM character_anchor_version
+       JOIN material_state ON material_state.id = character_anchor_version.material_state_id
+       JOIN source_revision ON source_revision.id = material_state.source_revision_id
+       WHERE character_anchor_version.id = $1
+         AND source_revision.project_id = $2
+         AND character_anchor_version.status = 'approved'`,
+      [seed.rows[0].source_anchor_version_id, sourceProjectId],
     );
-    if (loaded.rowCount !== 1 || loaded.rows[0].status !== "approved") throw styleSeedUnavailable();
+    if (loaded.rowCount !== 1) throw styleSeedUnavailable();
     seedAnchor = loaded.rows[0];
   }
   let version = null;
@@ -380,9 +385,17 @@ async function copyStoryboard(client, {
     results: new Map(),
   };
   const assetIds = new Set();
+  const reusableIds = [];
   const remember = (assetId) => {
     if (assetId) assetIds.add(assetId);
   };
+  if (result.rowCount === 1) {
+    const reusable = await listReusableAssetRows(client, result.rows[0].id, sourceProjectId);
+    for (const row of reusable.rows) {
+      reusableIds.push(row.id);
+      remember(row.id);
+    }
+  }
   for (const state of states) {
     remember(state.effective_asset_id);
     remember(state.assigned_asset_id);
@@ -438,6 +451,18 @@ async function copyStoryboard(client, {
   }
 
   await copyOwnedAssets(client, sourceProjectId, destinationId, assetIds, maps);
+  if (nextResultId) {
+    for (const sourceAssetId of reusableIds) {
+      const destinationAssetId = mappedAsset(maps, sourceAssetId);
+      if (!destinationAssetId) throw new Error("reusable-asset-unavailable");
+      await client.query(
+        `INSERT INTO storyboard_reusable_asset (storyboard_result_id, asset_id)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [nextResultId, destinationAssetId],
+      );
+    }
+  }
 
   for (const identity of identities.rows) {
     const assetId = mappedAsset(maps, identity.current_asset_id);
