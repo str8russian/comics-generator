@@ -1,4 +1,6 @@
 export const CALL_CEILING = 12;
+export const INVOCATION_CEILING = 24;
+export const RETRYABLE_FAILURE_KINDS = Object.freeze(["timeout", "provider", "invalid-output"]);
 export const REVIEW_HOST = "127.0.0.1";
 export const REVIEW_PORT = 4193;
 export const ASPECT_RATIO = "4:5";

@@ -1,15 +1,17 @@
 import { createReadStream, existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyJudgement, emptyJudgements, judgementPassComplete } from "./judgements.mjs";
-import { verifyInputs } from "./inputs.mjs";
+import { verifyRunInputs } from "./inputs.mjs";
 import { renderMatchedFaceCrop } from "./crops.mjs";
 import { assertSafeEvidence } from "./evidence.mjs";
-import { outputFilePath, promptFilePath, readJson } from "./persist.mjs";
+import { outputFilePath, promptFilePath, readJson, writeJsonAtomic } from "./persist.mjs";
 import { buildReviewModel, renderReviewPage } from "./render-page.mjs";
 import { REVIEW_HOST } from "./constants.mjs";
+
+const writeQueues = new Map();
 
 const PUBLIC_ID = /^source-[ab]\.C-(?:K4|M9|R2)\.r[12]$/;
 const INPUT_ID = /^(?:source-a|source-b|style-reference)$/;
@@ -22,10 +24,10 @@ const SECURITY_HEADERS = {
   "cache-control": "no-store",
 };
 
-export function createReviewServer({ runDir, runtimePath, templatePath, verifiedInputs }) {
+export function createReviewServer({ runDir }) {
   return createServer(async (req, res) => {
     try {
-      await route(req, res, { runDir, runtimePath, templatePath, verifiedInputs });
+      await route(req, res, { runDir });
     } catch {
       sendJson(res, 500, { ok: false, kind: "review-error" });
     }
@@ -65,8 +67,11 @@ async function sendPage(res, context, reveal) {
 async function sendInput(res, context, rawId) {
   const logicalId = decodeURIComponent(rawId);
   if (!INPUT_ID.test(logicalId)) return sendJson(res, 404, { ok: false, kind: "not-found" });
-  const verified = context.verifiedInputs || await verifyInputs({ runtimePath: context.runtimePath, templatePath: context.templatePath });
-  if (!verified.ok) return sendJson(res, 409, { ok: false, kind: "input-validation" });
+  const verified = await verifyRunInputs(context.runDir);
+  if (!verified.ok) {
+    const failure = (verified.failures || []).find((item) => item.logicalId === logicalId);
+    return sendJson(res, 409, { ok: false, kind: failure?.problem || "input-validation" });
+  }
   const input = verified.inputs[logicalId];
   sendBytes(res, 200, input.mime, input.bytes);
 }
@@ -89,19 +94,42 @@ async function sendCrop(res, context, rawId) {
 }
 
 async function saveJudgement(req, res, context) {
-  const loaded = await loadRun(context.runDir);
-  const known = new Set((loaded.manifest.cells || []).filter((cell) => cell.status === "succeeded").map((cell) => cell.publicId));
-  const fields = await readRequestFields(req);
-  const applied = applyJudgement(loaded.judgements, fields.publicId, fields, known);
-  if (!applied.ok) return sendJson(res, 400, { ok: false, kind: applied.reason });
-  assertSafeEvidence(applied.judgements);
-  await writeFile(join(context.runDir, "review", "judgements.json"), `${JSON.stringify(applied.judgements, null, 2)}\n`);
-  const pass = judgementPassComplete(loaded.manifest, applied.judgements);
-  if ((req.headers.accept || "").includes("application/json")) {
-    return sendJson(res, 200, { ok: true, ...pass });
+  let fields;
+  try {
+    fields = await readRequestFields(req);
+  } catch {
+    return sendJson(res, 400, { ok: false, kind: "invalid-body" });
   }
-  res.writeHead(303, { ...SECURITY_HEADERS, location: "/" });
-  res.end();
+  try {
+    const saved = await persistJudgement(context.runDir, fields);
+    if (!saved.ok) return sendJson(res, 400, { ok: false, kind: saved.reason });
+    if ((req.headers.accept || "").includes("application/json")) {
+      return sendJson(res, 200, { ok: true, ...saved.pass });
+    }
+    res.writeHead(303, { ...SECURITY_HEADERS, location: "/" });
+    res.end();
+  } catch {
+    sendJson(res, 500, { ok: false, kind: "review-error" });
+  }
+}
+
+export function persistJudgement(runDir, fields) {
+  return withRunLock(runDir, async () => {
+    const loaded = await loadRun(runDir);
+    const known = new Set((loaded.manifest.cells || []).filter((cell) => cell.status === "succeeded").map((cell) => cell.publicId));
+    const applied = applyJudgement(loaded.judgements, fields.publicId, fields, known);
+    if (!applied.ok) return applied;
+    assertSafeEvidence(applied.judgements);
+    await writeJsonAtomic(join(runDir, "review", "judgements.json"), applied.judgements);
+    return { ok: true, judgements: applied.judgements, pass: judgementPassComplete(loaded.manifest, applied.judgements) };
+  });
+}
+
+function withRunLock(runDir, task) {
+  const previous = writeQueues.get(runDir) || Promise.resolve();
+  const run = previous.then(task, task);
+  writeQueues.set(runDir, run.then(() => {}, () => {}));
+  return run;
 }
 
 async function sendJudgementDownload(res, context) {

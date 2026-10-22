@@ -31,6 +31,7 @@ export function buildCellEvidence({
   transformStep = null,
   omittedRoles = [],
   output = null,
+  invocations = null,
 }) {
   const evidence = {
     id: cell.id,
@@ -65,17 +66,33 @@ export function buildCellEvidence({
     outputMime: output?.mime || null,
     outputWidth: output?.width ?? null,
     outputHeight: output?.height ?? null,
+    invocations: Array.isArray(invocations) ? invocations.map(publicInvocation) : undefined,
   };
+  if (!evidence.invocations) delete evidence.invocations;
   return assertSafeEvidence(evidence);
 }
 
+function publicInvocation(invocation) {
+  return {
+    attemptNumber: Number.isInteger(invocation.attemptNumber) ? invocation.attemptNumber : null,
+    status: String(invocation.status || ""),
+    failureKind: invocation.failureKind || null,
+    providerStatus: Number.isInteger(invocation.providerStatus) ? invocation.providerStatus : null,
+    latencyMs: Number.isFinite(invocation.latencyMs) ? Math.max(0, Math.round(invocation.latencyMs)) : null,
+    requestSha256: invocation.requestSha256 || null,
+    requestBytes: Number.isFinite(invocation.requestBytes) ? invocation.requestBytes : null,
+  };
+}
+
 export function publicInputRecord(input) {
-  return assertSafeEvidence({
+  const record = {
     logicalId: input.logicalId,
     role: input.role,
     sha256: input.sha256,
     mime: input.mime,
     width: input.width,
     height: input.height,
-  });
+  };
+  if (typeof input.relativePath === "string") record.path = input.relativePath;
+  return assertSafeEvidence(record);
 }

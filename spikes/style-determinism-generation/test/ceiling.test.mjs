@@ -117,7 +117,7 @@ test("a real request uses 4:5, the configured model and timeout, and identity be
   assert.equal(result.cells.every((cell) => cell.model === model), true);
 });
 
-test("failures consume one attempt, are not retried, and two identical transport failures stop the run", async () => {
+test("a retryable transport failure is retried once and the systemic stop waits for exhausted cells", async () => {
   const directory = await mkdtemp(join(tmpdir(), "style-det-secret-path-"));
   const fixture = await writeImageFixture(directory);
   let calls = 0;
@@ -131,14 +131,16 @@ test("failures consume one attempt, are not retried, and two identical transport
       return { ok: false, kind: "provider", diagnostics: { providerStatus: 502, latencyMs: 9 } };
     },
   });
-  assert.equal(calls, 2);
-  assert.equal(result.providerCalls, 2);
+  assert.equal(calls, 4);
+  assert.equal(result.providerCalls, 4);
   assert.equal(result.attempted, 2);
   assert.equal(result.failed, 2);
   assert.equal(result.unattempted, 10);
   assert.equal(result.stopReason, "consecutive-same-failure");
   assert.equal(result.cells[0].failureKind, "provider");
-  assert.equal(result.cells[0].attemptNumber, 1);
+  assert.equal(result.cells[0].invocations.length, 2);
+  assert.equal(result.cells[0].invocations[0].attemptNumber, 1);
+  assert.equal(result.cells[0].invocations[1].attemptNumber, 2);
   assert.equal(result.cells[2].status, "unattempted");
 });
 
@@ -177,69 +179,59 @@ test("a payload-size failure consumes an attempt without calling or retrying the
   assert.equal(result.stopReason, "consecutive-same-failure");
 });
 
-test("a thirteenth invocation is impossible and different failure kinds do not halt early", async () => {
+test("different terminal failure kinds do not halt before the invocation ceiling", async () => {
   const directory = await mkdtemp(join(tmpdir(), "style-det-secret-path-"));
   const fixture = await writeImageFixture(directory);
-  const cells = buildMatrix();
-  cells.push({ ...cells[0], id: "source-a.prompt-only.extra", publicId: "source-a.C-K4.extra" });
-  const kinds = ["provider", "timeout", "provider"];
+  const plan = [
+    ["timeout", "timeout"],
+    ["provider", "provider"],
+    ["invalid-output", "invalid-output"],
+  ];
   let calls = 0;
   const mixed = await runMatrix({
-    cells: cells.slice(0, 3),
+    cells: buildMatrix().slice(0, 3),
     inputs: fixture.inputs,
     model,
     timeoutMs,
     referenceConfig,
     imageGenerator: async () => {
+      const kind = plan[Math.floor(calls / 2)][calls % 2];
       calls += 1;
-      return { ok: false, kind: kinds[calls - 1] };
+      if (kind === "invalid-output") return { ok: true, image: { bytes: Buffer.from("not-an-image") } };
+      return { ok: false, kind, diagnostics: { latencyMs: 1, providerStatus: 502 } };
     },
   });
-  assert.equal(calls, 3);
+  assert.equal(calls, 6);
   assert.equal(mixed.attempted, 3);
+  assert.equal(mixed.failed, 3);
   assert.equal(mixed.stopReason, null);
-  let extraCalls = 0;
-  const blocked = await runMatrix({
-    cells,
-    inputs: fixture.inputs,
-    model,
-    timeoutMs,
-    referenceConfig,
-    imageGenerator: async () => {
-      extraCalls += 1;
-      return {
-        ok: true,
-        image: { bytes: fixture.inputs["style-reference"].bytes, mime: "image/png", width: 14, height: 16 },
-        metadata: { latencyMs: 1, providerStatus: 200 },
-      };
-    },
-  });
-  assert.equal(extraCalls, 12);
-  assert.equal(blocked.attempted, 12);
-  assert.equal(blocked.cells.at(-1).status, "unattempted");
-  assert.equal(blocked.cells.at(-1).skippedReason, "ceiling");
+  assert.equal(mixed.providerCalls, 6);
 });
 
-test("concurrent ceiling callers cannot pass 12 and thrown failures are not retried", async () => {
+test("concurrent ceiling callers cannot pass 24 and a terminal failure is counted only when recorded", async () => {
   const ceiling = createCallCeiling();
   let calls = 0;
-  const results = await Promise.all(Array.from({ length: 20 }, () => ceiling.invoke(async () => {
+  const results = await Promise.all(Array.from({ length: 30 }, () => ceiling.invoke(async () => {
     calls += 1;
     await new Promise((resolve) => setTimeout(resolve, 15));
     return { ok: false, kind: "timeout" };
   })));
-  assert.equal(calls, 12);
-  assert.equal(results.filter((result) => result.consumed).length, 12);
-  assert.equal(ceiling.attempted, 12);
+  assert.equal(calls, 24);
+  assert.equal(results.filter((result) => result.consumed).length, 24);
+  assert.equal(ceiling.attempted, 24);
   const sequential = createCallCeiling();
   let thrown = 0;
-  await sequential.invoke(async () => { thrown += 1; throw new Error("boom"); });
-  await sequential.invoke(async () => { thrown += 1; throw new Error("boom"); });
-  const third = await sequential.invoke(async () => { thrown += 1; return { ok: true }; });
-  assert.equal(thrown, 2);
-  assert.equal(third.consumed, false);
+  const first = await sequential.invoke(async () => { thrown += 1; throw new Error("boom"); });
+  assert.equal(first.kind, "provider");
+  assert.equal(sequential.halted, false);
+  sequential.noteTerminal("provider");
+  assert.equal(sequential.halted, false);
+  sequential.noteTerminal("provider");
   assert.equal(sequential.haltReason, "consecutive-same-failure");
-  assert.throws(() => createCallCeiling({ limit: 13 }), /fixed at 12/);
+  const blocked = await sequential.invoke(async () => { thrown += 1; return { ok: true }; });
+  assert.equal(thrown, 1);
+  assert.equal(blocked.consumed, false);
+  assert.throws(() => createCallCeiling({ limit: 25 }), /fixed at 24/);
 });
 
 test("provider configuration stays capped and secret-free", () => {

@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { generateImage } from "../../app/storyboard-web/image-provider.mjs";
 import { buildPreflight, resolveRunConfig } from "./lib/config.mjs";
 import { createFakeImageGenerator } from "./lib/fake-provider.mjs";
-import { verifyInputs } from "./lib/inputs.mjs";
+import { snapshotRunInputs, verifyInputs } from "./lib/inputs.mjs";
 import { assertEvidenceDirectory, writeRunSnapshot } from "./lib/persist.mjs";
 import { assertSafeEvidence } from "./lib/evidence.mjs";
 import { executeRun } from "./lib/runner.mjs";
@@ -77,6 +77,13 @@ export async function main(argv = [], options = {}) {
   await mkdir(runDir, { recursive: true });
   const createdAt = new Date().toISOString();
   await writeFile(join(runDir, "preflight.json"), `${JSON.stringify(preflight, null, 2)}\n`);
+  let snapshotted;
+  try {
+    snapshotted = await snapshotRunInputs(runDir, verified.inputs);
+  } catch {
+    logger(JSON.stringify({ ok: false, kind: "input-snapshot", attempted: 0, providerCalls: 0 }));
+    return { exitCode: 2, attempted: 0, providerCalls: 0 };
+  }
   const imageGenerator = args.fake
     ? createFakeImageGenerator()
     : (request) => generateImage({
@@ -96,7 +103,7 @@ export async function main(argv = [], options = {}) {
     timeoutMs: config.timeoutMs,
     strategy: config.referenceConfig.strategy,
     budgetBytes: config.referenceConfig.budgetBytes,
-    inputs: verified.inputs,
+    inputs: snapshotted,
     preflight,
     planned: 12,
   };

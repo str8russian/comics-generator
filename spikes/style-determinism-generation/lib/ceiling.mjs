@@ -1,9 +1,9 @@
-import { CALL_CEILING, SYSTEMIC_FAILURE_KINDS } from "./constants.mjs";
+import { INVOCATION_CEILING, SYSTEMIC_FAILURE_KINDS } from "./constants.mjs";
 
-export function createCallCeiling({ limit = CALL_CEILING } = {}) {
-  if (limit !== CALL_CEILING) throw new Error("the provider ceiling is fixed at 12");
+export function createCallCeiling({ limit = INVOCATION_CEILING } = {}) {
+  if (limit !== INVOCATION_CEILING) throw new Error("the provider invocation ceiling is fixed at 24");
   let attempted = 0;
-  let previousKind = null;
+  let previousTerminalKind = null;
   let halted = false;
   let haltReason = null;
   let active = 0;
@@ -22,6 +22,18 @@ export function createCallCeiling({ limit = CALL_CEILING } = {}) {
     get maxActive() {
       return maxActive;
     },
+    noteSuccess() {
+      previousTerminalKind = null;
+    },
+    noteTerminal(kind) {
+      const normalized = normalizeFailureKind(kind);
+      if (previousTerminalKind === normalized) {
+        halted = true;
+        haltReason = "consecutive-same-failure";
+      }
+      previousTerminalKind = normalized;
+      return { halted, haltReason };
+    },
     async invoke(run) {
       if (halted || attempted >= limit) {
         return { consumed: false, reason: halted ? haltReason : "ceiling" };
@@ -39,12 +51,7 @@ export function createCallCeiling({ limit = CALL_CEILING } = {}) {
         active -= 1;
       }
       const ok = Boolean(outcome?.ok);
-      const kind = ok ? null : normalizeKind(outcome?.kind);
-      if (!ok && previousKind === kind) {
-        halted = true;
-        haltReason = "consecutive-same-failure";
-      }
-      previousKind = ok ? null : kind;
+      const kind = ok ? null : normalizeFailureKind(outcome?.kind);
       return {
         consumed: true,
         attemptNumber,
@@ -58,7 +65,7 @@ export function createCallCeiling({ limit = CALL_CEILING } = {}) {
   };
 }
 
-function normalizeKind(kind) {
+export function normalizeFailureKind(kind) {
   const value = String(kind || "provider");
   return SYSTEMIC_FAILURE_KINDS.includes(value) ? value : "provider";
 }

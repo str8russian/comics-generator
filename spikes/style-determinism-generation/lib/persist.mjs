@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { extensionForMime } from "../../../app/storyboard-web/image-info.mjs";
 import {
@@ -77,6 +78,8 @@ export function buildManifest(snapshot) {
     succeeded,
     failed,
     unattempted,
+    providerInvocations: snapshot.providerCalls ?? countProviderInvocations(cells),
+    failedInvocations: countFailedInvocations(cells),
     stopReason: snapshot.stopReason || null,
     attemptOrder: ATTEMPT_ORDER,
     displayCodeOrder: DISPLAY_CODE_ORDER,
@@ -106,4 +109,39 @@ export function promptFilePath(runDir, cell) {
 
 export async function ensureParent(path) {
   await mkdir(dirname(path), { recursive: true });
+}
+
+export async function writeJsonAtomic(path, value) {
+  await mkdir(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  const body = `${JSON.stringify(value, null, 2)}\n`;
+  try {
+    await writeFile(temporary, body);
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
+export function countProviderInvocations(cells = []) {
+  return cells.reduce((sum, cell) => sum + providerInvocationRecords(cell).length, 0);
+}
+
+export function countFailedInvocations(cells = []) {
+  return cells.reduce((sum, cell) => sum + providerInvocationRecords(cell).filter((item) => item.status === "failed").length, 0);
+}
+
+export function providerInvocationRecords(cell) {
+  if (Array.isArray(cell?.invocations) && cell.invocations.length) {
+    return cell.invocations.filter((item) => Number.isInteger(item.attemptNumber));
+  }
+  if (Number.isInteger(cell?.attemptNumber) && cell.status !== "unattempted") {
+    return [{
+      attemptNumber: cell.attemptNumber,
+      status: cell.status,
+      failureKind: cell.failureKind || null,
+    }];
+  }
+  return [];
 }

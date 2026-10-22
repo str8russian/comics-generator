@@ -63,11 +63,12 @@ export function renderReviewPage(model) {
     <section>
       <h2>Call counts</h2>
       <dl class="counts">
-        ${countItem("Planned", manifest.planned)}
-        ${countItem("Attempted", manifest.attempted)}
-        ${countItem("Succeeded", manifest.succeeded)}
-        ${countItem("Failed", manifest.failed)}
-        ${countItem("Unattempted", manifest.unattempted)}
+        ${countItem("Planned cells", manifest.planned)}
+        ${countItem("Provider invocations", manifest.providerInvocations ?? manifest.attempted)}
+        ${countItem("Successful cells", manifest.succeeded)}
+        ${countItem("Failed cells", manifest.failed)}
+        ${countItem("Failed invocations", manifest.failedInvocations ?? manifest.failed)}
+        ${countItem("Unattempted cells", manifest.unattempted)}
       </dl>
       <p>${escapeHtml(SEED_NOTE)} Model <code>${escapeHtml(manifest.model)}</code>. Aspect <code>${escapeHtml(manifest.aspectRatio)}</code>. Timeout ${Number(manifest.timeoutMs)} ms. Request budget ${Number(manifest.budgetBytes)} bytes. Strategy <code>${escapeHtml(manifest.strategy)}</code>.</p>
       ${manifest.stopReason ? `<p>Run stop: <code>${escapeHtml(manifest.stopReason)}</code>.</p>` : ""}
@@ -85,9 +86,9 @@ export function renderReviewPage(model) {
     <section class="reveal-bar">
       <h2>Condition labels</h2>
       <p>${escapeHtml(BLIND_NOTE)} Reference roles stay visible because they are run evidence.</p>
-      <p>First judgement pass: ${pass.judged} of ${pass.required} successful outputs have a complete categorical record.</p>
-      ${revealLocked ? `<p class="lock">Reveal stays closed until that first pass is complete.</p>` : ""}
-      ${pass.complete ? `<p><a class="reveal-link" href="/?reveal=1">Reveal condition labels</a></p>` : `<p><span class="reveal-link is-locked">Reveal condition labels</span></p>`}
+      <p id="first-pass">First judgement pass: ${pass.judged} of ${pass.required} successful outputs have a complete categorical record.</p>
+      <p id="reveal-lock" class="lock"${revealLocked ? "" : " hidden"}>Reveal stays closed until that first pass is complete.</p>
+      <p id="reveal-action">${pass.complete ? `<a class="reveal-link" href="/?reveal=1">Reveal condition labels</a>` : `<span class="reveal-link is-locked">Reveal condition labels</span>`}</p>
       ${showNames ? renderCounts(model) : ""}
     </section>
     ${groups.map((group) => renderGroup(group, saved, showNames)).join("")}
@@ -129,14 +130,14 @@ function renderCell(cell, judgement, showNames) {
     ? `<div class="output-frame"><img src="/media/output/${escapeHtml(cell.publicId)}" alt="Raw output ${escapeHtml(cell.publicId)}"></div>
        <div class="crop-frame"><img src="/media/crop/${escapeHtml(cell.publicId)}" alt="Matched face crop ${escapeHtml(cell.publicId)}"></div>
        <p class="caption">Display-only matched face crop. The stored output is unchanged.</p>`
-    : `<div class="failure-frame"><strong>${cell.status === "failed" ? "No output" : "Not attempted"}</strong><span>${escapeHtml(cell.failureKind || cell.skippedReason || cell.status)}</span><span>Attempt ${cell.attemptNumber ?? "—"}</span></div>`;
+    : `<div class="failure-frame"><strong>${cell.status === "failed" ? "No output" : "Not attempted"}</strong><span>${escapeHtml(cell.failureKind || cell.skippedReason || cell.status)}</span>${renderAttemptList(cell)}</div>`;
   return `<article class="cell">
     <h3>${escapeHtml(label)}</h3>
     <p class="public-id">${escapeHtml(cell.publicId)}</p>
     ${media}
     <dl class="evidence">
       ${fact("Status", cell.status)}
-      ${fact("Attempt", cell.attemptNumber ?? "—")}
+      ${fact("Attempts", renderAttemptText(cell))}
       ${fact("Roles", (cell.referenceRoles || []).join(", ") || "—")}
       ${fact("Normalized references", formatRefs(cell.normalizedReferences))}
       ${fact("Request bytes", cell.requestBytes ?? "—")}
@@ -166,7 +167,30 @@ function renderJudgement(cell, judgement = {}) {
       <textarea name="anatomyNote" maxlength="400" rows="3">${escapeHtml(judgement.anatomyNote || "")}</textarea>
     </label>
     <button type="submit">Save judgement</button>
+    <p class="save-status" data-state="clean"></p>
   </form>`;
+}
+
+function invocationRecords(cell) {
+  if (Array.isArray(cell.invocations) && cell.invocations.length) return cell.invocations;
+  if (cell.attemptNumber == null && cell.status === "unattempted") return [];
+  return [{
+    attemptNumber: cell.attemptNumber,
+    status: cell.status,
+    failureKind: cell.failureKind,
+  }];
+}
+
+function renderAttemptList(cell) {
+  const records = invocationRecords(cell);
+  if (!records.length) return `<span>Attempt —</span>`;
+  return `<ul class="attempts">${records.map((item) => `<li>Attempt ${item.attemptNumber ?? "—"} · ${escapeHtml(item.status)}${item.failureKind ? ` · ${escapeHtml(item.failureKind)}` : ""}</li>`).join("")}</ul>`;
+}
+
+function renderAttemptText(cell) {
+  const records = invocationRecords(cell);
+  if (!records.length) return "—";
+  return records.map((item) => `${item.attemptNumber ?? "—"} ${item.status}${item.failureKind ? ` ${item.failureKind}` : ""}`).join("; ");
 }
 
 function renderCounts(model) {

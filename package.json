@@ -25,7 +25,9 @@
     "spike:style-determinism:check": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/live.mjs --check",
     "spike:style-determinism:fake": "node spikes/style-determinism-generation/live.mjs --fake",
     "spike:style-determinism:live": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/live.mjs",
-    "spike:style-determinism:review": "node spikes/style-determinism-generation/review.mjs"
+    "spike:style-determinism:review": "node spikes/style-determinism-generation/review.mjs",
+    "spike:style-determinism:backfill": "node spikes/style-determinism-generation/backfill-inputs.mjs",
+    "spike:style-determinism:recover": "node --env-file-if-exists=.env.local spikes/style-determinism-generation/recover.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",
