@@ -1390,7 +1390,7 @@ async function handleAnchorSession(req, res, {
     budgetBytes: config.budgetBytes,
     references: assembled.references.map((ref) => toReference(ref.role, ref)),
     generationMode: basis === "selected" ? "revision" : "initial",
-    compilePrompt: (prepared) => compilePrototypePrompt(prepared, instruction),
+    compilePrompt: (prepared) => compilePrototypePrompt(prepared, instruction, { basis }),
     aspectRatio: "4:5",
     model: resolveImageModel(env ?? process.env),
     imageGenerator,
@@ -1403,7 +1403,7 @@ async function handleAnchorSession(req, res, {
     basis,
     status: result?.ok ? "ok" : "failed",
     kind: result?.ok ? undefined : safeKind(result?.kind),
-    referenceCount: assembled.references.length,
+    ...transportLogFields(result?.diagnostics),
     latencyMs: Date.now() - started,
   });
   if (!result?.ok || !result.image?.bytes) {

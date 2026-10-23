@@ -20,7 +20,7 @@ The accepted anchor stays visible until **Принять**. Cancel leaves it unc
 
 **Создать вариант с уточнением** is the initial Refine action. It revises the accepted anchor, keeps a retained source photo as identity authority, and requires a non-empty instruction. After a candidate exists, that primary action becomes **Создать вариант на основе выбранного**: it revises the selected candidate, including the candidate chosen by Undo, and keeps the source photo and accepted anchor as identity and continuity authorities. An empty instruction is then allowed.
 
-**Создать вариант от исходного фото** is shown immediately on the initial Refine screen when a real source photo is retained, and it stays available after candidates exist. It does not appear for a ready anchor without a real source photo, and the first photo-generation screen does not add a second copy of it. It sends that photograph, not the selected candidate and not the accepted stylized anchor. An instruction is optional and is sent when present. A project style image may be included only as style, never as identity or the revision draft. Each explicit click makes one provider call and appends the result. Basis copy names the action it belongs to.
+**Создать вариант от исходного фото** is shown immediately on the initial Refine screen when a real source photo is retained, and it stays available after candidates exist. It does not appear for a ready anchor without a real source photo, and the first photo-generation screen does not add a second copy of it. It sends only that retained source photograph. It does not send the selected candidate, the accepted anchor, or the project style image. An instruction is optional. When present, it is a scoped adjustment and does not replace the fixed authority, composition, canvas, lighting, or rendering rules. Each explicit click makes one provider call and appends the result. Basis copy names the action it belongs to.
 
 The next-action basis and the displayed candidate's origin are separate. Origin is stored on the candidate.
 
@@ -28,7 +28,9 @@ Every explicit anchor-generation attempt reaches a terminal state within 60 seco
 
 ## Prompt
 
-Production anchor generation uses the accepted system prompt: thick near-black character contours, few hard-edged tones, a full-bleed muted slate-blue matte, one chest-up person, no canvas frame, props, microphone, or logo, and identity-only use of a real photograph. Output is 4:5. The existing reference-budget transport stays in front of the provider.
+Direct source-photo generation, both the initial **Создать из реального фото** request and every later **Создать вариант от исходного фото** request, sends only the retained source photograph as the identity reference. The project style image is not included. The system-owned prompt-only profile controls rendering: neutral diffuse lighting without decorative highlights, thick near-black form contours, flat local color, one or two broad face and neck tonal planes, selective identity detail, vivid natural skin without a whole-image cast, a full-bleed muted slate-blue matte, and one chest-up person with no extra context. A non-empty instruction is a scoped adjustment and stays subordinate to those fixed rules. Output is 4:5.
+
+Refinement from the accepted anchor or the selected candidate keeps its existing reference order and prompt authority, including accepted-anchor continuity and a project style reference when that path already uses one. The reference-budget transport stays in front of every provider request.
 
 ## Persistence
 

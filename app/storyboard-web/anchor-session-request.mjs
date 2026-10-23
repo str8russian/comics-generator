@@ -23,8 +23,6 @@ export function assembleAnchorSession({
     const identity = withRole(source, "identity");
     if (!identity) return { ok: false, kind: "invalid-request" };
     references.push(identity);
-    const styleRef = withRole(style, "style");
-    if (styleRef) references.push(styleRef);
   } else if (basis === "selected") {
     const draft = withRole(previous, "previous");
     if (!draft) return { ok: false, kind: "invalid-request" };
@@ -45,7 +43,7 @@ export function assembleAnchorSession({
   return {
     ok: true,
     references: references.slice(0, 3),
-    prompt: compilePrototypePrompt(references.slice(0, 3), instruction),
+    prompt: compilePrototypePrompt(references.slice(0, 3), instruction, { basis }),
     aspectRatio: "4:5",
   };
 }

@@ -36,6 +36,65 @@ const AUTHORITY = [
   "- Preserve useful compliant qualities from the previous candidate, but remove any forbidden frame, margin, incomplete matte, prop, microphone, logo, excess tonal detail, or thin-line treatment even if it appears in that candidate.",
 ].join("\n");
 
+const DIRECT_SOURCE_TASK = [
+  "Create one independent base identity anchor.",
+  "This is an initial generation.",
+  "",
+  "The sole image is the source photograph and the identity reference.",
+  "It controls facial structure, apparent age, hair, and stable recognizable traits only.",
+  "Do not copy its photographic rendering, environment, background, clothing logo, or pose dependency.",
+  "Do not return the source photograph.",
+].join("\n");
+
+const DIRECT_SOURCE_CONSTRAINTS = [
+  "Common constraints:",
+  "- Use neutral diffuse presentation lighting.",
+  "- Broad structural light and shadow planes may remain.",
+  "- Do not add decorative reflected-light bands, glossy or specular skin or hair patches, rim-light streaks, or clusters of small highlight islands.",
+  "- Small natural eye catchlights and visible teeth may remain restrained and anatomically motivated.",
+  "- Show exactly one person, chest-up, near-frontal, with the mouth visible and safe margins.",
+  "- Keep the hands outside the crop.",
+  "- Use plain unbranded clothing. Do not copy the source photograph's logo.",
+  "- No props, objects, furniture, microphones, equipment, additional people, text, logo, watermark, frame, border, nested panel, vignette, or environmental context.",
+  "- Use one uniform solid muted slate-blue matte filling all four edges and corners.",
+  "- The identity reference controls identity only. Do not copy its photographic rendering, environment, clothing logo, pose dependency, or background.",
+  "- Target aspect ratio: 4:5.",
+].join("\n");
+
+const DIRECT_SOURCE_RENDERING = [
+  "Accepted rendering profile:",
+  "- Use a clean, decisive, thick near-black contour around the character silhouette and the major facial, hair, and clothing forms.",
+  "- Contour lines follow those forms. They are not a border around the canvas.",
+  "- Use flat local colors and high thumbnail readability.",
+  "- For the face and neck, use one dominant natural skin color plus only one or two broad secondary hard-edged tonal planes.",
+  "- Keep selective identity-bearing line and form detail at the eyes, brows, nose, mouth, jaw, and major hair groups.",
+  "- Use solid muted colors rather than many subtle shades.",
+  "- Use vivid natural skin without a whole-image cool, gray, purple, orange, or other color cast.",
+  "- No gradients, soft airbrush shading, painterly modelling, thin sketch lines, delicate outlines, excessive tonal groups, or clusters of small tonal islands.",
+  "- Do not compensate for missing identity detail by adding more shading.",
+].join("\n");
+
+function directSourcePrompt(instruction) {
+  const trimmed = String(instruction || "").trim();
+  const parts = [DIRECT_SOURCE_TASK];
+  if (trimmed) {
+    parts.push([
+      "Scoped adjustment:",
+      trimmed,
+      "This adjustment does not replace the fixed authority, composition, canvas, lighting, or rendering rules.",
+    ].join("\n"));
+  }
+  parts.push(DIRECT_SOURCE_CONSTRAINTS, DIRECT_SOURCE_RENDERING);
+  return parts.join("\n\n");
+}
+
+function isDirectSource(references, basis) {
+  if (basis === "from-source") return true;
+  if (basis) return false;
+  const roles = (references || []).map((reference) => reference?.role);
+  return roles.length > 0 && roles.every((role) => role === "identity");
+}
+
 function roleLine(reference, index) {
   const number = index + 1;
   if (reference.role === "identity") {
@@ -53,7 +112,8 @@ function roleLine(reference, index) {
   return `Image ${number} is a reference image.`;
 }
 
-export function compilePrototypePrompt(references, instruction) {
+export function compilePrototypePrompt(references, instruction, options = {}) {
+  if (isDirectSource(references, options.basis)) return directSourcePrompt(instruction);
   const lines = (references || []).map(roleLine);
   const request = String(instruction || "").trim() || "Create another stylized variant.";
   return [

@@ -75,10 +75,12 @@ test("source-based assembly excludes the accepted anchor and selected candidate"
     previous: { bytes: Buffer.from("previous"), mime: "image/png" },
     style: { bytes: png, mime: "image/png" },
   });
-  assert.deepEqual(assembled.references.map((ref) => ref.role), ["identity", "style"]);
-  assert.match(assembled.prompt, /muted slate-blue matte/);
+  assert.deepEqual(assembled.references.map((ref) => ref.role), ["identity"]);
+  assert.equal(assembled.references[0].bytes.equals(png), true);
+  assert.match(assembled.prompt, /neutral diffuse presentation lighting/);
   assert.match(assembled.prompt, /not a border around the canvas/);
-  assert.match(assembled.prompt, /No microphone, microphone stand/);
+  assert.match(assembled.prompt, /microphones/);
+  assert.equal(/accepted anchor|previous candidate|project style|style reference/i.test(assembled.prompt), false);
   assert.equal(assembled.prompt.includes("plain unobtrusive background"), false);
   const selected = assembleAnchorSession({
     basis: "selected",
