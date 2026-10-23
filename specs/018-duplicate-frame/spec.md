@@ -8,7 +8,7 @@ Duplicate is one addressable storyboard operation and a future primitive for com
 
 ## User action
 
-**Дублировать кадр** is on the existing per-frame assembly controls, with insert, move, and delete. It is available for ordinary image frames, dialogue frames, and text cards. It is distinct from **Кадр с изображением после**, which creates a blank frame.
+**Дублировать кадр** is on the existing per-frame assembly controls, with insert, move, and delete; since Feature 019 these live in the frame inspector (`specs/019-workspace-shell/spec.md`). It is available for ordinary image frames, dialogue frames, and text cards. It is distinct from **Кадр с изображением после**, which creates a blank frame.
 
 There is no new toolbar, context menu, bulk selection, or editor surface. One product-operation busy boundary blocks a second click while the request is in flight.
 

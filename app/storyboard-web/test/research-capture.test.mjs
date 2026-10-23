@@ -1789,7 +1789,7 @@ test("detail frame number follows the open frame when its display position chang
     panels: [{ id: "panel-b", description: "справа", subject: "Дуров", assetId: "asset-2" }],
   };
   page.applyVisual(readyVisual({ frames: [first, second], complete: false }));
-  document.querySelector("#storyboard").querySelector(".frame-preview").dispatchEvent({ type: "click" });
+  openFrameCard(0);
   assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
   assert.equal(document.querySelector("#detail-frame").querySelector("#detail-frame-number"), null);
   page.applyVisual(readyVisual({ frames: [second, first], complete: false }));
@@ -1845,8 +1845,8 @@ test("insert then undo removes the frame, and undo after delete restores it", as
   });
   page.applyVisual(base);
   globalThis.__visualScript = [{ path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations", body: inserted }];
-  const insert = [...document.querySelector("#storyboard").querySelectorAll("button")]
-    .find((button) => button.textContent === "Кадр с изображением после");
+  selectFrameCard(0);
+  const insert = buttonNamed("Кадр с изображением после");
   insert.dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(document.querySelector("#storyboard").querySelectorAll(".story-card").length, 2);
@@ -1866,8 +1866,8 @@ test("insert then undo removes the frame, and undo after delete restores it", as
     path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
     body: readyVisual({ ...base, canUndo: true, undoLabel: "удаление кадра", storyboardVersionId: "version-3" }),
   }];
-  const remove = [...document.querySelector("#storyboard").querySelectorAll("button")]
-    .find((button) => button.textContent === "Удалить кадр");
+  selectFrameCard(0);
+  const remove = buttonNamed("Удалить кадр");
   remove.dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(document.querySelector("#storyboard").querySelectorAll(".story-card").length, 1);
@@ -1902,7 +1902,8 @@ test("action status stays visible when the edited card is offscreen", async () =
     path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
     body: readyVisual({ changed: false }),
   }];
-  const duration = [...document.querySelector("#storyboard").querySelectorAll("input")]
+  selectFrameCard(0);
+  const duration = [...document.querySelector("#frame-inspector").querySelectorAll("input")]
     .find((input) => input.type === "number");
   duration.value = "36";
   duration.dispatchEvent({ type: "change" });
@@ -2144,8 +2145,16 @@ function frameNumbers() {
   ));
 }
 
-function buttonNamed(text, root = document.querySelector("#storyboard")) {
+function buttonNamed(text, root = document.querySelector("#frame-inspector")) {
   return [...root.querySelectorAll("button")].find((button) => button.textContent === text) ?? null;
+}
+
+function selectFrameCard(index) {
+  frameCards()[index].dispatchEvent({ type: "click" });
+}
+
+function openFrameCard(index) {
+  buttonNamed("Открыть", frameCards()[index]).dispatchEvent({ type: "click" });
 }
 
 function visualFrame(id, extras = {}) {
@@ -2172,12 +2181,14 @@ test("duplicate frame control opens the copy and one undo returns to the source"
     canUndo: false,
     frames: [source, neighborFrame],
   }));
+  selectFrameCard(0);
   const duplicate = buttonNamed("Дублировать кадр");
   assert.ok(duplicate);
   assert.ok(buttonNamed("Кадр с изображением после"));
   assert.notEqual(duplicate.textContent, "Кадр с изображением после");
   const textCard = visualFrame("structure-card", { frameKind: "text", textCard: "Пауза", panels: [], dialogue: "" });
   page.applyVisual(readyVisual({ frames: [textCard] }));
+  selectFrameCard(0);
   assert.ok(buttonNamed("Дублировать кадр"));
   page.applyVisual(readyVisual({
     canUndo: true,
@@ -2205,6 +2216,7 @@ test("duplicate frame control opens the copy and one undo returns to the source"
       frames: [source, copy, neighborFrame],
     }),
   }];
+  selectFrameCard(0);
   buttonNamed("Дублировать кадр").dispatchEvent({ type: "click" });
   await flushTicks(8);
   const operationPosts = productPosts.filter((entry) => entry.path.endsWith("/visual/operations"));
@@ -2216,7 +2228,7 @@ test("duplicate frame control opens the copy and one undo returns to the source"
   assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 2");
   document.querySelector("#next-frame").dispatchEvent({ type: "click" });
   assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 3");
-  frameCards()[0].querySelector(".frame-preview").dispatchEvent({ type: "click" });
+  openFrameCard(0);
   assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
   document.querySelector("#next-frame").dispatchEvent({ type: "click" });
   assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 2");
@@ -2263,7 +2275,8 @@ test("duplicating a directing-beat card opens the copied segment, not the next o
   const second = visualFrame("beat#2", { structureFrameId: "beat", structureSegmentIndex: 1, dialogue: "Два" });
   const after = visualFrame("after");
   page.applyVisual(readyVisual({ frames: [first, second, after] }));
-  const note = [...frameCards()[1].querySelectorAll(".assembly-note")].map((node) => node.textContent).join(" ");
+  selectFrameCard(1);
+  const note = [...document.querySelector("#frame-inspector").querySelectorAll(".assembly-note")].map((node) => node.textContent).join(" ");
   assert.match(note, /Дублирование, вставка, удаление и порядок/);
   const copyFirst = visualFrame("beat-copy#1", { structureFrameId: "beat-copy", structureSegmentIndex: 0, dialogue: "Раз" });
   const copySecond = visualFrame("beat-copy#2", { structureFrameId: "beat-copy", structureSegmentIndex: 1, dialogue: "Два" });
@@ -2281,8 +2294,7 @@ test("duplicating a directing-beat card opens the copied segment, not the next o
       frames: [first, second, copyFirst, copySecond, after],
     }),
   }];
-  frameCards()[1].querySelectorAll("button").find((button) => button.textContent === "Дублировать кадр")
-    .dispatchEvent({ type: "click" });
+  buttonNamed("Дублировать кадр").dispatchEvent({ type: "click" });
   await flushTicks(8);
   assert.deepEqual(frameNumbers(), ["Кадр 1", "Кадр 2", "Кадр 3", "Кадр 4", "Кадр 5"]);
   assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 4");
@@ -2293,7 +2305,7 @@ test("a failed duplicate leaves the source open and records failure", async () =
   await ensurePage();
   const source = visualFrame("structure-a");
   page.applyVisual(readyVisual({ frames: [source, visualFrame("structure-b")] }));
-  frameCards()[0].querySelector(".frame-preview").dispatchEvent({ type: "click" });
+  openFrameCard(0);
   assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
   researchPosts.length = 0;
   productPosts.length = 0;
@@ -2343,6 +2355,7 @@ test("a second duplicate click while the first request is busy does not send ano
     return original(url, init);
   };
   try {
+    selectFrameCard(0);
     buttonNamed("Дублировать кадр").dispatchEvent({ type: "click" });
     for (let i = 0; i < 20 && operationPosts === 0; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 0));

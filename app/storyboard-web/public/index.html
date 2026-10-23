@@ -10,14 +10,19 @@
 <body>
   <div id="action-status" class="action-status" aria-live="polite" hidden></div>
   <main class="page">
-    <header class="project-bar">
-      <a class="project-back" href="/">Проекты</a>
-      <form id="rename-form" class="rename-form">
-        <label for="project-title">Проект</label>
-        <input id="project-title" name="title" maxlength="120" required>
-        <button type="submit">Сохранить название</button>
-      </form>
-      <button id="duplicate-project" type="button">Дублировать проект</button>
+    <header class="project-bar workspace-header">
+      <div class="workspace-header-row">
+        <a class="project-back" href="/">Проекты</a>
+        <form id="rename-form" class="rename-form">
+          <label for="project-title">Проект</label>
+          <input id="project-title" name="title" maxlength="120" required>
+          <button type="submit">Сохранить название</button>
+        </form>
+        <button id="duplicate-project" type="button">Дублировать проект</button>
+        <button id="global-undo" type="button" class="global-undo" hidden disabled>Нечего отменять</button>
+        <p id="build-marker" class="build-marker">Сборка …</p>
+      </div>
+      <nav id="stage-nav" class="stage-nav" aria-label="Этапы работы"></nav>
     </header>
     <section id="project-missing" class="project-missing" hidden>
       <h1>Проект не найден</h1>
@@ -25,109 +30,134 @@
       <p><a href="/">Проекты</a></p>
     </section>
     <div id="workspace-body">
-    <h1>Раскадровка</h1>
-    <p id="build-marker" class="build-marker">Сборка …</p>
-    <button id="global-undo" type="button" class="global-undo" hidden disabled>Нечего отменять</button>
-    <form id="draft-form" class="paste-form">
-      <label for="draft">Черновик диалога</label>
-      <textarea id="draft" name="draft"></textarea>
-      <p id="draft-conflict" class="draft-conflict" hidden>Есть более новый сохранённый черновик.</p>
-      <button id="reload-draft" type="button" hidden>Загрузить сохранённый черновик</button>
-      <button id="keep-draft" type="button" hidden>Оставить этот текст</button>
-      <button id="read-draft" type="submit">Разобрать черновик</button>
-    </form>
-    <section id="material-review" class="material-review" hidden aria-label="Разбор материала">
-      <h2>Разбор</h2>
-      <ol id="material-sources"></ol>
-      <h3>Персонажи</h3>
-      <ul id="material-characters"></ul>
-      <p id="material-cast-status" class="material-mismatch" hidden></p>
-      <h3>Обращения</h3>
-      <ul id="material-aliases"></ul>
-      <h3>Говорящие</h3>
-      <ul id="material-speakers"></ul>
-      <ul id="material-findings" hidden></ul>
-      <p id="material-mismatch" class="material-mismatch" hidden>Черновик не совпадает с разобранным текстом. Подтверждение недоступно.</p>
-      <button id="confirm-material" type="button" disabled>Подтвердить</button>
-      <button id="stage-material" type="button" hidden>Собрать раскадровку</button>
-    </section>
-    <p id="loading" class="loading" hidden>Сборка раскадровки…</p>
-    <p id="notice" class="notice" hidden></p>
-    <ul id="failure-codes" hidden></ul>
-    <p id="failure-kind" hidden></p>
-    <section id="structure-tools" class="workspace-panel" hidden aria-labelledby="structure-tools-title">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Текстовая раскадровка</p>
-          <h2 id="structure-tools-title">Что изменить в кадрах?</h2>
-        </div>
-      </div>
-      <p class="helper">Укажите номера кадров обычным текстом. Замена реплики делается в Редакторе кадра. Эта команда не меняет текст источника.</p>
-      <form id="structure-edit-form" class="instruction-form">
-        <textarea id="structure-instruction" placeholder="Например: сделай кадры 8 и 9 split screen, сохрани реплики и добавь слушающего персонажа"></textarea>
-        <button type="submit">Применить к раскадровке</button>
+    <div id="workspace-alerts" class="workspace-alerts">
+      <p id="loading" class="loading" hidden>Сборка раскадровки…</p>
+      <p id="notice" class="notice" hidden></p>
+      <ul id="failure-codes" hidden></ul>
+      <p id="failure-kind" hidden></p>
+    </div>
+    <section id="stage-view-story" class="stage-view" aria-labelledby="stage-header-story">
+      <div id="stage-header-story" class="stage-header"></div>
+      <form id="draft-form" class="paste-form">
+        <label for="draft">Черновик диалога</label>
+        <textarea id="draft" name="draft"></textarea>
+        <p id="draft-conflict" class="draft-conflict" hidden>Есть более новый сохранённый черновик.</p>
+        <button id="reload-draft" type="button" hidden>Загрузить сохранённый черновик</button>
+        <button id="keep-draft" type="button" hidden>Оставить этот текст</button>
+        <button id="read-draft" type="submit">Разобрать черновик</button>
       </form>
-      <p id="structure-result" class="result-line" hidden></p>
+      <section id="material-review" class="material-review" hidden aria-label="Разбор материала">
+        <h2>Разбор</h2>
+        <ol id="material-sources"></ol>
+        <h3>Персонажи</h3>
+        <ul id="material-characters"></ul>
+        <p id="material-cast-status" class="material-mismatch" hidden></p>
+        <h3>Обращения</h3>
+        <ul id="material-aliases"></ul>
+        <h3>Говорящие</h3>
+        <ul id="material-speakers"></ul>
+        <ul id="material-findings" hidden></ul>
+        <p id="material-mismatch" class="material-mismatch" hidden>Черновик не совпадает с разобранным текстом. Подтверждение недоступно.</p>
+        <button id="confirm-material" type="button" disabled>Подтвердить</button>
+        <button id="stage-material" type="button" hidden>Собрать раскадровку</button>
+      </section>
     </section>
-    <section id="characters-workspace" class="workspace-panel" hidden aria-labelledby="characters-title">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Персонажи</p>
-          <h2 id="characters-title">Создайте базовые образы</h2>
+    <!-- /stage-view -->
+    <section id="stage-view-storyboard" class="stage-view" aria-labelledby="stage-header-storyboard" hidden>
+      <div id="stage-header-storyboard" class="stage-header"></div>
+      <section id="structure-tools" class="workspace-panel" hidden aria-labelledby="structure-tools-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Текстовая раскадровка</p>
+            <h2 id="structure-tools-title">Что изменить в кадрах?</h2>
+          </div>
         </div>
-      </div>
-      <p class="helper">Создайте или уточните базовый образ в отдельном окне. Готовый anchor можно загрузить, а вариант по реальному фото — сгенерировать. HEIC пока не поддерживается.</p>
-      <div id="character-cards" class="character-cards"></div>
+        <p class="helper">Укажите номера кадров обычным текстом. Замена реплики делается в Редакторе кадра. Эта команда не меняет текст источника.</p>
+        <form id="structure-edit-form" class="instruction-form">
+          <textarea id="structure-instruction" placeholder="Например: сделай кадры 8 и 9 split screen, сохрани реплики и добавь слушающего персонажа"></textarea>
+          <button type="submit">Применить к раскадровке</button>
+        </form>
+        <p id="structure-result" class="result-line" hidden></p>
+      </section>
     </section>
-    <section id="visual-heading" class="visual-heading" hidden>
-      <div>
-        <p class="eyebrow">Визуальная раскадровка</p>
-        <h2>Создавайте кадры по одному</h2>
-      </div>
-      <p id="visual-progress" class="progress-copy"></p>
-    </section>
-    <button id="open-last" type="button" hidden>Открыть последний кадр</button>
-    <p id="anchor-note" class="anchor-note">Демонстрация с базовыми образами персонажей; эмоции и позы пока не меняются между кадрами.</p>
-    <section id="storyboard" class="grid" aria-label="Кадры раскадровки"></section>
-    <section id="visual-approval" class="workspace-panel approval-panel" hidden>
-      <div>
-        <p class="eyebrow">Финальная проверка</p>
-        <h2>Визуальная раскадровка готова</h2>
-        <p id="approval-copy" class="helper">Просмотрите все кадры и утвердите текущую версию.</p>
-      </div>
-      <button id="approve-visual" type="button">Утвердить визуальную раскадровку</button>
-    </section>
-    <p id="ready-for-video" class="ready-for-video" hidden>Визуальная раскадровка утверждена и готова к созданию видео.</p>
-    <section id="render-panel" class="workspace-panel" hidden>
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Видео</p>
-          <h2>Собрать текущую раскадровку</h2>
+    <!-- /stage-view -->
+    <section id="stage-view-characters" class="stage-view" aria-labelledby="stage-header-characters" hidden>
+      <div id="stage-header-characters" class="stage-header"></div>
+      <section id="characters-workspace" class="workspace-panel" hidden aria-labelledby="characters-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Персонажи</p>
+            <h2 id="characters-title">Создайте базовые образы</h2>
+          </div>
         </div>
-      </div>
-      <p id="render-status" class="helper">Ожидание</p>
-      <div class="render-options">
-        <div>
-          <label for="render-transition">Переходы</label>
-          <select id="render-transition">
-            <option value="hard-cut" selected>Жёсткая склейка</option>
-            <option value="cross-dissolve">Cross dissolve</option>
-          </select>
-        </div>
-        <div>
-          <label for="render-intro">Интро</label>
-          <select id="render-intro">
-            <option value="" selected>Без интро</option>
-          </select>
-        </div>
-      </div>
-      <p id="intro-availability" class="helper" hidden></p>
-      <p id="render-runtime" class="helper"></p>
-      <button id="start-render" type="button">Собрать видео</button>
-      <p id="render-error" class="notice" hidden></p>
-      <video id="render-preview" class="render-preview" controls hidden></video>
-      <a id="render-download" hidden download="storyboard.mp4">Скачать видео</a>
+        <p class="helper">Создайте или уточните базовый образ в отдельном окне. Готовый anchor можно загрузить, а вариант по реальному фото — сгенерировать. HEIC пока не поддерживается.</p>
+        <div id="character-cards" class="character-cards" tabindex="-1"></div>
+      </section>
     </section>
+    <!-- /stage-view -->
+    <section id="stage-view-visual" class="stage-view" aria-labelledby="stage-header-visual" hidden>
+      <div id="stage-header-visual" class="stage-header"></div>
+      <section id="visual-heading" class="visual-heading" hidden>
+        <div>
+          <p class="eyebrow">Визуальная раскадровка</p>
+          <h2>Создавайте кадры по одному</h2>
+        </div>
+        <p id="visual-progress" class="progress-copy"></p>
+      </section>
+      <section id="visual-approval" class="workspace-panel approval-panel" hidden>
+        <div>
+          <p class="eyebrow">Обязательная проверка перед видео</p>
+          <h2>Визуальная раскадровка готова</h2>
+          <p id="approval-copy" class="helper">Просмотрите все кадры и утвердите текущую версию.</p>
+        </div>
+        <button id="approve-visual" type="button">Утвердить визуальную раскадровку</button>
+      </section>
+      <button id="open-last" type="button" hidden>Открыть последний кадр</button>
+    </section>
+    <!-- /stage-view -->
+    <div id="frames-area" class="frames-area" hidden>
+      <div class="frames-main">
+        <p id="anchor-note" class="anchor-note">Демонстрация с базовыми образами персонажей; эмоции и позы пока не меняются между кадрами.</p>
+        <section id="storyboard" class="grid" aria-label="Кадры раскадровки"></section>
+      </div>
+      <aside id="frame-inspector" class="frame-inspector" aria-label="Выбранный кадр" aria-live="polite"></aside>
+    </div>
+    <!-- /frames-area -->
+    <section id="stage-view-video" class="stage-view" aria-labelledby="stage-header-video" hidden>
+      <div id="stage-header-video" class="stage-header"></div>
+      <p id="ready-for-video" class="ready-for-video" hidden>Визуальная раскадровка утверждена и готова к созданию видео.</p>
+      <section id="render-panel" class="workspace-panel" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Видео</p>
+            <h2>Собрать текущую раскадровку</h2>
+          </div>
+        </div>
+        <p id="render-status" class="helper">Ожидание</p>
+        <div class="render-options">
+          <div>
+            <label for="render-transition">Переходы</label>
+            <select id="render-transition">
+              <option value="hard-cut" selected>Жёсткая склейка</option>
+              <option value="cross-dissolve">Cross dissolve</option>
+            </select>
+          </div>
+          <div>
+            <label for="render-intro">Интро</label>
+            <select id="render-intro">
+              <option value="" selected>Без интро</option>
+            </select>
+          </div>
+        </div>
+        <p id="intro-availability" class="helper" hidden></p>
+        <p id="render-runtime" class="helper"></p>
+        <button id="start-render" type="button">Собрать видео</button>
+        <p id="render-error" class="notice" hidden></p>
+        <video id="render-preview" class="render-preview" controls hidden></video>
+        <a id="render-download" hidden download="storyboard.mp4">Скачать видео</a>
+      </section>
+    </section>
+    <!-- /stage-view -->
     </div>
   </main>
   <div id="research-dock-host">
@@ -142,6 +172,7 @@
       <button type="button" id="research-dock-toggle" class="research-dock-toggle" aria-expanded="true" aria-controls="research-dock-body">
         Команды ▾
       </button>
+      <p id="research-commands-scope" class="research-commands-scope" aria-live="polite">Область: не выбрана</p>
       <div id="research-dock-body" class="research-dock-body">
         <section id="research-commands" class="research-region" aria-labelledby="research-commands-title">
           <h2 id="research-commands-title">Команды</h2>
@@ -149,7 +180,7 @@
           <label class="research-label" for="research-commands-target">Действие (ограничивает выполнение)</label>
           <select id="research-commands-target" class="research-commands-target"></select>
           <p id="research-commands-target-hint" class="research-helper">
-            Панели в списке относятся к открытому кадру.
+            Панели в списке относятся к открытому кадру. Выбор панели в редакторе панели выбирает её и здесь.
           </p>
           <form id="research-commands-form" class="research-commands-form">
             <label class="research-label" for="research-commands-draft">Команда</label>
@@ -219,7 +250,11 @@
           <button id="frame-dialogue-add" type="button">Добавить реплику</button>
           <button id="frame-dialogue-remove" type="button">Удалить реплику</button>
         </section>
-        <div id="detail-panel-controls" class="panel-controls"></div>
+        <section id="panel-editor" class="panel-editor" aria-labelledby="panel-editor-title" hidden>
+          <h3 id="panel-editor-title" class="panel-editor-title">Редактор панели</h3>
+          <div id="panel-editor-tabs" class="panel-editor-tabs" role="group" aria-label="Панели кадра"></div>
+          <div id="detail-panel-controls" class="panel-controls"></div>
+        </section>
       </div>
       <div class="dialog-actions">
         <button id="next-frame" type="button" hidden>Продолжить к следующему кадру</button>

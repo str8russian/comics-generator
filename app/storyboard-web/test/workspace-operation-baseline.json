@@ -1,0 +1,1362 @@
+{
+  "base": "6f0865c679311046c371088bdd1b736e3747de10",
+  "api": "/api/projects/00000000-0000-4000-8000-000000000001",
+  "scenarios": {
+    "duplicateFrame": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "duplicateFrame",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "displayFrameNumber": 1
+        }
+      },
+      "research": {
+        "semanticAction": "frame_duplicate",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "insertFrame.image": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "insertFrame",
+          "afterStructureFrameId": "s-1",
+          "kind": "image",
+          "displayFrameNumber": 1
+        }
+      },
+      "research": {
+        "semanticAction": "frame_insert",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "insertFrame.text": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "insertFrame",
+          "afterStructureFrameId": "s-1",
+          "kind": "text",
+          "displayFrameNumber": 1
+        }
+      },
+      "research": {
+        "semanticAction": "frame_insert",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "reorderFrames.earlier": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "reorderFrames",
+          "structureFrameIds": [
+            "s-2",
+            "s-1",
+            "s-3",
+            "s-4",
+            "s-5"
+          ],
+          "displayFrameNumber": 2
+        }
+      },
+      "research": {
+        "semanticAction": "frame_reorder",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "reorderFrames.later": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "reorderFrames",
+          "structureFrameIds": [
+            "s-1",
+            "s-3",
+            "s-2",
+            "s-4",
+            "s-5"
+          ],
+          "displayFrameNumber": 2
+        }
+      },
+      "research": {
+        "semanticAction": "frame_reorder",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "deleteFrame": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "deleteFrame",
+          "structureFrameId": "s-2",
+          "displayFrameNumber": 2
+        }
+      },
+      "research": {
+        "semanticAction": "frame_delete",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "setDuration": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "setDuration",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "durationFrames": 90,
+          "displayFrameNumber": 1
+        }
+      },
+      "research": {
+        "semanticAction": "frame_duration",
+        "surface": "product_control",
+        "submittedText": "90",
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "setTextCard": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "setTextCard",
+          "structureFrameId": "s-3",
+          "text": "Новый текст",
+          "displayFrameNumber": 3
+        }
+      },
+      "research": {
+        "semanticAction": "text_card",
+        "surface": "product_control",
+        "submittedText": "Новый текст",
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 3,
+          "displayFrameId": "display-3",
+          "structureFrameId": "s-3",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 3,
+          "displayFrameId": "display-3",
+          "structureFrameId": "s-3",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "addPanel": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "addPanel",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "displayFrameNumber": 2
+        }
+      },
+      "research": {
+        "semanticAction": "panel_add",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "reorderPanels": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "reorderPanels",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIds": [
+            "p-1b",
+            "p-1a"
+          ],
+          "displayFrameNumber": 1
+        }
+      },
+      "research": {
+        "semanticAction": "panel_reorder",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "deletePanel.listener": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "deletePanel",
+          "panelId": "p-1b",
+          "confirmSpeakerTransfer": false,
+          "displayFrameNumber": 1,
+          "panelIndex": 1
+        }
+      },
+      "research": {
+        "semanticAction": "panel_delete",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 1,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1b"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 1,
+          "panelSubject": "Дуров",
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1b",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "deletePanel.speaker": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "deletePanel",
+          "panelId": "p-1a",
+          "confirmSpeakerTransfer": true,
+          "displayFrameNumber": 1,
+          "panelIndex": 0
+        }
+      },
+      "research": {
+        "semanticAction": "panel_delete",
+        "surface": "product_control",
+        "submittedText": "Реплика остаётся у оставшейся панели",
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": "Путин",
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "setManualSubject": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "setManualSubject",
+          "panelId": "p-2",
+          "characterName": "Путин",
+          "displayFrameNumber": 2,
+          "panelIndex": 0
+        }
+      },
+      "research": {
+        "semanticAction": "panel_subject",
+        "surface": "product_control",
+        "submittedText": "Путин",
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-2"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-2",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "assignAsset.imageOnly": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "assignAsset",
+          "assetId": "asset-1",
+          "carryMetadata": false,
+          "targets": [
+            {
+              "panelId": "p-2"
+            }
+          ],
+          "displayFrameNumber": 2,
+          "panelIndex": 0
+        }
+      },
+      "research": {
+        "semanticAction": "asset_assign",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-2"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-2",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "assignAsset.carryMetadata": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "assignAsset",
+          "assetId": "asset-1",
+          "carryMetadata": true,
+          "targets": [
+            {
+              "panelId": "p-5"
+            }
+          ],
+          "displayFrameNumber": 5,
+          "panelIndex": 0
+        }
+      },
+      "research": {
+        "semanticAction": "asset_assign",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 5,
+          "displayFrameId": "display-5",
+          "structureFrameId": "s-5",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-5"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 5,
+          "displayFrameId": "display-5",
+          "structureFrameId": "s-5",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": "Дуров",
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-5",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "uploadAsset": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "uploadAsset",
+          "imageDataUrl": "data:image/png;base64,aGVsbG8=",
+          "carryMetadata": false,
+          "targets": [
+            {
+              "panelId": "p-2"
+            }
+          ],
+          "displayFrameNumber": 2,
+          "panelIndex": 0
+        }
+      },
+      "research": {
+        "semanticAction": "asset_assign",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-2"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 2,
+          "displayFrameId": "display-2",
+          "structureFrameId": "s-2",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-2",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "setFrameDialogue.silent": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "setFrameDialogue",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "dialogueMode": "silent",
+          "displayFrameNumber": 1
+        }
+      },
+      "research": {
+        "semanticAction": "frame_dialogue",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "setFrameDialogue.speaker": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "setFrameDialogue",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "dialogueMode": "spoken",
+          "text": "Привет",
+          "speakerPanelId": "p-1b",
+          "displayFrameNumber": 1
+        }
+      },
+      "research": {
+        "semanticAction": "frame_dialogue",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "setFrameDialogue.hidden": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "setFrameDialogue",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "dialogueMode": "hidden",
+          "displayFrameNumber": 1
+        }
+      },
+      "research": {
+        "semanticAction": "frame_dialogue",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "setFrameDialogue.singleSilent": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+        "body": {
+          "op": "setFrameDialogue",
+          "structureFrameId": "s-4",
+          "structureSegmentIndex": null,
+          "dialogueMode": "silent",
+          "displayFrameNumber": 4
+        }
+      },
+      "research": {
+        "semanticAction": "frame_dialogue",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 4,
+          "displayFrameId": "display-4",
+          "structureFrameId": "s-4",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 4,
+          "displayFrameId": "display-4",
+          "structureFrameId": "s-4",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "placement.zoom": {
+      "request": {
+        "method": "PATCH",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/display-1/panels/0/placement",
+        "body": {
+          "zoom": 1.5,
+          "positionX": 41,
+          "positionY": 22,
+          "mirrored": false
+        }
+      },
+      "research": {
+        "semanticAction": "placement_commit",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": 1.5,
+          "positionX": 41,
+          "positionY": 22,
+          "mirrored": false,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": "Путин",
+          "imageAssetId": "asset-1",
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "placement.mirror": {
+      "request": {
+        "method": "PATCH",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/display-1/panels/0/placement",
+        "body": {
+          "zoom": 1.2,
+          "positionX": 41,
+          "positionY": 22,
+          "mirrored": true
+        }
+      },
+      "research": {
+        "semanticAction": "placement_commit",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": 1.2,
+          "positionX": 41,
+          "positionY": 22,
+          "mirrored": true,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": "Путин",
+          "imageAssetId": "asset-1",
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "placement.reset": {
+      "request": {
+        "method": "PATCH",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/display-1/panels/0/placement",
+        "body": {
+          "reset": true
+        }
+      },
+      "research": {
+        "semanticAction": "placement_commit",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": 1,
+          "positionX": 50,
+          "positionY": 30,
+          "mirrored": false,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": "Путин",
+          "imageAssetId": "asset-1",
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "placement.pan": {
+      "request": {
+        "method": "PATCH",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/display-1/panels/0/placement",
+        "body": {
+          "zoom": 1.2,
+          "positionX": 31,
+          "positionY": 12,
+          "mirrored": false
+        }
+      },
+      "research": {
+        "semanticAction": "placement_commit",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": 1.2,
+          "positionX": 31,
+          "positionY": 12,
+          "mirrored": false,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": "Путин",
+          "imageAssetId": "asset-1",
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "frameGenerate": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/display-4/generate",
+        "body": {}
+      },
+      "research": {
+        "semanticAction": "frame_generate",
+        "surface": "product_control",
+        "submittedText": null,
+        "commandTarget": {
+          "kind": "frame",
+          "displayFrameNumber": 4,
+          "displayFrameId": "display-4",
+          "structureFrameId": "s-4",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 4,
+          "displayFrameId": "display-4",
+          "structureFrameId": "s-4",
+          "structureSegmentIndex": null,
+          "panelIndex": null,
+          "panelSubject": null,
+          "imageAssetId": null,
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": null,
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    },
+    "panelGenerate": {
+      "request": {
+        "method": "POST",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/display-1/panels/0/generate",
+        "body": {
+          "instruction": "сделай крупнее"
+        }
+      },
+      "research": {
+        "semanticAction": "panel_generate",
+        "surface": "product_control",
+        "submittedText": "сделай крупнее",
+        "commandTarget": {
+          "kind": "panel",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "zoom": null,
+          "positionX": null,
+          "positionY": null,
+          "mirrored": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a"
+        },
+        "context": {
+          "workflowPhase": "visual",
+          "storyboardVersionId": "sv-1",
+          "displayFrameNumber": 1,
+          "displayFrameId": "display-1",
+          "structureFrameId": "s-1",
+          "structureSegmentIndex": null,
+          "panelIndex": 0,
+          "panelSubject": "Путин",
+          "imageAssetId": "asset-1",
+          "generationId": null,
+          "characterName": null,
+          "anchorVersionId": null,
+          "panelId": "p-1a",
+          "transitionMode": null,
+          "transitionOverlapFrames": null,
+          "introTemplateId": null,
+          "introTemplateVersion": null
+        }
+      }
+    }
+  }
+}

@@ -13,6 +13,9 @@ import { renderAnchorWorkspace } from "/anchor-session-ui.mjs";
 import { openAssetPicker } from "/asset-picker.mjs";
 import { compileTransitionTimeline, formatExportRuntime } from "/export-timing.mjs";
 import { presentFrameForMount } from "/visual-anchors.mjs";
+import { bindWorkspaceStages, STAGES } from "./workspace-stages.mjs";
+import { renderFrameInspector } from "./frame-inspector.mjs";
+import { basisChip, panelBasis } from "./panel-basis.mjs";
 export { presentFrameForMount };
 
 const form = document.querySelector("#draft-form");
@@ -88,7 +91,17 @@ const confirmMaterial = document.querySelector("#confirm-material");
 const stageMaterial = document.querySelector("#stage-material");
 const researchDockHost = document.querySelector("#research-dock-host");
 const researchDockRoot = document.querySelector("#research-dock");
+const stageNav = document.querySelector("#stage-nav");
+const framesArea = document.querySelector("#frames-area");
+const frameInspector = document.querySelector("#frame-inspector");
+const panelEditor = document.querySelector("#panel-editor");
+const panelEditorTabs = document.querySelector("#panel-editor-tabs");
 
+let workspaceStages = null;
+let selection = null;
+let inspectorDialogueError = null;
+let detailPanelIndex = 0;
+let lastRenderStatus = null;
 let readyFrames = [];
 let draftSync = { state: "boot", savedText: null };
 let review = null;
@@ -526,6 +539,18 @@ export function getResearchDock() {
 
 syncResearchCommandTargets();
 
+workspaceStages = stageNav
+  ? bindWorkspaceStages({
+    nav: stageNav,
+    views: Object.fromEntries(STAGES.map((stage) => [stage.id, document.querySelector(`#stage-view-${stage.id}`)])),
+    headers: Object.fromEntries(STAGES.map((stage) => [stage.id, document.querySelector(`#stage-header-${stage.id}`)])),
+    framesArea,
+    getFacts: workspaceFacts,
+    onAction: runStageAction,
+  })
+  : null;
+renderInspector();
+
 export const draftAutosave = bindDraftAutosave({
   textarea: draftField,
   conflict: document.querySelector("#draft-conflict"),
@@ -550,7 +575,10 @@ function clearBoard() {
   if (renderPanel) renderPanel.hidden = true;
   if (globalUndo) globalUndo.hidden = true;
   document.body.dataset.state = "";
+  selection = null;
+  renderInspector();
   syncResearchCommandTargets();
+  refreshStages();
 }
 
 function showLoading() {
@@ -590,12 +618,14 @@ function showTerminal(view) {
     failureKind.hidden = true;
     failureKind.textContent = "";
     delete document.body.dataset.kind;
+    refreshStages();
     return;
   }
   failureCodes.hidden = true;
   failureKind.hidden = false;
   failureKind.textContent = view.kind || "";
   document.body.dataset.kind = view.kind || "";
+  refreshStages();
 }
 
 function mountFrame(host, frame, scale, mode) {
@@ -642,60 +672,312 @@ function showReady(frames, state = "ready") {
   notice.hidden = state === "ready";
   notice.textContent = state === "ready" ? "" : state;
   grid.replaceChildren();
-  frames.forEach((frame, index) => {
-    const card = document.createElement("article");
-    card.className = "story-card";
-    card.dataset.ready = frame.visualReady ? "true" : "false";
-    card.dataset.structureFrameId = frame.structureFrameId || frame.id || "";
-    const top = document.createElement("div");
-    top.className = "card-heading";
-    const number = document.createElement("span");
-    number.textContent = `Кадр ${index + 1}`;
-    const status = document.createElement("span");
-    status.className = "card-status";
-    status.textContent = frameStatus(frame);
-    top.append(number, status);
-    const preview = document.createElement("button");
-    preview.type = "button";
-    preview.className = "frame-preview";
-    const host = document.createElement("div");
-    host.className = "frame-host";
-    mountFrame(host, frame, 0.2);
-    preview.append(host);
-    if (frame.retainedImageNotice) {
-      const retained = document.createElement("p");
-      retained.className = "retained-image-notice";
-      retained.textContent = frame.retainedImageNotice;
-      preview.append(retained);
-    }
-    if (frame.outsideFrameText) {
-      const outside = document.createElement("p");
-      outside.className = "outside-frame";
-      outside.textContent = frame.outsideFrameText;
-      preview.append(outside);
-    }
-    preview.addEventListener("click", () => openDetail(index));
-    card.append(top, preview);
-    if (visual?.allAnchorsApproved) {
-      const generate = document.createElement("button");
-      generate.type = "button";
-      generate.className = "generate-frame";
-      generate.textContent = frame.visualReady ? "Открыть и изменить" : "Создать изображения кадра";
-      generate.addEventListener("click", async () => {
-        if (frame.visualReady || frame.frameKind === "text" || frame.frameKind === "image") {
-          openDetail(index);
-          return;
-        }
-        await generateFrame(frame.id, generate, index);
-      });
-      card.append(generate);
-    }
-    appendAssemblyControls(card, frame);
-    grid.append(card);
-  });
+  frames.forEach((frame, index) => grid.append(frameCard(frame, index)));
+  resolveSelection();
+  markSelectedCards();
+  renderInspector();
   openLast.hidden = frames.length === 0;
   if (renderPanel) renderPanel.hidden = !visual;
   if (renderPanel && !renderPanel.hidden) refreshRenderStatus();
+  refreshStages();
+}
+
+function textElement(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+function frameCard(frame, index) {
+  const card = document.createElement("article");
+  card.className = "story-card";
+  card.dataset.ready = frame.visualReady ? "true" : "false";
+  card.dataset.structureFrameId = frame.structureFrameId || frame.id || "";
+  card.dataset.frameIndex = String(index);
+  card.setAttribute?.("tabindex", "0");
+  card.setAttribute?.("aria-label", `Кадр ${index + 1}`);
+  const top = document.createElement("div");
+  top.className = "card-heading";
+  top.append(textElement("span", "", `Кадр ${index + 1}`), textElement("span", "card-status", frameStatus(frame)));
+  const meta = document.createElement("p");
+  meta.className = "card-meta";
+  const metaParts = [frame.frameKind === "text" ? "Текстовая карточка" : (frame.layout || "")];
+  if (frame.frameKind !== "text") {
+    const mode = persistedDialogueMode(frame);
+    metaParts.push(DIALOGUE_LABELS[mode]);
+    const speaker = mode === "spoken" ? frame.panels?.[frame.speakerPanel]?.subject : null;
+    if (speaker) metaParts.push(speaker);
+  }
+  meta.textContent = metaParts.filter(Boolean).join(" · ");
+  const preview = document.createElement("div");
+  preview.className = "frame-preview";
+  const host = document.createElement("div");
+  host.className = "frame-host";
+  mountFrame(host, frame, 0.2);
+  preview.append(host);
+  if (frame.retainedImageNotice) preview.append(textElement("p", "retained-image-notice", frame.retainedImageNotice));
+  if (frame.outsideFrameText) preview.append(textElement("p", "outside-frame", frame.outsideFrameText));
+  card.append(top, meta, preview);
+  const line = frame.frameKind === "text"
+    ? String(frame.textCard || "")
+    : (persistedDialogueMode(frame) === "spoken" ? String(frame.dialogue || "") : "");
+  if (line.trim()) card.append(textElement("p", "card-line", line));
+  const bases = (frame.panels || [])
+    .map((panel, panelIndex) => basisChip(frame, panelIndex, { prefix: `${index + 1}.${panelIndex + 1}` }))
+    .filter(Boolean);
+  if (bases.length) {
+    const row = document.createElement("div");
+    row.className = "card-bases";
+    row.append(...bases);
+    card.append(row);
+  }
+  const foot = document.createElement("div");
+  foot.className = "card-foot";
+  const seconds = formatSeconds(frame.durationSeconds);
+  if (seconds && Number.isInteger(frame.durationFrames)) {
+    foot.append(textElement("span", "card-duration", `${seconds} с · ${frame.durationFrames} кадров`));
+  }
+  const open = document.createElement("button");
+  open.type = "button";
+  open.className = "card-open";
+  open.textContent = "Открыть";
+  open.addEventListener("click", (event) => {
+    event?.stopPropagation?.();
+    openDetail(index);
+  });
+  foot.append(open);
+  card.append(foot);
+  card.addEventListener("click", () => selectFrameAt(index));
+  card.addEventListener("dblclick", () => openDetail(index));
+  card.addEventListener("keydown", (event) => {
+    if (event.target !== card) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault?.();
+    selectFrameAt(index);
+  });
+  return card;
+}
+
+function selectionKey(address) {
+  return address ? `${address.structureFrameId}#${address.structureSegmentIndex ?? ""}` : "";
+}
+
+function selectedFrameIndex() {
+  if (!selection) return -1;
+  const index = structureFrameIndex(selection.structureFrameId, selection.structureSegmentIndex);
+  return index >= 0 && frameMatchesAddress(readyFrames[index], selection.structureFrameId, selection.structureSegmentIndex)
+    ? index
+    : -1;
+}
+
+function setSelectionTo(index) {
+  const frame = readyFrames[index];
+  if (!frame) {
+    selection = null;
+    return;
+  }
+  const previous = selectionKey(selection);
+  selection = { ...frameAddress(frame), index };
+  if (selectionKey(selection) !== previous) inspectorDialogueError = null;
+}
+
+function resolveSelection() {
+  if (!selection) return;
+  const index = structureFrameIndex(selection.structureFrameId, selection.structureSegmentIndex);
+  if (index >= 0) {
+    setSelectionTo(index);
+    return;
+  }
+  if (!readyFrames.length) {
+    selection = null;
+    return;
+  }
+  setSelectionTo(Math.min(Math.max(selection.index - 1, 0), readyFrames.length - 1));
+}
+
+function markSelectedCards() {
+  const current = selectedFrameIndex();
+  for (const card of grid?.children || []) {
+    const on = Number(card.dataset?.frameIndex) === current;
+    const classes = String(card.className || "").split(/\s+/).filter((name) => name && name !== "is-selected");
+    if (on) classes.push("is-selected");
+    card.className = classes.join(" ");
+    if (on) card.setAttribute?.("aria-current", "true");
+    else card.removeAttribute?.("aria-current");
+  }
+}
+
+function selectFrameAt(index) {
+  if (!readyFrames[index]) return;
+  setSelectionTo(index);
+  markSelectedCards();
+  renderInspector();
+}
+
+export function clearFrameSelection() {
+  selection = null;
+  inspectorDialogueError = null;
+  markSelectedCards();
+  renderInspector();
+}
+
+function renderInspector() {
+  if (!frameInspector) return;
+  frameInspector.hidden = readyFrames.length === 0;
+  const index = selectedFrameIndex();
+  const frame = index >= 0 ? readyFrames[index] : null;
+  renderFrameInspector(frameInspector, frame ? inspectorModel(frame, index) : null, frame ? inspectorActions(frame, index) : {});
+}
+
+function inspectorModel(frame, index) {
+  const address = frameAddress(frame);
+  const key = selectionKey(address);
+  const order = structureIdsInOrder(readyFrames);
+  const structureIndex = order.indexOf(address.structureFrameId);
+  const framePanels = frame.panels || [];
+  const panels = framePanels.map((panel, panelIndex) => ({
+    index: panelIndex,
+    address: `${index + 1}.${panelIndex + 1}`,
+    subject: panel.subject || null,
+    manualSubject: panel.manualSubject || null,
+    subjectEditable: Boolean(panel.subjectEditable),
+    carryChoice: Boolean(manualMetadataChoice(frame, panel)),
+    basisChip: basisChip(frame, panelIndex),
+  }));
+  const mode = persistedDialogueMode(frame);
+  const speakerPanelId = mode === "spoken" ? framePanels[frame.speakerPanel]?.id : frame.dormantSpeakerPanelId;
+  return {
+    key,
+    displayNumber: index + 1,
+    frameKind: frame.frameKind || null,
+    layoutLabel: frame.frameKind === "text"
+      ? "Текстовая карточка"
+      : [frame.layout, frame.frameKind === "image" ? "кадр с изображением" : null].filter(Boolean).join(" · "),
+    statusText: frameStatus(frame),
+    assembly: Boolean(visual),
+    dialogue: {
+      mode,
+      speakerPanelId: speakerPanelId || null,
+      speakerName: mode === "spoken" ? framePanels[frame.speakerPanel]?.subject || null : null,
+      speakers: framePanels.map((panel, panelIndex) => ({
+        panelId: panel.id || null,
+        label: panel.subject || `Панель ${index + 1}.${panelIndex + 1}`,
+      })),
+      storedText: storedDialogueLine(frame),
+    },
+    dialogueError: inspectorDialogueError?.key === key ? inspectorDialogueError.message : null,
+    timing: {
+      label: `${formatSeconds(frame.durationSeconds)} с · ${frame.durationFrames} кадров`,
+      frames: frame.durationFrames || 36,
+      min: frame.minimumDurationFrames || 1,
+    },
+    canMoveEarlier: structureIndex > 0,
+    canMoveLater: structureIndex >= 0 && structureIndex < order.length - 1,
+    segmentNote: Number.isInteger(frame.structureSegmentIndex)
+      ? "Это часть структурного кадра. Дублирование, вставка, удаление и порядок относятся ко всему структурному кадру."
+      : null,
+    textCard: frame.textCard || "",
+    panels,
+    characterNames: (visual?.characters || []).map((character) => character.name),
+    showGenerate: Boolean(visual?.allAnchorsApproved)
+      && !frame.visualReady
+      && frame.frameKind !== "text"
+      && frame.frameKind !== "image",
+  };
+}
+
+function inspectorActions(frame, index) {
+  const address = frameAddress(frame);
+  const key = selectionKey(address);
+  const panels = frame.panels || [];
+  return {
+    openEditor: () => openDetail(index),
+    openPanel: (panelIndex) => {
+      openDetail(index, { panelIndex });
+      selectDetailPanel(panelIndex, { explicit: true });
+    },
+    clearSelection: () => clearFrameSelection(),
+    duplicate: () => runAssembly({
+      op: "duplicateFrame",
+      structureFrameId: address.structureFrameId,
+      structureSegmentIndex: address.structureSegmentIndex,
+    }, "Дублирую кадр…", { frame }),
+    setDialogue: ({ mode, speakerPanelId = null }) => submitFrameDialogue(frame, mode, {
+      text: mode === "spoken" ? storedDialogueLine(frame) : null,
+      speakerPanelId: speakerPanelId || frame.dormantSpeakerPanelId || null,
+      showError: (message) => {
+        inspectorDialogueError = message ? { key, message } : null;
+        renderInspector();
+      },
+    }),
+    setDuration: (value) => runAssembly({
+      op: "setDuration",
+      ...address,
+      durationFrames: Number(value),
+    }, "Сохраняю длительность…", { submittedText: String(value), frame }),
+    insertImageAfter: () => runAssembly({
+      op: "insertFrame",
+      afterStructureFrameId: address.structureFrameId,
+      kind: "image",
+    }, "Добавляю кадр…", { frame }),
+    insertTextAfter: () => runAssembly({
+      op: "insertFrame",
+      afterStructureFrameId: address.structureFrameId,
+      kind: "text",
+    }, "Добавляю текстовую карточку…", { frame }),
+    moveEarlier: () => moveStructureFrame(address.structureFrameId, -1),
+    moveLater: () => moveStructureFrame(address.structureFrameId, 1),
+    deleteFrame: () => runAssembly({
+      op: "deleteFrame",
+      structureFrameId: address.structureFrameId,
+    }, "Удаляю кадр…", { frame }),
+    setTextCard: (text) => runAssembly({
+      op: "setTextCard",
+      structureFrameId: address.structureFrameId,
+      text,
+    }, "Сохраняю текст карточки…", { submittedText: text, frame }),
+    addPanel: () => runAssembly({
+      op: "addPanel",
+      ...address,
+    }, "Добавляю панель…", { frame }),
+    swapPanels: () => runAssembly({
+      op: "reorderPanels",
+      ...address,
+      panelIds: [panels[1].id, panels[0].id],
+    }, "Меняю панели местами…", { frame }),
+    deletePanel: (panelIndex) => deletePanelWithConfirmation(frame, panels[panelIndex], panelIndex),
+    setManualSubject: (panelIndex, characterName) => runAssembly({
+      op: "setManualSubject",
+      panelId: panels[panelIndex].id,
+      characterName,
+    }, "Сохраняю персонажа панели…", { submittedText: characterName, frame, panel: panels[panelIndex], panelIndex }),
+    chooseAsset: (panelIndex, anchor, carryMetadata) => openPanelAssetPicker(frame, panels[panelIndex], panelIndex, anchor, carryMetadata),
+    generateFrame: (button) => generateFrame(frame.id, button, index),
+  };
+}
+
+function refreshStages() {
+  workspaceStages?.refresh();
+}
+
+function workspaceFacts() {
+  const state = document.body?.dataset?.state;
+  return {
+    draftText: typeof draftField?.value === "string" ? draftField.value : "",
+    review: review?.mode || null,
+    storyboardFailed: state === "blocked" || state === "failed",
+    frames: readyFrames,
+    visual,
+    render: lastRenderStatus,
+  };
+}
+
+function runStageAction(next, button) {
+  const frame = readyFrames[next?.frameIndex];
+  if (!frame) return;
+  if (next.action === "generate-frame") generateFrame(frame.id, button, next.frameIndex);
+  else if (next.action === "open-frame") openDetail(next.frameIndex);
 }
 
 function frameStatus(frame) {
@@ -722,15 +1004,6 @@ function structureIdsInOrder(frames) {
     if (id && !ids.includes(id)) ids.push(id);
   }
   return ids;
-}
-
-function assemblyButton(label, onClick) {
-  const node = document.createElement("button");
-  node.type = "button";
-  node.className = "assembly-button";
-  node.textContent = label;
-  node.addEventListener("click", onClick);
-  return node;
 }
 
 function frameAddress(frame) {
@@ -847,95 +1120,6 @@ async function runAssembly(operation, message, {
   });
 }
 
-function appendAssemblyControls(card, frame) {
-  if (!visual) return;
-  const box = document.createElement("div");
-  box.className = "assembly";
-  const address = frameAddress(frame);
-  const timing = document.createElement("span");
-  timing.className = "assembly-timing";
-  timing.textContent = `${formatSeconds(frame.durationSeconds)} с · ${frame.durationFrames} кадров`;
-  const duration = document.createElement("input");
-  duration.type = "number";
-  duration.min = String(frame.minimumDurationFrames || 1);
-  duration.step = "1";
-  duration.value = String(frame.durationFrames || 36);
-  duration.setAttribute?.("aria-label", "Длительность в кадрах");
-  duration.addEventListener("change", () => {
-    runAssembly({
-      op: "setDuration",
-      ...address,
-      durationFrames: Number(duration.value),
-    }, "Сохраняю длительность…", { submittedText: String(duration.value), frame });
-  });
-  const order = structureIdsInOrder(readyFrames);
-  const structureIndex = order.indexOf(address.structureFrameId);
-  const earlier = assemblyButton("Переместить кадр раньше", () => moveStructureFrame(address.structureFrameId, -1));
-  const later = assemblyButton("Переместить кадр позже", () => moveStructureFrame(address.structureFrameId, 1));
-  earlier.disabled = structureIndex <= 0;
-  later.disabled = structureIndex < 0 || structureIndex >= order.length - 1;
-  box.append(
-    timing,
-    duration,
-    assemblyButton("Кадр с изображением после", () => runAssembly({
-      op: "insertFrame",
-      afterStructureFrameId: address.structureFrameId,
-      kind: "image",
-    }, "Добавляю кадр…", { frame })),
-    assemblyButton("Текстовая карточка после", () => runAssembly({
-      op: "insertFrame",
-      afterStructureFrameId: address.structureFrameId,
-      kind: "text",
-    }, "Добавляю текстовую карточку…", { frame })),
-    assemblyButton("Дублировать кадр", () => runAssembly({
-      op: "duplicateFrame",
-      structureFrameId: address.structureFrameId,
-      structureSegmentIndex: address.structureSegmentIndex,
-    }, "Дублирую кадр…", { frame })),
-    earlier,
-    later,
-    assemblyButton("Удалить кадр", () => runAssembly({
-      op: "deleteFrame",
-      structureFrameId: address.structureFrameId,
-    }, "Удаляю кадр…", { frame })),
-  );
-  if (Number.isInteger(frame.structureSegmentIndex)) {
-    const hint = document.createElement("p");
-    hint.className = "assembly-note";
-    hint.textContent = "Это часть структурного кадра. Дублирование, вставка, удаление и порядок относятся ко всему структурному кадру.";
-    box.append(hint);
-  }
-  if (frame.frameKind === "text") {
-    const text = document.createElement("textarea");
-    text.value = frame.textCard || "";
-    text.placeholder = "Текст карточки";
-    text.addEventListener("change", () => {
-      runAssembly({
-        op: "setTextCard",
-        structureFrameId: address.structureFrameId,
-        text: text.value,
-      }, "Сохраняю текст карточки…", { submittedText: text.value, frame });
-    });
-    box.append(text);
-  } else if ((frame.panels || []).length === 1) {
-    box.append(assemblyButton("Добавить панель", () => runAssembly({
-      op: "addPanel",
-      ...address,
-    }, "Добавляю панель…", { frame })));
-  }
-  if ((frame.panels || []).length === 2) {
-    box.append(assemblyButton("Поменять панели", () => runAssembly({
-      op: "reorderPanels",
-      ...address,
-      panelIds: [frame.panels[1].id, frame.panels[0].id],
-    }, "Меняю панели местами…", { frame })));
-  }
-  for (const [panelIndex, panel] of (frame.panels || []).entries()) {
-    appendPanelAssembly(box, frame, panel, panelIndex);
-  }
-  card.append(box);
-}
-
 function moveStructureFrame(structureFrameId, direction) {
   const ids = structureIdsInOrder(readyFrames);
   const index = ids.indexOf(structureFrameId);
@@ -969,111 +1153,65 @@ function manualMetadataChoice(frame, panel) {
   return true;
 }
 
-function appendPanelAssembly(box, frame, panel, panelIndex) {
-  const label = document.createElement("span");
-  label.className = "assembly-note";
-  label.textContent = `Панель ${panelIndex + 1}${panel.subject ? ` · ${panel.subject}` : ""}`;
-  let carryMetadata = false;
-  if (manualMetadataChoice(frame, panel)) {
-    const mode = document.createElement("select");
-    mode.setAttribute?.("aria-label", "Что перенести с изображением");
-    const imageOnly = document.createElement("option");
-    imageOnly.value = "image";
-    imageOnly.textContent = "Только изображение";
-    const withMetadata = document.createElement("option");
-    withMetadata.value = "metadata";
-    withMetadata.textContent = "Изображение, персонаж и описание";
-    mode.append(imageOnly, withMetadata);
-    mode.addEventListener("change", () => {
-      carryMetadata = mode.value === "metadata";
-    });
-    box.append(mode);
-  }
+function openPanelAssetPicker(frame, panel, panelIndex, anchor, readCarryMetadata) {
+  const carryMetadata = () => (typeof readCarryMetadata === "function" ? readCarryMetadata() : Boolean(readCarryMetadata));
   const assign = (operation, message) => runAssembly(operation, message, { frame, panel, panelIndex });
-  const choose = assemblyButton("Выбрать изображение…", () => {
-    openAssetPicker({
-      anchor: choose,
-      assets: panelAssets(),
-      currentAssetId: panel.assetId,
-      obstacles: () => statusObstacles(),
-      onSelect: (asset) => {
-        assign({
-          op: "assignAsset",
-          assetId: asset.id,
-          carryMetadata,
-          targets: [{ panelId: panel.id }],
-        }, "Назначаю изображение…");
-      },
-      onUpload: () => {
-        const upload = document.createElement("input");
-        upload.type = "file";
-        upload.accept = "image/png,image/jpeg,image/webp";
-        upload.addEventListener("change", () => {
-          const file = upload.files?.[0];
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = () => {
-            assign({
-              op: "uploadAsset",
-              imageDataUrl: String(reader.result || ""),
-              carryMetadata,
-              targets: [{ panelId: panel.id }],
-            }, "Назначаю загруженное изображение…");
-          };
-          reader.readAsDataURL(file);
-        });
-        upload.click();
-      },
-    });
-  });
-  box.append(label, choose);
-  if (panel.subjectEditable) {
-    const subject = document.createElement("select");
-    subject.setAttribute?.("aria-label", `Персонаж панели ${panelIndex + 1}`);
-    const blank = document.createElement("option");
-    blank.value = "";
-    blank.textContent = "Выберите персонажа";
-    subject.append(blank);
-    for (const character of visual?.characters || []) {
-      const option = document.createElement("option");
-      option.value = character.name;
-      option.textContent = character.name;
-      if (panel.manualSubject === character.name || panel.subject === character.name) option.selected = true;
-      subject.append(option);
-    }
-    subject.addEventListener("change", () => {
-      if (!subject.value) return;
-      runAssembly({
-        op: "setManualSubject",
-        panelId: panel.id,
-        characterName: subject.value,
-      }, "Сохраняю персонажа панели…", { submittedText: subject.value, frame, panel, panelIndex });
-    });
-    box.append(subject);
-  }
-  if ((frame.panels || []).length === 2) {
-    box.append(assemblyButton("Удалить панель", () => {
-      const dialogue = String(frame.dialogue || "").trim();
-      const speaking = frame.dialogueMode === "silent" || frame.dialogueMode === "hidden"
-        ? false
-        : (frame.dialogueMode === "spoken"
-          ? frame.speakerPanel === panelIndex
-          : (Boolean(dialogue) && frame.speakerPanel === panelIndex));
-      if (speaking && globalThis.confirm?.(
-        "Реплика останется без изменений. Говорящим станет оставшаяся панель. Удалить эту панель?",
-      ) !== true) return;
-      runAssembly({
-        op: "deletePanel",
-        panelId: panel.id,
-        confirmSpeakerTransfer: speaking,
-      }, "Удаляю панель…", {
-        submittedText: speaking ? "Реплика остаётся у оставшейся панели" : null,
-        frame,
-        panel,
-        panelIndex,
+  openAssetPicker({
+    anchor,
+    assets: panelAssets(),
+    currentAssetId: panel.assetId,
+    obstacles: () => statusObstacles(),
+    onSelect: (asset) => {
+      assign({
+        op: "assignAsset",
+        assetId: asset.id,
+        carryMetadata: carryMetadata(),
+        targets: [{ panelId: panel.id }],
+      }, "Назначаю изображение…");
+    },
+    onUpload: () => {
+      const upload = document.createElement("input");
+      upload.type = "file";
+      upload.accept = "image/png,image/jpeg,image/webp";
+      upload.addEventListener("change", () => {
+        const file = upload.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          assign({
+            op: "uploadAsset",
+            imageDataUrl: String(reader.result || ""),
+            carryMetadata: carryMetadata(),
+            targets: [{ panelId: panel.id }],
+          }, "Назначаю загруженное изображение…");
+        };
+        reader.readAsDataURL(file);
       });
-    }));
-  }
+      upload.click();
+    },
+  });
+}
+
+function deletePanelWithConfirmation(frame, panel, panelIndex) {
+  const dialogue = String(frame.dialogue || "").trim();
+  const speaking = frame.dialogueMode === "silent" || frame.dialogueMode === "hidden"
+    ? false
+    : (frame.dialogueMode === "spoken"
+      ? frame.speakerPanel === panelIndex
+      : (Boolean(dialogue) && frame.speakerPanel === panelIndex));
+  if (speaking && globalThis.confirm?.(
+    "Реплика останется без изменений. Говорящим станет оставшаяся панель. Удалить эту панель?",
+  ) !== true) return;
+  runAssembly({
+    op: "deletePanel",
+    panelId: panel.id,
+    confirmSpeakerTransfer: speaking,
+  }, "Удаляю панель…", {
+    submittedText: speaking ? "Реплика остаётся у оставшейся панели" : null,
+    frame,
+    panel,
+    panelIndex,
+  });
 }
 
 function sourceItemIdOf(frame) {
@@ -1199,25 +1337,37 @@ function renderFrameDialogue(frame) {
 }
 
 async function saveFrameDialogue(frame, mode) {
+  const multiPanel = (frame?.panels || []).length > 1;
+  return submitFrameDialogue(frame, mode, {
+    text: mode === "spoken" ? (frameDialogueText?.value ?? "") : null,
+    speakerPanelId: mode === "spoken" && multiPanel ? selectedSpeakerPanelId() : null,
+  });
+}
+
+async function submitFrameDialogue(frame, mode, {
+  text: requestedText = null,
+  speakerPanelId: requestedSpeaker = null,
+  showError = showFrameDialogueError,
+} = {}) {
   if (!frame) return;
   const previousDialogueMode = persistedDialogueMode(frame);
   let text = null;
   let speakerPanelId = null;
   if (mode === "spoken") {
-    text = frameDialogueText?.value ?? "";
+    text = requestedText ?? "";
     if (!text.trim()) {
-      showFrameDialogueError("Введите текст реплики.");
+      showError("Введите текст реплики.");
       return;
     }
     if ((frame.panels || []).length > 1) {
-      speakerPanelId = selectedSpeakerPanelId();
+      speakerPanelId = requestedSpeaker;
       if (!speakerPanelId) {
-        showFrameDialogueError("Выберите панель, которая говорит.");
+        showError("Выберите панель, которая говорит.");
         return;
       }
     }
   }
-  showFrameDialogueError("");
+  showError("");
   await runAssembly({
     op: "setFrameDialogue",
     ...frameAddress(frame),
@@ -1286,12 +1436,20 @@ function createdFrameResearchAddress(created, requestedSegment = null) {
   };
 }
 
-function openDetail(index) {
+function openDetail(index, { panelIndex = null } = {}) {
   const frame = readyFrames[index];
   if (!frame) return;
+  const structureId = frame.structureFrameId || frame.id;
+  const segmentIndex = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
+  const sameFrame = Boolean(detail?.open) && detailStructureId === structureId && detailSegmentIndex === segmentIndex;
+  if (Number.isInteger(panelIndex)) detailPanelIndex = panelIndex;
+  else if (!sameFrame) detailPanelIndex = 0;
   detailIndex = index;
-  detailStructureId = frame.structureFrameId || frame.id;
-  detailSegmentIndex = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
+  detailStructureId = structureId;
+  detailSegmentIndex = segmentIndex;
+  setSelectionTo(index);
+  markSelectedCards();
+  renderInspector();
   if (detailFrameNumber) detailFrameNumber.textContent = `Кадр ${index + 1}`;
   mountFrame(detailHost, frame, 0.5);
   detailOutside.textContent = frame.outsideFrameText || "";
@@ -1315,6 +1473,26 @@ function openDetail(index) {
 
 export function openResearchDetail(index) {
   openDetail(index);
+}
+
+function selectDetailPanel(panelIndex, { explicit = false } = {}) {
+  const sections = [...(detailPanelControls?.children || [])];
+  if (!sections[panelIndex]) return;
+  detailPanelIndex = panelIndex;
+  sections.forEach((section, index) => {
+    section.hidden = index !== panelIndex;
+  });
+  for (const tab of panelEditorTabs?.children || []) {
+    tab.setAttribute?.("aria-pressed", Number(tab.dataset?.panelIndex) === panelIndex ? "true" : "false");
+  }
+  for (const column of detailPanels()) {
+    const classes = String(column.className || "").split(/\s+/).filter((name) => name && name !== "panel-selected");
+    if (Number(column.dataset?.panelIndex) === panelIndex) classes.push("panel-selected");
+    column.className = classes.join(" ");
+  }
+  if (!explicit) return;
+  const descriptor = collectResearchCommandTargets().panels.find((panel) => panel.panelIndex === panelIndex);
+  if (descriptor) researchDock?.selectCommandTarget?.({ kind: "panel", ...descriptor });
 }
 
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
@@ -1711,6 +1889,7 @@ export function applyVisual(next) {
   syncResearchCommandTargets();
   syncExportRuntime();
   refreshIntroTemplates();
+  refreshStages();
   if (detail?.open && detailStructureId) {
     const nextIndex = readyFrames.findIndex((frame) => {
       if ((frame.structureFrameId || frame.id) !== detailStructureId) return false;
@@ -2055,15 +2234,67 @@ function bindDetailPan(frame) {
   }
 }
 
+function panelAddress(panelIndex) {
+  return `${detailIndex >= 0 ? detailIndex + 1 : "?"}.${panelIndex + 1}`;
+}
+
+function panelSubsection(name, title) {
+  const node = document.createElement("div");
+  node.className = `panel-subsection panel-subsection-${name}`;
+  node.dataset.panelSection = name;
+  node.append(textElement("h4", "panel-subsection-title", title));
+  return node;
+}
+
+function identityReference(panel) {
+  const character = (visual?.characters || []).find((entry) => entry?.name && entry.name === panel.subject);
+  const box = document.createElement("div");
+  box.className = "panel-reference panel-reference-identity";
+  if (character?.approvedAssetUrl) {
+    const image = document.createElement("img");
+    image.src = character.approvedAssetUrl;
+    image.alt = `Базовый образ: ${character.name}`;
+    box.append(image);
+  }
+  const copy = document.createElement("div");
+  copy.append(
+    textElement("p", "panel-reference-title", "Базовый образ персонажа · личность"),
+    textElement("p", "helper", character?.approvedAssetUrl
+      ? `Утверждённый базовый образ: ${character.name}. Только просмотр — меняется в «Персонажах».`
+      : (panel.subject ? `Базовый образ для ${panel.subject} ещё не утверждён.` : "У панели нет персонажа.")),
+  );
+  box.append(copy);
+  return box;
+}
+
+function renderPanelTabs(frame) {
+  if (!panelEditorTabs) return;
+  panelEditorTabs.replaceChildren();
+  (frame.panels || []).forEach((panel, panelIndex) => {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "panel-editor-tab";
+    tab.dataset.panelIndex = String(panelIndex);
+    tab.textContent = `Панель ${panelAddress(panelIndex)}${panel.subject ? ` · ${panel.subject}` : ""}`;
+    tab.setAttribute?.("aria-pressed", panelIndex === detailPanelIndex ? "true" : "false");
+    tab.addEventListener("click", () => selectDetailPanel(panelIndex, { explicit: true }));
+    panelEditorTabs.append(tab);
+  });
+}
+
 function renderPanelControls(frame) {
   detailPanelControls.replaceChildren();
+  const panelCount = (frame.panels || []).length;
+  if (!Number.isInteger(detailPanelIndex) || detailPanelIndex < 0 || detailPanelIndex >= panelCount) detailPanelIndex = 0;
+  if (panelEditor) panelEditor.hidden = panelCount === 0;
+  renderPanelTabs(frame);
   frame.panels.forEach((panel, panelIndex) => {
     const section = document.createElement("section");
     section.className = "panel-control";
+    section.dataset.panelIndex = String(panelIndex);
+    section.hidden = panelIndex !== detailPanelIndex;
     const title = document.createElement("h3");
-    title.textContent = frame.panels.length > 1
-      ? `Панель ${panelIndex + 1}${panel.subject ? ` · ${panel.subject}` : ""}`
-      : (panel.subject || "Изображение кадра");
+    title.textContent = `Панель ${panelAddress(panelIndex)}${panel.subject ? ` · ${panel.subject}` : ""}`;
     const description = document.createElement("p");
     description.className = "panel-description-copy";
     description.textContent = panel.description;
@@ -2156,9 +2387,41 @@ function renderPanelControls(frame) {
       }
     });
     section.append(title, description);
-    if (lineageCopy) section.append(lineageCopy);
-    if (failure) section.append(failure);
-    section.append(instruction, performanceLabel, regenerate);
+    const imagePart = panelSubsection("image", "Изображение");
+    const basis = panelBasis(frame, panelIndex);
+    if (basis) {
+      const basisLine = document.createElement("p");
+      basisLine.className = "panel-basis-line";
+      basisLine.append(textElement("span", "panel-basis-label", "Сейчас: "), basisChip(frame, panelIndex));
+      imagePart.append(basisLine);
+      if (basis.hint) imagePart.append(textElement("p", "helper", basis.hint));
+    }
+    if (lineageCopy) imagePart.append(lineageCopy);
+    if (failure) imagePart.append(failure);
+    imagePart.append(instruction, regenerate);
+    imagePart.append(textElement("p", "helper", "Фото позы из «Референсов» отправляется вместе с этой генерацией."));
+    const framingPart = panelSubsection("framing", "Кадрирование");
+    const referencesPart = panelSubsection("references", "Референсы");
+    const performanceBox = document.createElement("div");
+    performanceBox.className = "panel-reference panel-reference-performance";
+    if (panel.performanceAssetUrl) {
+      const image = document.createElement("img");
+      image.src = panel.performanceAssetUrl;
+      image.alt = "Текущее фото позы или выражения";
+      performanceBox.append(image);
+    }
+    const performanceCopy = document.createElement("div");
+    performanceCopy.append(
+      textElement("p", "panel-reference-title", "Поза и выражение · фото-референс"),
+      performanceLabel,
+      textElement("p", "helper", "Влияет на позу, выражение и взгляд этой панели, но не на личность персонажа."),
+    );
+    performanceBox.append(performanceCopy);
+    referencesPart.append(identityReference(panel), performanceBox);
+    section.append(imagePart, framingPart, referencesPart);
+    if (!panel.assetId) {
+      framingPart.append(textElement("p", "helper", "Кадрирование появится, когда у панели будет своё изображение."));
+    }
     if (panel.assetId) {
       const initial = placementOf(panel);
       rememberPlacement(panel, initial);
@@ -2227,11 +2490,21 @@ function renderPanelControls(frame) {
       });
       actions.append(reset, mirror);
       zoomLabel.append(zoomCopy, zoom);
-      section.append(zoomLabel, actions);
+      framingPart.append(
+        zoomLabel,
+        textElement("p", "helper panel-pan-hint", "Перетащите изображение в кадре выше, чтобы сдвинуть его."),
+        actions,
+      );
     }
     detailPanelControls.append(section);
   });
   bindDetailPan(frame);
+  for (const column of detailPanels()) {
+    const panelIndex = Number(column.dataset?.panelIndex);
+    if (!Number.isInteger(panelIndex)) continue;
+    column.addEventListener("click", () => selectDetailPanel(panelIndex, { explicit: true }));
+  }
+  selectDetailPanel(detailPanelIndex);
 }
 
 structureEditForm?.addEventListener("submit", async (event) => {
@@ -2284,6 +2557,7 @@ function refreshConfirmation() {
   const matched = readingMode && textsMatch(review.text);
   confirmMaterial.disabled = !matched;
   materialMismatch.hidden = !readingMode || matched;
+  refreshStages();
 }
 
 function hideReview() {
@@ -2728,6 +3002,7 @@ function showMissingProject() {
   if (duplicate) duplicate.hidden = true;
   const dock = document.querySelector("#research-dock-host");
   if (dock) dock.hidden = true;
+  if (stageNav) stageNav.hidden = true;
 }
 
 let savedProjectTitle = "";
@@ -2751,9 +3026,12 @@ draftAutosave.ready.then(async () => {
     restoreReview(project);
     await restoreStoryboard(project);
     await refreshVisual();
+    workspaceStages?.settleDefault();
     await fetch(scoped("/api/project/open"), { method: "POST" });
   } catch {
     hideReview();
+  } finally {
+    workspaceStages?.settleDefault();
   }
 });
 
@@ -2858,6 +3136,8 @@ async function refreshRenderStatus() {
   globalThis.clearTimeout(renderTimer);
   try {
     const status = await fetchJson("/api/visual/render");
+    lastRenderStatus = status && typeof status.status === "string" ? { status: status.status } : null;
+    refreshStages();
     if (!renderStatus) return;
     renderStatus.textContent = renderLabels[status.status] || renderLabels.idle;
     if (renderError) {
@@ -3061,6 +3341,8 @@ startRender?.addEventListener("click", async () => {
       showActionNotice("Сборка не должна менять раскадровку.", "error");
     }
     if (started?.status === "running") {
+      lastRenderStatus = { status: "running" };
+      refreshStages();
       if (renderStatus) renderStatus.textContent = renderLabels.running;
       if (started.totalDurationFrames && renderRuntime) {
         renderRuntime.textContent = formatExportRuntime({
@@ -3075,6 +3357,8 @@ startRender?.addEventListener("click", async () => {
   } catch (error) {
     const message = renderFailureText(error);
     showActionNotice(message, "error");
+    lastRenderStatus = { status: "failure" };
+    refreshStages();
     if (renderStatus) renderStatus.textContent = renderLabels.failure;
     if (renderError) {
       renderError.hidden = false;

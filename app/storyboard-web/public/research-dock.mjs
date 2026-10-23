@@ -416,6 +416,18 @@ function formatCommandTargetLabel(target, { unsupported = false, unselected = fa
   return ownerFacingCommandLabel(target, { panelSubject }) || "Действие не поддерживается";
 }
 
+export function formatCommandScope(target, { unsupported = false, panelSubject = null } = {}) {
+  if (!target || unsupported) return "Область: не выбрана";
+  if (target.kind === "storyboard") return "Область: вся раскадровка";
+  if (target.kind === "panel") {
+    const frame = target.displayFrameNumber == null ? "?" : String(target.displayFrameNumber);
+    const panel = target.panelIndex == null ? "?" : String(target.panelIndex + 1);
+    const subject = resolvePanelSubjectHint(panelSubject);
+    return `Область: панель ${frame}.${panel}${subject ? ` · ${subject}` : ""}`;
+  }
+  return "Область: не выбрана";
+}
+
 function formatCommandsHistoryItem(event) {
   if (event?.eventKind !== "action_start") return "";
   const stamp = formatResearchTimestamp(event.occurredAt);
@@ -459,6 +471,7 @@ export function bindResearchDock({
   const commandsHistory = document.querySelector("#research-commands-history");
   const commandsTarget = document.querySelector("#research-commands-target");
   const commandsTargetLabel = document.querySelector("#research-commands-target-label");
+  const commandsScope = document.querySelector("#research-commands-scope");
   const commandsUnavailable = document.querySelector("#research-commands-unavailable");
   const operationsList = document.querySelector("#research-operations-list");
   const toggle = document.querySelector("#research-dock-toggle");
@@ -660,6 +673,14 @@ export function bindResearchDock({
         unselected: !stickyTarget,
         panelSubject: matchedPanel?.panelSubject,
       });
+    }
+    if (commandsScope) {
+      const matchedPanel = findAvailablePanelDescriptor(stickyTarget);
+      commandsScope.textContent = formatCommandScope(stickyTarget, {
+        unsupported: targetUnsupported,
+        panelSubject: matchedPanel?.panelSubject,
+      });
+      if (commandsScope.dataset) commandsScope.dataset.scope = stickyTarget && !targetUnsupported ? stickyTarget.kind : "none";
     }
     if (commandsUnavailable) {
       const noChoices = !availableTargets.storyboardAvailable
