@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Model Health Check</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <main>
+      <header class="hero">
+        <div>
+          <p class="eyebrow">LOCAL DIAGNOSTIC</p>
+          <h1>Model Health Check</h1>
+          <p class="lede">Проверка доступности текстовых и графических моделей через короткие фиксированные запросы.</p>
+        </div>
+        <div id="server-status" class="server-status is-loading">Проверяю локальный сервер…</div>
+      </header>
+
+      <aside class="notice">
+        Токен хранится только на локальном сервере. Каждое нажатие кнопки отправляет ровно один запрос провайдеру; автоматических повторов нет.
+      </aside>
+
+      <section>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">TEXT</p>
+            <h2>Текстовые модели</h2>
+          </div>
+          <code>Ответь одним словом: сколько будет 2+2?</code>
+        </div>
+        <div id="text-checks" class="grid text-grid"></div>
+      </section>
+
+      <section>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">IMAGE</p>
+            <h2>Генерация изображений</h2>
+          </div>
+          <code>A flat red square centered on a white background.</code>
+        </div>
+        <div id="image-checks" class="grid image-grid"></div>
+      </section>
+
+      <section>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">SERVICE</p>
+            <h2>Сервер и квота</h2>
+          </div>
+        </div>
+        <div id="service-checks" class="grid text-grid"></div>
+      </section>
+    </main>
+    <template id="check-card-template">
+      <article class="card">
+        <div class="card-heading">
+          <div>
+            <p class="kind"></p>
+            <h3></h3>
+            <code class="model"></code>
+          </div>
+          <span class="badge is-idle">Не проверено</span>
+        </div>
+        <p class="description"></p>
+        <button type="button">Проверить</button>
+        <div class="result" aria-live="polite"></div>
+      </article>
+    </template>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
