@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { containedPath, loadManifest } from "./manifest.mjs";
+import { createStageA2Server, isStageA2Run, listenStageA2 } from "./stage-a2/review-server.mjs";
 
 const spikeRoot = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(spikeRoot, "public");
@@ -236,6 +237,29 @@ async function main() {
   const runDir = args.runDir || latestRunDirectory();
   if (!runDir) {
     console.error("no extraction run directory; pass --run");
+    process.exitCode = 1;
+    return;
+  }
+  if (isStageA2Run(runDir)) {
+    const server = createStageA2Server({ runDir });
+    let port = args.port;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        const address = await listenStageA2(server, port);
+        if (!address || address.address !== "127.0.0.1") {
+          console.error("refusing to listen outside 127.0.0.1");
+          process.exitCode = 1;
+          return;
+        }
+        console.log(`review http://127.0.0.1:${address.port}/`);
+        console.log(`run ${runDir}`);
+        return;
+      } catch (error) {
+        if (error.code !== "EADDRINUSE") throw error;
+        port += 1;
+      }
+    }
+    console.error("no local port available");
     process.exitCode = 1;
     return;
   }

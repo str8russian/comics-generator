@@ -66,6 +66,31 @@ button[aria-pressed="true"] { background: #1c1915; color: #fff; border-color: #1
   margin-bottom: 18px;
 }
 
+.identity {
+  margin-bottom: 28px;
+}
+
+.identity h2 { margin-bottom: 10px; }
+
+.source-photo { width: min(220px, 100%); }
+
+.panel-size figure { width: min(560px, 100%); }
+
+.banner {
+  padding: 8px 10px;
+  margin: 8px 0;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+}
+
+.banner.review-risk { background: #fff1cc; border: 1px solid #e2c56a; }
+.banner.failed { background: #fde2dc; border: 1px solid #e7b2a8; }
+.banner.unattempted { background: #eeeae4; border: 1px solid #d5cfc6; }
+
+.status.failed { background: #fde2dc; }
+.status.unattempted { background: #eeeae4; }
+.status.succeeded { background: #e7eef8; }
+
 .status {
   border-radius: 999px;
   padding: 3px 8px;

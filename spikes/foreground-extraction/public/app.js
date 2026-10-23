@@ -1,4 +1,4 @@
-import { buildOwnerReviewExport } from "/review.mjs";
+import { buildOwnerReviewExport, buildStageA2OwnerReviewExport } from "/review.mjs";
 
 const judgements = new Map();
 let payload = null;
@@ -147,8 +147,153 @@ function render() {
   }
 }
 
+function figureOrEmpty(src, caption) {
+  if (!src) return `<figure class="missing"><figcaption>${escapeHtml(caption)} — not available</figcaption></figure>`;
+  return figure(src, caption);
+}
+
+function renderStageA2() {
+  document.title = "Stage A2 foreground extraction";
+  document.querySelector(".eyebrow").textContent = "Spike A · Stage A2 · provider evaluation";
+  const counts = { all: 0, "candidate-pass": 0, review: 0, reject: 0, failed: 0, unattempted: 0 };
+  const flat = payload.identities.flatMap((identity) => identity.cells);
+  for (const cell of flat) {
+    counts.all += 1;
+    if (cell.state === "succeeded") counts[cell.automaticStatus] += 1;
+    else counts[cell.state] += 1;
+  }
+  summary.innerHTML = `
+    <span class="pill">${counts.all} cells</span>
+    <span class="pill">candidate-pass ${counts["candidate-pass"]}</span>
+    <span class="pill">review ${counts.review}</span>
+    <span class="pill">reject ${counts.reject}</span>
+    <span class="pill">failed ${counts.failed}</span>
+    <span class="pill">unattempted ${counts.unattempted}</span>
+    <span class="pill">provider calls ${escapeHtml(payload.providerCalls)}</span>
+    <span class="pill">stop ${escapeHtml(payload.stopReason || "none")}</span>
+    <span class="pill">contract ${escapeHtml(payload.matteContract?.version)}</span>`;
+  const filterNames = ["all", "candidate-pass", "review", "reject", "failed", "unattempted"];
+  filters.innerHTML = filterNames.map((status) => `
+    <button type="button" data-filter="${status}" aria-pressed="${filter === status}">${status}</button>`).join("");
+  for (const button of filters.querySelectorAll("button")) {
+    button.addEventListener("click", () => {
+      filter = button.dataset.filter;
+      renderStageA2();
+    });
+  }
+  items.innerHTML = payload.identities.map((identity) => {
+    const visible = identity.cells.filter((cell) => {
+      if (filter === "all") return true;
+      if (filter === "failed" || filter === "unattempted") return cell.state === filter;
+      return cell.state === "succeeded" && cell.automaticStatus === filter;
+    });
+    if (visible.length === 0) return "";
+    return `<section class="identity">
+      <h2>${escapeHtml(identity.characterName)}</h2>
+      <p class="meta">Source sha256 ${escapeHtml(identity.sha256)}</p>
+      <div class="source-photo">${figure(identity.sourceUrl, "Source photograph")}</div>
+      ${visible.map((cell) => stageA2Cell(cell)).join("")}
+    </section>`;
+  }).join("");
+  for (const form of items.querySelectorAll("form")) {
+    const id = form.dataset.id;
+    form.addEventListener("change", () => {
+      const selected = form.querySelector("input:checked");
+      judgements.set(id, {
+        judgement: selected ? selected.value : null,
+        note: form.note.value,
+      });
+    });
+    form.note.addEventListener("input", () => {
+      const current = judgements.get(id) || { judgement: null, note: "" };
+      judgements.set(id, { ...current, note: form.note.value });
+    });
+  }
+}
+
+function stageA2Cell(cell) {
+  const files = cell.files || {};
+  const original = files["original.png"] || files["original.jpeg"] || files["original.webp"] || null;
+  const stateLabel = cell.state === "succeeded" ? cell.automaticStatus : cell.state;
+  const crops = [
+    ["crop-hair.png", "Hair"],
+    ["crop-ear-silhouette.png", "Ear / silhouette"],
+    ["crop-shoulder-contact.png", "Shoulder / canvas contact"],
+    ["crop-enclosed-pocket.png", "Enclosed pocket"],
+    ["crop-contour-gap.png", "Contour"],
+    ["crop-matte-edge-contact.png", "Matte-like edge contact"],
+    ["crop-worst-boundary.png", "Worst boundary"],
+  ];
+  const banner = cell.state === "failed"
+    ? `<p class="banner failed">Provider failed${cell.provider?.[0]?.kind ? `: ${escapeHtml(cell.provider.map((item) => item.kind || item.providerStatus || "failed").join(", "))}` : ""}. No usable foreground was stored.</p>`
+    : cell.state === "unattempted"
+      ? `<p class="banner unattempted">Unattempted: ${escapeHtml(cell.unattemptedReason || "not started")}.</p>`
+      : cell.reviewRisk
+        ? `<p class="banner review-risk">Upstream anchor remains automatic review. This cell stays review-risk and is not a candidate pass.</p>`
+        : "";
+  const judgement = cell.state === "succeeded"
+    ? `<form class="judgement" data-id="${escapeHtml(cell.id)}">
+        <div>
+          ${["accept", "review", "reject"].map((value) => `
+            <label><input type="radio" name="judgement-${escapeHtml(cell.id)}" value="${value}"> ${value}</label>`).join("")}
+        </div>
+        <textarea name="note" maxlength="500" placeholder="Short note"></textarea>
+      </form>`
+    : "";
+  return `<article class="card" id="${escapeHtml(cell.id)}">
+    <div class="card-head">
+      <h2>${escapeHtml(cell.id)}</h2>
+      <span class="status ${escapeHtml(stateLabel)}">${escapeHtml(stateLabel)}</span>
+      <span class="pill">${escapeHtml(cell.cell)}</span>
+    </div>
+    ${banner}
+    <p class="meta">Prompt contract ${escapeHtml(cell.contract?.contractVersion || payload.matteContract?.version)} · ${escapeHtml(cell.contract?.contractSha256 || payload.matteContract?.sha256)}</p>
+    <p class="meta">Compiler ${escapeHtml(cell.contract?.compilerVersion || "n/a")} · roles ${escapeHtml((cell.contract?.roles || cell.request?.referenceRoles || []).join(", ") || "n/a")} · request ${escapeHtml(cell.request?.sha256 || "not prepared")}</p>
+    <p class="meta">Model ${escapeHtml(cell.request?.model || payload.model || "n/a")} · timeout ${escapeHtml(cell.request?.timeoutMs ?? "n/a")} ms · body ${escapeHtml(cell.request?.originalBodyBytes ?? "n/a")} → ${escapeHtml(cell.request?.finalBodyBytes ?? "n/a")} · transform ${escapeHtml(cell.request?.transformStep || "n/a")}</p>
+    <p class="meta">Reasons: ${escapeHtml(cell.reasons?.length ? cell.reasons.join(", ") : "none")}</p>
+    <p class="meta">Warnings: ${escapeHtml(cell.warnings?.length ? cell.warnings.join(", ") : "none")}</p>
+    <div class="pair panel-size">
+      ${figureOrEmpty(original, "Original RGB output")}
+      ${figureOrEmpty(files["composite-checkerboard.png"], "Extracted RGBA on checkerboard")}
+    </div>
+    <h3>Panel-size composites</h3>
+    <div class="composites">
+      ${figureOrEmpty(files["composite-black.png"], "Black")}
+      ${figureOrEmpty(files["composite-white.png"], "White")}
+      ${figureOrEmpty(files["composite-magenta.png"], "Magenta")}
+      ${figureOrEmpty(files["composite-green.png"], "Green")}
+      ${figureOrEmpty(files["composite-slate.png"], "System slate")}
+    </div>
+    <h3>Enlarged crops</h3>
+    <div class="crops">
+      ${crops.map(([name, label]) => figureOrEmpty(files[name], label)).join("")}
+    </div>
+    <div class="pair">
+      ${figureOrEmpty(files["foreground.png"], "Foreground RGBA")}
+      ${figureOrEmpty(files["alpha.png"], "Alpha")}
+    </div>
+    <p class="meta">Runtime: extract ${escapeHtml(cell.timing?.extractCoreMs)} ms · diagnostic artifacts ${escapeHtml(cell.timing?.diagnosticMs)} ms</p>
+    ${judgement}
+  </article>`;
+}
+
 document.querySelector("#download").addEventListener("click", () => {
-  const exportPayload = buildOwnerReviewExport({
+  const exportPayload = payload.stage === "a2"
+    ? buildStageA2OwnerReviewExport({
+      runId: payload.runId,
+      manifestHash: payload.manifestHash,
+      items: payload.identities.flatMap((identity) => identity.cells.map((cell) => ({
+        id: cell.id,
+        identityId: cell.identityId,
+        cell: cell.cell,
+        attemptState: cell.state,
+        automaticStatus: cell.state === "succeeded" ? cell.automaticStatus : null,
+        reviewRisk: cell.reviewRisk === true,
+        judgement: judgements.get(cell.id)?.judgement ?? null,
+        note: judgements.get(cell.id)?.note ?? "",
+      }))),
+    })
+    : buildOwnerReviewExport({
     runId: payload.runId,
     manifestHash: payload.manifestHash,
     items: payload.items.map((item) => ({
@@ -172,5 +317,6 @@ if (!response.ok) {
 } else {
   payload = await response.json();
   disclosure.textContent = payload.ownerReview.reloadLoss;
-  render();
+  if (payload.stage === "a2") renderStageA2();
+  else render();
 }
