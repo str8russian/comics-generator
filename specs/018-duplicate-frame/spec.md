@@ -26,6 +26,8 @@ The mutation address is the stable structure frame, never a display ordinal:
 
 `displayFrameNumber` may travel with the request as research and UI context. It is not the mutation identity.
 
+`duplicateFrame` is allowed only as that single top-level operation. A top-level `{ "op": "batch", "operations": [...] }` payload that contains `duplicateFrame` anywhere is rejected as `invalid-operation` before a transaction, version, head movement, panel-state copy, asset write, render invalidation, or provider call. The other operations in that batch are not applied. There is no batch result and no batch trace.
+
 The duplicate is inserted immediately after the addressed structural frame. Existing frames keep their identities and relative order. Display numbers are derived again from the resulting order.
 
 If the visible card belongs to a compound directing beat, Duplicate clones the complete structural frame, including its ordered segments, and inserts that complete clone after the source structural frame. It does not split or extract one segment. The clicked `structureSegmentIndex` stays UI and trace context. The assembly note says that duplication, insertion, deletion, and ordering apply to the whole structural frame.

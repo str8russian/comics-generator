@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { applyOperation } from "../assembly.mjs";
+import { applyProductOperation } from "../visual-store.mjs";
 import { createResearchStore } from "../research-store.mjs";
 import { projectOperations } from "../public/research-dock.mjs";
 
@@ -292,6 +293,54 @@ test("later edits of the duplicate do not modify the source", () => {
   assert.equal(removed.ok, true);
   assert.deepEqual(removed.frames.map((frame) => frame.id), ["frame-1", "frame-2"]);
   assert.equal(removed.frames[0].panels[1].id, "right");
+});
+
+function throwingPool() {
+  return {
+    async connect() {
+      throw new Error("connect must not run for a rejected batch");
+    },
+  };
+}
+
+test("duplicateFrame is rejected inside a batch before any store connection", async () => {
+  const one = await applyProductOperation(throwingPool(), {
+    op: "batch",
+    operations: [{ op: "duplicateFrame", structureFrameId: "frame-1" }],
+  });
+  assert.equal(one.ok, false);
+  assert.equal(one.kind, "invalid-operation");
+  assert.equal(one.operationResult, undefined);
+
+  const two = await applyProductOperation(throwingPool(), {
+    op: "batch",
+    operations: [
+      { op: "duplicateFrame", structureFrameId: "frame-1" },
+      { op: "duplicateFrame", structureFrameId: "frame-2" },
+    ],
+  });
+  assert.equal(two.ok, false);
+  assert.equal(two.kind, "invalid-operation");
+
+  const mixed = await applyProductOperation(throwingPool(), {
+    op: "batch",
+    operations: [
+      { op: "setDuration", structureFrameId: "frame-1", durationFrames: 48 },
+      { op: "duplicateFrame", structureFrameId: "frame-1" },
+    ],
+  });
+  assert.equal(mixed.ok, false);
+  assert.equal(mixed.kind, "invalid-operation");
+
+  let connected = false;
+  const single = await applyProductOperation({
+    async connect() {
+      connected = true;
+      throw new Error("stop after the single-operation guard");
+    },
+  }, { op: "duplicateFrame", structureFrameId: "frame-1" });
+  assert.equal(connected, true);
+  assert.notEqual(single.kind, "invalid-operation");
 });
 
 function nullContext(overrides = {}) {

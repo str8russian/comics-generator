@@ -3,14 +3,27 @@ import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { createPool } from "../../db/pool.mjs";
 import { migrate } from "../../db/migrate.mjs";
-import { enterProject, SEEDED_PROJECT_ID } from "../../project-scope.mjs";
+import { enterProject } from "../../project-scope.mjs";
 import { createResearchStore } from "../../research-store.mjs";
 import { createVisualStore } from "../../visual-store.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
 const TEST_LOCK = "90210002026008";
 const RESEARCH_LOCK = "90210002026009";
-const OTHER_PROJECT_ID = "01800000-0000-4000-8000-000000000099";
+const FIXTURE_PROJECT_ID = "01800000-0000-4000-8000-0000000000a1";
+const ISOLATION_PROJECT_ID = "01800000-0000-4000-8000-0000000000a2";
+const SENTINEL_PROJECT_ID = "01800000-0000-4000-8000-0000000000a3";
+const RESEARCH_PROJECT_ID = "01800000-0000-4000-8000-0000000000a4";
+const OWNED_PROJECT_IDS = [
+  FIXTURE_PROJECT_ID,
+  ISOLATION_PROJECT_ID,
+  SENTINEL_PROJECT_ID,
+  RESEARCH_PROJECT_ID,
+];
+const SENTINEL_TEXT = "018-sentinel-draft";
+const SENTINEL_SOURCE = "018-sentinel-source";
+const SENTINEL_BYTES = Buffer.from("018-sentinel-bytes");
+const SENTINEL_ASSET_ID = "01800000-0000-4000-8000-0000000000c1";
 const pngA = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=",
   "base64",
@@ -93,48 +106,139 @@ function storyboardFrames() {
   }];
 }
 
-async function reset(pool) {
-  await pool.query("DELETE FROM storyboard_reusable_asset");
-  await pool.query(`
-    TRUNCATE visual_approval, panel_generation, panel_visual_state,
-             project_style_seed, character_anchor_version, character_identity, visual_asset,
-             storyboard_head, storyboard_version CASCADE
-  `);
+async function removeOwnedProjects(pool, projectIds = OWNED_PROJECT_IDS) {
   await pool.query(`
     UPDATE project
     SET active_source_revision_id = NULL,
         active_material_state_id = NULL,
         current_reading_id = NULL
-  `);
-  await pool.query("DELETE FROM storyboard_result");
-  await pool.query("DELETE FROM speaker_assignment");
-  await pool.query("DELETE FROM alias");
-  await pool.query("DELETE FROM canonical_character");
-  await pool.query("UPDATE material_state SET parent_material_state_id = NULL");
-  await pool.query("DELETE FROM material_state");
-  await pool.query("DELETE FROM pending_speaker");
-  await pool.query("DELETE FROM pending_alias");
-  await pool.query("DELETE FROM pending_character");
-  await pool.query("DELETE FROM surface_form");
-  await pool.query("DELETE FROM provisional_character");
-  await pool.query("DELETE FROM source_item");
-  await pool.query("DELETE FROM interpretation");
-  await pool.query("UPDATE source_revision SET parent_source_revision_id = NULL");
-  await pool.query("DELETE FROM source_revision");
-  await pool.query("DELETE FROM reading");
-  await pool.query("DELETE FROM working_draft WHERE project_id = $1", [OTHER_PROJECT_ID]);
-  await pool.query("DELETE FROM project WHERE id = $1", [OTHER_PROJECT_ID]);
+    WHERE id = ANY($1::uuid[])
+  `, [projectIds]);
+  const revisions = await pool.query(
+    "SELECT id FROM source_revision WHERE project_id = ANY($1::uuid[])",
+    [projectIds],
+  );
+  const revisionIds = revisions.rows.map((row) => row.id);
+  const materials = revisionIds.length === 0
+    ? { rows: [] }
+    : await pool.query(
+      "SELECT id FROM material_state WHERE source_revision_id = ANY($1::uuid[])",
+      [revisionIds],
+    );
+  const materialIds = materials.rows.map((row) => row.id);
+  const results = materialIds.length === 0
+    ? { rows: [] }
+    : await pool.query(
+      "SELECT id FROM storyboard_result WHERE material_state_id = ANY($1::uuid[])",
+      [materialIds],
+    );
+  const resultIds = results.rows.map((row) => row.id);
+  const versions = resultIds.length === 0
+    ? { rows: [] }
+    : await pool.query(
+      "SELECT id FROM storyboard_version WHERE storyboard_result_id = ANY($1::uuid[])",
+      [resultIds],
+    );
+  const versionIds = versions.rows.map((row) => row.id);
+  if (versionIds.length > 0) {
+    await pool.query(
+      "DELETE FROM visual_approval WHERE storyboard_version_id = ANY($1::uuid[])",
+      [versionIds],
+    );
+    await pool.query(`
+      UPDATE panel_visual_state
+      SET current_generation_id = NULL
+      WHERE storyboard_version_id = ANY($1::uuid[])
+    `, [versionIds]);
+    await pool.query(`
+      DELETE FROM panel_generation
+      WHERE panel_visual_state_id IN (
+        SELECT id FROM panel_visual_state WHERE storyboard_version_id = ANY($1::uuid[])
+      )
+    `, [versionIds]);
+    await pool.query(
+      "DELETE FROM panel_visual_state WHERE storyboard_version_id = ANY($1::uuid[])",
+      [versionIds],
+    );
+  }
+  if (resultIds.length > 0) {
+    await pool.query(
+      "DELETE FROM storyboard_reusable_asset WHERE storyboard_result_id = ANY($1::uuid[])",
+      [resultIds],
+    );
+    await pool.query(
+      "DELETE FROM storyboard_head WHERE storyboard_result_id = ANY($1::uuid[])",
+      [resultIds],
+    );
+    await pool.query(`
+      UPDATE storyboard_version
+      SET parent_storyboard_version_id = NULL
+      WHERE storyboard_result_id = ANY($1::uuid[])
+    `, [resultIds]);
+    await pool.query(
+      "DELETE FROM storyboard_version WHERE storyboard_result_id = ANY($1::uuid[])",
+      [resultIds],
+    );
+    await pool.query(
+      "DELETE FROM storyboard_result WHERE id = ANY($1::uuid[])",
+      [resultIds],
+    );
+  }
+  if (materialIds.length > 0) {
+    await pool.query(
+      "DELETE FROM canonical_character WHERE material_state_id = ANY($1::uuid[])",
+      [materialIds],
+    );
+    await pool.query(`
+      UPDATE material_state
+      SET parent_material_state_id = NULL
+      WHERE id = ANY($1::uuid[])
+    `, [materialIds]);
+    await pool.query("DELETE FROM material_state WHERE id = ANY($1::uuid[])", [materialIds]);
+  }
+  if (revisionIds.length > 0) {
+    await pool.query(
+      "DELETE FROM interpretation WHERE source_revision_id = ANY($1::uuid[])",
+      [revisionIds],
+    );
+  }
+  if (revisionIds.length > 0) {
+    await pool.query(`
+      UPDATE source_revision
+      SET parent_source_revision_id = NULL
+      WHERE id = ANY($1::uuid[])
+    `, [revisionIds]);
+    await pool.query("DELETE FROM source_revision WHERE id = ANY($1::uuid[])", [revisionIds]);
+  }
+  await pool.query("DELETE FROM reading WHERE project_id = ANY($1::uuid[])", [projectIds]);
+  await pool.query("DELETE FROM visual_asset WHERE project_id = ANY($1::uuid[])", [projectIds]);
+  await pool.query("DELETE FROM research_event WHERE project_id = ANY($1::uuid[])", [projectIds]);
+  await pool.query("DELETE FROM working_draft WHERE project_id = ANY($1::uuid[])", [projectIds]);
+  await pool.query("DELETE FROM character_exclusion WHERE project_id = ANY($1::uuid[])", [projectIds]);
+  await pool.query("DELETE FROM project WHERE id = ANY($1::uuid[])", [projectIds]);
+}
+
+async function seedProject(pool, projectId, title) {
+  await pool.query(
+    "INSERT INTO project (id, title) VALUES ($1, $2)",
+    [projectId, title],
+  );
 }
 
 async function seed(pool) {
+  await seedProject(pool, FIXTURE_PROJECT_ID, "018 duplicate fixture");
+  await pool.query(
+    "INSERT INTO working_draft (project_id, text, revision_token) VALUES ($1, 'fixture draft', $2)",
+    [FIXTURE_PROJECT_ID, randomUUID()],
+  );
   await pool.query(
     "INSERT INTO source_revision (id, project_id, text) VALUES ($1, $2, 'исходный текст')",
-    [ids.source, SEEDED_PROJECT_ID],
+    [ids.source, FIXTURE_PROJECT_ID],
   );
   await pool.query(`
     INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status)
     VALUES ($1, $2, 'исходный текст', $3, 'ready')
-  `, [ids.reading, SEEDED_PROJECT_ID, randomUUID()]);
+  `, [ids.reading, FIXTURE_PROJECT_ID, randomUUID()]);
   await pool.query(
     "INSERT INTO interpretation (id, source_revision_id, reading_id) VALUES ($1, $2, $3)",
     [ids.interpretation, ids.source, ids.reading],
@@ -151,7 +255,7 @@ async function seed(pool) {
     UPDATE project
     SET active_source_revision_id = $1, active_material_state_id = $2
     WHERE id = $3
-  `, [ids.source, ids.material, SEEDED_PROJECT_ID]);
+  `, [ids.source, ids.material, FIXTURE_PROJECT_ID]);
   await pool.query(`
     INSERT INTO storyboard_result (id, material_state_id, status, stage_payload)
     VALUES ($1, $2, 'checked', $3::jsonb)
@@ -164,19 +268,19 @@ async function seed(pool) {
     speakerPanel: 0,
     panels: [{ id: "other-panel", description: "Чужой" }],
   }];
-  await pool.query("INSERT INTO project (id, title) VALUES ($1, 'Другой проект')", [OTHER_PROJECT_ID]);
+  await seedProject(pool, ISOLATION_PROJECT_ID, "018 isolation fixture");
   await pool.query(
     "INSERT INTO working_draft (project_id, text, revision_token) VALUES ($1, 'чужой черновик', $2)",
-    [OTHER_PROJECT_ID, randomUUID()],
+    [ISOLATION_PROJECT_ID, randomUUID()],
   );
   await pool.query(
     "INSERT INTO source_revision (id, project_id, text) VALUES ($1, $2, 'чужой источник')",
-    [ids.otherSource, OTHER_PROJECT_ID],
+    [ids.otherSource, ISOLATION_PROJECT_ID],
   );
   await pool.query(`
     INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status)
     VALUES ($1, $2, 'чужой источник', $3, 'ready')
-  `, [ids.otherReading, OTHER_PROJECT_ID, randomUUID()]);
+  `, [ids.otherReading, ISOLATION_PROJECT_ID, randomUUID()]);
   await pool.query(
     "INSERT INTO interpretation (id, source_revision_id, reading_id) VALUES ($1, $2, $3)",
     [ids.otherInterpretation, ids.otherSource, ids.otherReading],
@@ -187,7 +291,7 @@ async function seed(pool) {
   );
   await pool.query(`
     UPDATE project SET active_source_revision_id = $1, active_material_state_id = $2 WHERE id = $3
-  `, [ids.otherSource, ids.otherMaterial, OTHER_PROJECT_ID]);
+  `, [ids.otherSource, ids.otherMaterial, ISOLATION_PROJECT_ID]);
   await pool.query(`
     INSERT INTO storyboard_result (id, material_state_id, status, stage_payload)
     VALUES ($1, $2, 'checked', $3::jsonb)
@@ -278,6 +382,85 @@ async function tableCounts(pool) {
   return counts;
 }
 
+async function unrelatedSnapshot(pool) {
+  const projects = await pool.query(`
+    SELECT id, title, active_source_revision_id, active_material_state_id, current_reading_id
+    FROM project
+    WHERE NOT (id = ANY($1::uuid[]))
+    ORDER BY id
+  `, [OWNED_PROJECT_IDS]);
+  const assets = await pool.query(`
+    SELECT id, sha256, byte_length, octet_length(bytes)::int AS stored_length
+    FROM visual_asset
+    WHERE NOT (project_id = ANY($1::uuid[]))
+    ORDER BY id
+  `, [OWNED_PROJECT_IDS]);
+  const events = await pool.query(`
+    SELECT count(*)::int AS count
+    FROM research_event
+    WHERE NOT (project_id = ANY($1::uuid[]))
+  `, [OWNED_PROJECT_IDS]);
+  return {
+    projects: projects.rows,
+    assets: assets.rows,
+    researchEvents: events.rows[0].count,
+  };
+}
+
+async function seedSentinel(pool) {
+  await seedProject(pool, SENTINEL_PROJECT_ID, "018 sentinel");
+  await pool.query(
+    "INSERT INTO working_draft (project_id, text, revision_token) VALUES ($1, $2, $3)",
+    [SENTINEL_PROJECT_ID, SENTINEL_TEXT, "01800000-0000-4000-8000-0000000000c2"],
+  );
+  await pool.query(
+    "INSERT INTO source_revision (id, project_id, text) VALUES ($1, $2, $3)",
+    ["01800000-0000-4000-8000-0000000000c3", SENTINEL_PROJECT_ID, SENTINEL_SOURCE],
+  );
+  await pool.query(`
+    INSERT INTO visual_asset (
+      id, project_id, kind, mime, width, height, byte_length, sha256, bytes
+    ) VALUES ($1, $2, 'uploaded-image', 'image/png', 1, 1, $3, $4, $5)
+  `, [
+    SENTINEL_ASSET_ID,
+    SENTINEL_PROJECT_ID,
+    SENTINEL_BYTES.length,
+    createHash("sha256").update(SENTINEL_BYTES).digest("hex"),
+    SENTINEL_BYTES,
+  ]);
+}
+
+async function readSentinel(pool) {
+  const project = await pool.query(`
+    SELECT id, title, active_source_revision_id, active_material_state_id, current_reading_id
+    FROM project WHERE id = $1
+  `, [SENTINEL_PROJECT_ID]);
+  const draft = await pool.query(
+    "SELECT text, revision_token FROM working_draft WHERE project_id = $1",
+    [SENTINEL_PROJECT_ID],
+  );
+  const source = await pool.query(
+    "SELECT id, text FROM source_revision WHERE project_id = $1 ORDER BY id",
+    [SENTINEL_PROJECT_ID],
+  );
+  const asset = await pool.query(`
+    SELECT id, sha256, byte_length, octet_length(bytes)::int AS stored_length, bytes
+    FROM visual_asset WHERE id = $1 AND project_id = $2
+  `, [SENTINEL_ASSET_ID, SENTINEL_PROJECT_ID]);
+  return {
+    project: project.rows,
+    draft: draft.rows,
+    source: source.rows,
+    asset: asset.rows.map((row) => ({
+      id: row.id,
+      sha256: row.sha256,
+      byteLength: row.byte_length,
+      storedLength: row.stored_length,
+      bytes: Buffer.from(row.bytes).toString("base64"),
+    })),
+  };
+}
+
 function findFrame(visual, structureFrameId, structureSegmentIndex = null) {
   return visual.frames.find((frame) => (
     frame.structureFrameId === structureFrameId
@@ -291,17 +474,44 @@ test("duplicateFrame copies panel state by reference, then one undo restores the
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
 }, async () => {
   assert.equal(new URL(databaseUrl).pathname, "/comics_test");
-  enterProject(SEEDED_PROJECT_ID);
+  enterProject(FIXTURE_PROJECT_ID);
   const pool = createPool(databaseUrl);
   const guard = await pool.connect();
   try {
     await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
     await migrate({ connectionString: databaseUrl, logger: { log() {} } });
-    await reset(pool);
+    await removeOwnedProjects(pool);
+    const unrelatedBefore = await unrelatedSnapshot(pool);
+    await seedSentinel(pool);
+    const sentinelBefore = await readSentinel(pool);
     await seed(pool);
     const store = createVisualStore(pool);
     const initial = await store.load();
     assert.equal(initial.frames[0].structureFrameId, "frame-split");
+    for (const payload of [
+      { op: "batch", operations: [{ op: "duplicateFrame", structureFrameId: "frame-split" }] },
+      {
+        op: "batch",
+        operations: [
+          { op: "duplicateFrame", structureFrameId: "frame-split" },
+          { op: "duplicateFrame", structureFrameId: "frame-card" },
+        ],
+      },
+      {
+        op: "batch",
+        operations: [
+          { op: "setDuration", structureFrameId: "frame-card", durationFrames: 40 },
+          { op: "duplicateFrame", structureFrameId: "frame-split" },
+        ],
+      },
+    ]) {
+      const rejected = await store.applyOperation(payload);
+      assert.equal(rejected.ok, false);
+      assert.equal(rejected.kind, "invalid-operation");
+      assert.equal(rejected.operationResult, undefined);
+    }
+    assert.equal((await store.load()).storyboardVersionId, initial.storyboardVersionId);
+    assert.equal((await versionRows(pool, ids.result)).length, 1);
     const stale = await store.applyOperation({ op: "duplicateFrame", structureFrameId: "missing-frame" });
     assert.equal(stale.ok, false);
     assert.equal(stale.kind, "frame-not-found");
@@ -379,7 +589,7 @@ test("duplicateFrame copies panel state by reference, then one undo restores the
       ) VALUES ($1, $2, 'performance-reference', 'image/png', 1, 1, $3, $4, $5)
     `, [
       performanceId,
-      SEEDED_PROJECT_ID,
+      FIXTURE_PROJECT_ID,
       performanceBytes.length,
       createHash("sha256").update(performanceBytes).digest("hex"),
       performanceBytes,
@@ -589,17 +799,22 @@ test("duplicateFrame copies panel state by reference, then one undo restores the
     assert.equal((await tableCounts(pool)).panel_generation, countsBefore.panel_generation);
     assert.deepEqual(await assetFingerprint(pool), assetsBefore);
 
-    enterProject(OTHER_PROJECT_ID);
+    enterProject(ISOLATION_PROJECT_ID);
     const other = await store.load();
     assert.equal(other.storyboardVersionId, ids.otherVersion);
     assert.equal(other.frames.length, 1);
     assert.equal(other.frames[0].dialogue, "Чужая реплика");
     assert.equal(await headId(pool, ids.otherResult), ids.otherVersion);
-    enterProject(SEEDED_PROJECT_ID);
+    enterProject(FIXTURE_PROJECT_ID);
     assert.equal((await store.load()).storyboardVersionId === ids.otherVersion, false);
+    assert.deepEqual(await readSentinel(pool), sentinelBefore);
+    await removeOwnedProjects(pool, [FIXTURE_PROJECT_ID, ISOLATION_PROJECT_ID]);
+    assert.deepEqual(await readSentinel(pool), sentinelBefore);
+    await removeOwnedProjects(pool, [SENTINEL_PROJECT_ID]);
+    assert.deepEqual(await unrelatedSnapshot(pool), unrelatedBefore);
   } finally {
-    enterProject(SEEDED_PROJECT_ID);
-    await reset(pool).catch(() => {});
+    enterProject(FIXTURE_PROJECT_ID);
+    await removeOwnedProjects(pool).catch(() => {});
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
     guard.release();
     await pool.end();
@@ -617,6 +832,8 @@ test("frame_duplicate can be stored and earlier semantic actions stay valid", {
   try {
     await guard.query("SELECT pg_advisory_lock($1::bigint)", [RESEARCH_LOCK]);
     await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await removeOwnedProjects(pool, [RESEARCH_PROJECT_ID]);
+    await seedProject(pool, RESEARCH_PROJECT_ID, "018 research fixture");
     const inserted = await pool.query(`
       INSERT INTO research_event (
         id, project_id, event_kind, semantic_action, correlation_id, surface, context
@@ -625,7 +842,7 @@ test("frame_duplicate can be stored and earlier semantic actions stay valid", {
         ($2, $4, 'action_start', 'frame_insert', $6, 'product_control', '{}'::jsonb),
         ($3, $4, 'action_start', 'frame_dialogue', $7, 'product_control', '{}'::jsonb)
       RETURNING semantic_action
-    `, [eventIds[0], eventIds[1], eventIds[2], SEEDED_PROJECT_ID, randomUUID(), randomUUID(), randomUUID()]);
+    `, [eventIds[0], eventIds[1], eventIds[2], RESEARCH_PROJECT_ID, randomUUID(), randomUUID(), randomUUID()]);
     assert.deepEqual(inserted.rows.map((row) => row.semantic_action), [
       "frame_duplicate",
       "frame_insert",
@@ -635,7 +852,7 @@ test("frame_duplicate can be stored and earlier semantic actions stay valid", {
     const correlationId = randomUUID();
     correlationIds.push(correlationId);
     const start = await research.appendEvent({
-      projectId: SEEDED_PROJECT_ID,
+      projectId: RESEARCH_PROJECT_ID,
       eventKind: "action_start",
       semanticAction: "frame_duplicate",
       correlationId,
@@ -663,7 +880,7 @@ test("frame_duplicate can be stored and earlier semantic actions stay valid", {
     });
     assert.equal(start.ok, true, start.kind);
     const terminal = await research.appendEvent({
-      projectId: SEEDED_PROJECT_ID,
+      projectId: RESEARCH_PROJECT_ID,
       eventKind: "action_terminal",
       correlationId,
       outcome: "success",
@@ -680,10 +897,7 @@ test("frame_duplicate can be stored and earlier semantic actions stay valid", {
     assert.equal(terminal.event.context.createdStructureFrameId, "created-frame");
     assert.equal(terminal.event.context.createdDisplayFrameNumber, 3);
   } finally {
-    await pool.query(
-      "DELETE FROM research_event WHERE id = ANY($1::uuid[]) OR correlation_id = ANY($2::uuid[])",
-      [eventIds, correlationIds],
-    ).catch(() => {});
+    await removeOwnedProjects(pool, [RESEARCH_PROJECT_ID]).catch(() => {});
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [RESEARCH_LOCK]).catch(() => {});
     guard.release();
     await pool.end();

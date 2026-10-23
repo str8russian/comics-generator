@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
 import { createServer } from "../server.mjs";
+import { createVisualStore } from "../visual-store.mjs";
 
 const PROJECT = "/api/projects/00000000-0000-4000-8000-000000000001";
 
@@ -151,6 +152,65 @@ test("a rejected duplicate leaves the route without a created address or a provi
     assert.equal(response.status, 400);
     assert.equal(response.body.kind, "frame-not-found");
     assert.equal(response.body.operationResult, undefined);
+    assert.equal(generatorCalls, 0);
+    assert.equal(dropped, 0);
+  } finally {
+    await close(server);
+  }
+});
+
+test("a batch that contains duplicateFrame is rejected before a database connection or provider call", async () => {
+  let generatorCalls = 0;
+  let dropped = 0;
+  let connected = false;
+  const server = createServer({
+    migrate: false,
+    imageGenerator: async () => {
+      generatorCalls += 1;
+      return { ok: true, image: { bytes: Buffer.from("nope"), mime: "image/png" } };
+    },
+    renderController: {
+      async dropCurrent() {
+        dropped += 1;
+      },
+    },
+    visualStore: createVisualStore({
+      async connect() {
+        connected = true;
+        throw new Error("connect must not run");
+      },
+    }),
+  });
+  const port = await listen(server);
+  try {
+    for (const body of [
+      { op: "batch", operations: [{ op: "duplicateFrame", structureFrameId: "frame-1" }] },
+      {
+        op: "batch",
+        operations: [
+          { op: "duplicateFrame", structureFrameId: "frame-1" },
+          { op: "duplicateFrame", structureFrameId: "frame-2" },
+        ],
+      },
+      {
+        op: "batch",
+        operations: [
+          { op: "setDuration", structureFrameId: "frame-1", durationFrames: 48 },
+          { op: "duplicateFrame", structureFrameId: "frame-1" },
+        ],
+      },
+    ]) {
+      const response = await send(port, {
+        method: "POST",
+        path: `${PROJECT}/visual/operations`,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 400);
+      assert.equal(response.body.kind, "invalid-operation");
+      assert.equal(response.body.operationResult, undefined);
+    }
+    assert.equal(connected, false);
     assert.equal(generatorCalls, 0);
     assert.equal(dropped, 0);
   } finally {

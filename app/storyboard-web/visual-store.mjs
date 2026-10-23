@@ -1476,6 +1476,9 @@ export async function applyProductOperation(pool, input) {
   if (operations.some((operation) => !operation || typeof operation.op !== "string" || operation.op === "batch")) {
     return failed("invalid-operation");
   }
+  if (input?.op === "batch" && operations.some((operation) => operation.op === "duplicateFrame")) {
+    return failed("invalid-operation");
+  }
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");

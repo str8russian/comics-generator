@@ -6,6 +6,8 @@
 
 `displayFrameNumber` stays request context. It is not the address. A compound directing beat is cloned whole. The clicked segment index is context and selects which display card of the clone opens.
 
+`applyProductOperation` rejects `duplicateFrame` before `BEGIN` when the top-level op is `batch`, whether the batch holds one duplicate, several, or a duplicate mixed with another edit. The rejection is the existing `invalid-operation` response. No member of that batch runs. A single top-level `duplicateFrame` is unchanged.
+
 ## Change surface
 
 Verified before editing:
@@ -36,7 +38,8 @@ Migration `016_frame_duplicate.sql` adds `frame_duplicate` to the research check
 - Unit: split and single insertion, text card, compound beat, stale and invalid source, later edits isolated to the copy, research result context, Operations label.
 - HTTP: existing operations route returns `operationResult`, a rejection does not, and the image generator is not called. Success drops the current render.
 - UI: **Дублировать кадр**, one request, the copy opens at **Кадр N**, compound segment resolution, failure stays on the source, busy boundary, Undo returns to the source.
-- PostgreSQL: one split frame whose panels differ in asset, performance reference, zoom, pan, mirror, dialogue, and duration. One version and one head move. New panel-state identities. Unchanged asset bytes and generation rows. Approval not carried. Reload. One Undo. A later copy edit does not change the source. Project isolation. `frame_duplicate` persists beside older semantic actions.
+- PostgreSQL: one split frame whose panels differ in asset, performance reference, zoom, pan, mirror, dialogue, and duration. One version and one head move. New panel-state identities. Unchanged asset bytes and generation rows. Approval not carried. Reload. One Undo. A later copy edit does not change the source. Project isolation. `frame_duplicate` persists beside older semantic actions. Batch payloads that contain `duplicateFrame` leave the fixture head unchanged.
+- The PostgreSQL fixture uses dedicated Feature 018 project ids. It seeds and deletes only those projects and their dependent rows. A sentinel project outside the duplicated fixture is compared before and after, including after fixture cleanup, and is then removed by its own id. The owner's seeded project is not a fixture and is not updated or deleted.
 
 ## Checkpoint
 
