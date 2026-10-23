@@ -1338,7 +1338,6 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
 
 body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .frame-inspector {
   max-height: calc(100vh - 148px - min(42vh, 100vh - 32px) - 24px);
-  min-height: 240px;
 }
 
 .frame-inspector[hidden] {
