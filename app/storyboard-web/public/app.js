@@ -320,7 +320,7 @@ function beginProductResearchCapture({
       }
       return startSaved;
     },
-    async terminal(outcome, { outcomeKind = null, outcomeFlags = {} } = {}) {
+    async terminal(outcome, { outcomeKind = null, outcomeFlags = {}, resultContext = null } = {}) {
       if (finished) return null;
       finished = true;
       const terminalBody = {
@@ -330,6 +330,7 @@ function beginProductResearchCapture({
         outcomeKind,
         outcomeFlags,
       };
+      if (resultContext && typeof resultContext === "object") terminalBody.resultContext = resultContext;
       if (!startSaved) terminalBody.startSnapshot = startSnapshot;
       const terminalEvent = await postResearchEvent(terminalBody);
       if (terminalEvent) {
@@ -362,6 +363,9 @@ function normalizeResearchClassification(classified) {
     outcomeFlags: classified.outcomeFlags && typeof classified.outcomeFlags === "object"
       ? classified.outcomeFlags
       : {},
+    resultContext: classified.resultContext && typeof classified.resultContext === "object"
+      ? classified.resultContext
+      : null,
   };
 }
 
@@ -400,6 +404,7 @@ async function runProductResearchAction({
       await capture.terminal(classified.outcome, {
         outcomeKind: classified.outcomeKind,
         outcomeFlags: classified.outcomeFlags,
+        resultContext: classified.resultContext,
       });
       return result;
     } catch (error) {
@@ -767,6 +772,7 @@ async function runAssembly(operation, message, {
   const semanticAction = {
     insertFrame: "frame_insert",
     deleteFrame: "frame_delete",
+    duplicateFrame: "frame_duplicate",
     reorderFrames: "frame_reorder",
     addPanel: "panel_add",
     deletePanel: "panel_delete",
@@ -796,6 +802,14 @@ async function runAssembly(operation, message, {
     },
     busyMessage: message,
     classifyResult: (result) => {
+      if (operation?.op === "duplicateFrame") {
+        if (result?.changed === false) return { outcome: "no-change" };
+        const resultContext = createdFrameResearchAddress(
+          result?.operationResult?.created,
+          operation.structureSegmentIndex,
+        );
+        return resultContext ? { outcome: "success", resultContext } : { outcome: "success" };
+      }
       const flags = operation?.op === "setFrameDialogue" && operation.dialogueMode
         ? {
           dialogueMode: operation.dialogueMode,
@@ -823,6 +837,9 @@ async function runAssembly(operation, message, {
       }
       if (next?.status === "ready") {
         applyVisual(next);
+        if (operation?.op === "duplicateFrame") {
+          openStructureAddress(next?.operationResult?.created);
+        }
         showActionNotice("Изменение сохранено.", "success");
       }
       return next;
@@ -870,6 +887,11 @@ function appendAssemblyControls(card, frame) {
       afterStructureFrameId: address.structureFrameId,
       kind: "text",
     }, "Добавляю текстовую карточку…", { frame })),
+    assemblyButton("Дублировать кадр", () => runAssembly({
+      op: "duplicateFrame",
+      structureFrameId: address.structureFrameId,
+      structureSegmentIndex: address.structureSegmentIndex,
+    }, "Дублирую кадр…", { frame })),
     earlier,
     later,
     assemblyButton("Удалить кадр", () => runAssembly({
@@ -880,7 +902,7 @@ function appendAssemblyControls(card, frame) {
   if (Number.isInteger(frame.structureSegmentIndex)) {
     const hint = document.createElement("p");
     hint.className = "assembly-note";
-    hint.textContent = "Это часть структурного кадра. Вставка, удаление и порядок относятся ко всему структурному кадру.";
+    hint.textContent = "Это часть структурного кадра. Дублирование, вставка, удаление и порядок относятся ко всему структурному кадру.";
     box.append(hint);
   }
   if (frame.frameKind === "text") {
@@ -1223,6 +1245,45 @@ function openUtteranceEditor(frame) {
   }
   if (utteranceError) utteranceError.hidden = true;
   utteranceEditor.hidden = false;
+}
+
+function frameMatchesAddress(frame, structureFrameId, structureSegmentIndex) {
+  if ((frame?.structureFrameId || frame?.id) !== structureFrameId) return false;
+  const frameSegment = Number.isInteger(frame?.structureSegmentIndex) ? frame.structureSegmentIndex : null;
+  const wanted = Number.isInteger(structureSegmentIndex) ? structureSegmentIndex : null;
+  return wanted == null ? frameSegment == null : frameSegment === wanted;
+}
+
+function structureFrameIndex(structureFrameId, structureSegmentIndex = null) {
+  if (typeof structureFrameId !== "string" || !structureFrameId) return -1;
+  let index = readyFrames.findIndex((frame) => frameMatchesAddress(frame, structureFrameId, structureSegmentIndex));
+  if (index < 0) {
+    index = readyFrames.findIndex((frame) => (frame.structureFrameId || frame.id) === structureFrameId);
+  }
+  return index;
+}
+
+function openStructureAddress(address) {
+  const index = structureFrameIndex(address?.structureFrameId, address?.structureSegmentIndex);
+  if (index >= 0) openDetail(index);
+}
+
+function createdFrameResearchAddress(created, requestedSegment = null) {
+  const structureFrameId = created?.structureFrameId;
+  if (typeof structureFrameId !== "string" || !structureFrameId) return null;
+  const preferredSegment = Number.isInteger(created?.structureSegmentIndex)
+    ? created.structureSegmentIndex
+    : (Number.isInteger(requestedSegment) ? requestedSegment : null);
+  const index = structureFrameIndex(structureFrameId, preferredSegment);
+  const frame = index >= 0 ? readyFrames[index] : null;
+  return {
+    createdStructureFrameId: structureFrameId,
+    createdDisplayFrameId: typeof frame?.id === "string" ? frame.id : null,
+    createdDisplayFrameNumber: index >= 0 ? index + 1 : null,
+    createdStructureSegmentIndex: frame && Number.isInteger(frame.structureSegmentIndex)
+      ? frame.structureSegmentIndex
+      : preferredSegment,
+  };
 }
 
 function openDetail(index) {
@@ -2863,7 +2924,18 @@ globalUndo?.addEventListener("click", () => {
         headers: { "content-type": "application/json" },
         body: "{}",
       });
+      const undone = next?.undoneTarget;
+      const createdId = undone?.op === "duplicateFrame" && typeof undone?.created?.structureFrameId === "string"
+        ? undone.created.structureFrameId
+        : null;
+      const viewingCopy = Boolean(createdId && detail?.open && detailStructureId === createdId);
       if (next?.status === "ready") applyVisual(next);
+      if (viewingCopy) {
+        openStructureAddress(undone.source?.structureFrameId ? undone.source : {
+          structureFrameId: undone.structureFrameId,
+          structureSegmentIndex: Number.isInteger(undone.structureSegmentIndex) ? undone.structureSegmentIndex : null,
+        });
+      }
       const label = next?.undoneLabel || pendingLabel;
       showActionNotice(undoneNotice({ ...next, undoneLabel: label }), "success");
       return next;

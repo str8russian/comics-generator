@@ -35,6 +35,7 @@ const SEMANTIC_ACTIONS = new Set([
   "render",
   "source_utterance_edit",
   "frame_dialogue",
+  "frame_duplicate",
 ]);
 
 const SURFACES = new Set(["dock_notes", "dock_commands", "product_control"]);
@@ -71,6 +72,13 @@ const CONTEXT_KEYS = [
   "transitionOverlapFrames",
   "introTemplateId",
   "introTemplateVersion",
+];
+
+const RESULT_CONTEXT_KEYS = [
+  "createdStructureFrameId",
+  "createdDisplayFrameId",
+  "createdDisplayFrameNumber",
+  "createdStructureSegmentIndex",
 ];
 
 const COMMAND_TARGET_KEYS = [
@@ -224,6 +232,36 @@ function normalizeEditTarget(value) {
     out[key] = present;
   }
   return out;
+}
+
+function normalizeResultContext(value) {
+  if (value == null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const allowed = new Set(RESULT_CONTEXT_KEYS);
+  if (!hasOnlyKeys(value, allowed)) return undefined;
+  const out = {};
+  if (Object.hasOwn(value, "createdStructureFrameId")) {
+    if (!nullableString(value.createdStructureFrameId)) return undefined;
+    out.createdStructureFrameId = value.createdStructureFrameId;
+  }
+  if (Object.hasOwn(value, "createdDisplayFrameId")) {
+    if (!nullableString(value.createdDisplayFrameId)) return undefined;
+    out.createdDisplayFrameId = value.createdDisplayFrameId;
+  }
+  if (Object.hasOwn(value, "createdDisplayFrameNumber")) {
+    if (!nullableIntegerMin(value.createdDisplayFrameNumber, 1)) return undefined;
+    out.createdDisplayFrameNumber = value.createdDisplayFrameNumber;
+  }
+  if (Object.hasOwn(value, "createdStructureSegmentIndex")) {
+    if (!nullableIntegerMin(value.createdStructureSegmentIndex, 0)) return undefined;
+    out.createdStructureSegmentIndex = value.createdStructureSegmentIndex;
+  }
+  return out;
+}
+
+function mergeResultContext(context, outcome, resultContext) {
+  if (outcome !== "success" || !resultContext) return context;
+  return { ...context, ...resultContext };
 }
 
 function normalizeOutcomeFlags(value) {
@@ -390,6 +428,8 @@ function validateEventInput(input) {
   }
 
   if (!OUTCOMES.has(input.outcome)) return failed("invalid-request");
+  const resultContext = normalizeResultContext(input.resultContext);
+  if (resultContext === undefined) return failed("invalid-request");
   const outcomeFlags = normalizeOutcomeFlags(input.outcomeFlags);
   if (outcomeFlags === undefined) return failed("invalid-request");
   const outcomeKind = normalizeOutcomeKind(input.outcomeKind);
@@ -412,6 +452,7 @@ function validateEventInput(input) {
     outcome: input.outcome,
     outcomeKind,
     outcomeFlags,
+    resultContext,
     startSnapshot,
   };
 }
@@ -530,7 +571,7 @@ function createMemoryStore() {
         submittedText: identity.submittedText,
         commandTarget: identity.commandTarget,
         editTarget: identity.editTarget,
-        context: identity.context,
+        context: mergeResultContext(identity.context, validated.outcome, validated.resultContext),
         outcome: validated.outcome,
         outcomeKind: validated.outcomeKind,
         outcomeFlags,
@@ -554,7 +595,7 @@ function createMemoryStore() {
       submittedText: identity.submittedText,
       commandTarget: identity.commandTarget,
       editTarget: identity.editTarget,
-      context: identity.context,
+      context: mergeResultContext(identity.context, validated.outcome, validated.resultContext),
       outcome: validated.outcome,
       outcomeKind: validated.outcomeKind,
       outcomeFlags,
@@ -745,7 +786,7 @@ function createPgStore(pool) {
           submittedText: identity.submittedText,
           commandTarget: identity.commandTarget,
           editTarget: identity.editTarget,
-          context: identity.context,
+          context: mergeResultContext(identity.context, validated.outcome, validated.resultContext),
           outcome: validated.outcome,
           outcomeFlags,
           outcomeKind: validated.outcomeKind,

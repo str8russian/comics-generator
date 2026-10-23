@@ -101,9 +101,10 @@ function retargetSpeaker(node, previousPanels, nextPanels) {
 
 export function applyOperation(frames, operation = {}, options = {}) {
   const idFactory = options.idFactory || randomUUID;
+  const op = operation.op;
+  if (op === "duplicateFrame") return duplicateFrame(frames, operation, idFactory);
   const identified = ensurePanelIds(frames, idFactory);
   const next = identified.frames;
-  const op = operation.op;
   if (op === "insertFrame") return insertFrame(next, operation, idFactory);
   if (op === "deleteFrame") return deleteFrame(next, operation);
   if (op === "reorderFrames") return reorderFrames(next, operation);
@@ -121,6 +122,144 @@ export function applyOperation(frames, operation = {}, options = {}) {
 export function persistenceMode(op) {
   if (op === "setDuration" || op === "setTextCard" || op === "setOwnerDescription") return "current";
   return "version";
+}
+
+function panelListOk(panels) {
+  if (panels == null) return true;
+  if (!Array.isArray(panels)) return false;
+  return panels.every((panel) => panel && typeof panel === "object" && !Array.isArray(panel));
+}
+
+function sourceShapeOk(frame) {
+  if (!frame || typeof frame !== "object" || Array.isArray(frame)) return false;
+  const directed = frame.directingBeat === true && Array.isArray(frame.segments) && frame.segments.length > 0;
+  if (directed) {
+    return frame.segments.every((segment) => (
+      segment
+      && typeof segment === "object"
+      && !Array.isArray(segment)
+      && panelListOk(segment.panels)
+    ));
+  }
+  if (frame.segments != null && !Array.isArray(frame.segments)) return false;
+  return panelListOk(frame.panels);
+}
+
+function collectUsedIds(frames) {
+  const used = new Set();
+  const visit = (node) => {
+    if (!node || typeof node !== "object") return;
+    if (typeof node.id === "string" && node.id) used.add(node.id);
+    for (const panel of node.panels || []) {
+      if (typeof panel?.id === "string" && panel.id) used.add(panel.id);
+    }
+    for (const segment of node.segments || []) visit(segment);
+  };
+  for (const frame of frames || []) visit(frame);
+  return used;
+}
+
+function takeId(idFactory, used) {
+  let token = idFactory();
+  for (let guard = 0; guard < 8 && (typeof token !== "string" || !token || used.has(token)); guard += 1) {
+    token = idFactory();
+  }
+  if (typeof token !== "string" || !token || used.has(token)) token = randomUUID();
+  while (used.has(token)) token = randomUUID();
+  used.add(token);
+  return token;
+}
+
+function takeFrameId(idFactory, used) {
+  let createdId = "";
+  do {
+    createdId = `frame-${takeId(idFactory, used)}`;
+  } while (used.has(createdId));
+  used.add(createdId);
+  return createdId;
+}
+
+function remapPanels(node, displayFrameId, panelCopies, idFactory, used, { record = true } = {}) {
+  if (!Array.isArray(node?.panels)) return;
+  const previous = node.panels;
+  const next = previous.map((panel, panelIndex) => {
+    const copy = structuredClone(panel);
+    const sourcePanelId = typeof copy.id === "string" && copy.id ? copy.id : null;
+    const panelId = takeId(idFactory, used);
+    copy.id = panelId;
+    if (record && displayFrameId) {
+      panelCopies.push({
+        sourcePanelId,
+        panelId,
+        frameId: displayFrameId,
+        panelIndex,
+      });
+    }
+    return copy;
+  });
+  if (typeof node.dormantSpeakerPanelId === "string") {
+    const index = previous.findIndex((panel) => panel?.id === node.dormantSpeakerPanelId);
+    if (index >= 0) node.dormantSpeakerPanelId = next[index].id;
+    else delete node.dormantSpeakerPanelId;
+  }
+  node.panels = next;
+}
+
+function duplicateFrame(frames, operation, idFactory) {
+  const list = Array.isArray(frames) ? frames : [];
+  if (typeof operation.structureFrameId !== "string" || !operation.structureFrameId) {
+    return fail("frame-not-found");
+  }
+  const found = list.findIndex((frame) => frame?.id === operation.structureFrameId);
+  if (found < 0) return fail("frame-not-found");
+  if (!sourceShapeOk(list[found])) return fail("invalid-request");
+  const identified = ensurePanelIds(list, idFactory);
+  const next = identified.frames;
+  const frameIndex = next.findIndex((frame) => frame?.id === operation.structureFrameId);
+  if (frameIndex < 0 || !sourceShapeOk(next[frameIndex])) return fail("invalid-request");
+  let clone;
+  try {
+    clone = structuredClone(next[frameIndex]);
+  } catch {
+    return fail("invalid-request");
+  }
+  const used = collectUsedIds(next);
+  const createdId = takeFrameId(idFactory, used);
+  clone.id = createdId;
+  const directed = clone.directingBeat === true && Array.isArray(clone.segments) && clone.segments.length > 0;
+  const panelCopies = [];
+  if (directed) {
+    clone.segments.forEach((segment, segmentIndex) => {
+      remapPanels(segment, `${createdId}#${segmentIndex + 1}`, panelCopies, idFactory, used);
+    });
+    remapPanels(clone, null, panelCopies, idFactory, used, { record: false });
+  } else {
+    remapPanels(clone, createdId, panelCopies, idFactory, used);
+  }
+  const requestedSegment = Number.isInteger(operation.structureSegmentIndex) && operation.structureSegmentIndex >= 0
+    ? operation.structureSegmentIndex
+    : null;
+  const createdSegment = directed && requestedSegment != null && clone.segments[requestedSegment]
+    ? requestedSegment
+    : null;
+  next.splice(frameIndex + 1, 0, clone);
+  return {
+    ok: true,
+    frames: next,
+    frameId: createdId,
+    mode: "version",
+    duplicate: {
+      source: {
+        structureFrameId: operation.structureFrameId,
+        structureSegmentIndex: requestedSegment,
+      },
+      created: {
+        structureFrameId: createdId,
+        structureSegmentIndex: createdSegment,
+      },
+      panelCopies,
+    },
+  };
 }
 
 function insertFrame(frames, operation, idFactory) {

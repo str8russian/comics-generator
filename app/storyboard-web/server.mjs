@@ -977,7 +977,10 @@ async function handleOperations(req, res, { runtime, logger, nextRequest }) {
   await sendVisualState(res, runtime, {
     logger,
     request,
-    extra: { changed: result.changed !== false },
+    extra: {
+      changed: result.changed !== false,
+      ...(result.operationResult ? { operationResult: result.operationResult } : {}),
+    },
   });
 }
 

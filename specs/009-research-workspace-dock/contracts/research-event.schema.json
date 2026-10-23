@@ -42,6 +42,7 @@
         "frame_insert",
         "frame_delete",
         "frame_reorder",
+        "frame_duplicate",
         "panel_add",
         "panel_delete",
         "panel_reorder",
@@ -161,7 +162,11 @@
         },
         "transitionOverlapFrames": { "type": ["integer", "null"], "minimum": 0 },
         "introTemplateId": { "type": ["string", "null"], "maxLength": 64 },
-        "introTemplateVersion": { "type": ["integer", "null"], "minimum": 1, "maximum": 99 }
+        "introTemplateVersion": { "type": ["integer", "null"], "minimum": 1, "maximum": 99 },
+        "createdStructureFrameId": { "type": ["string", "null"] },
+        "createdDisplayFrameId": { "type": ["string", "null"] },
+        "createdDisplayFrameNumber": { "type": ["integer", "null"], "minimum": 1 },
+        "createdStructureSegmentIndex": { "type": ["integer", "null"], "minimum": 0 }
       }
     },
     "outcome": {
