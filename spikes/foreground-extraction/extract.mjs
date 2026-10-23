@@ -808,6 +808,137 @@ function hardBoundary(background, width, height) {
   return mask;
 }
 
+function erodeMemberCount(members, width, height, iterations) {
+  const n = width * height;
+  let mask = new Uint8Array(n);
+  for (const pixel of members) mask[pixel] = 1;
+  for (let step = 0; step < iterations; step += 1) {
+    const next = new Uint8Array(n);
+    for (const pixel of members) {
+      const x = pixel % width;
+      const y = (pixel / width) | 0;
+      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) continue;
+      if (mask[pixel] && mask[pixel - 1] && mask[pixel + 1] && mask[pixel - width] && mask[pixel + width]) {
+        next[pixel] = 1;
+      }
+    }
+    mask = next;
+  }
+  let count = 0;
+  for (const pixel of members) if (mask[pixel]) count += 1;
+  return count;
+}
+
+function contourHitFraction(members, blocked, width, height, radius) {
+  const member = new Uint8Array(width * height);
+  for (const pixel of members) member[pixel] = 1;
+  let boundary = 0;
+  let hits = 0;
+  for (const pixel of members) {
+    const x = pixel % width;
+    const y = (pixel / width) | 0;
+    const onCanvas = x === 0 || y === 0 || x === width - 1 || y === height - 1;
+    const exposed = onCanvas
+      || x === 0 || !member[pixel - 1]
+      || x === width - 1 || !member[pixel + 1]
+      || y === 0 || !member[pixel - width]
+      || y === height - 1 || !member[pixel + width];
+    if (!exposed) continue;
+    boundary += 1;
+    let found = false;
+    for (let dy = -radius; dy <= radius && !found; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        if (blocked[ny * width + nx]) {
+          found = true;
+          break;
+        }
+      }
+    }
+    if (found) hits += 1;
+  }
+  return boundary === 0 ? 0 : hits / boundary;
+}
+
+function reclaimMatteEdgeGarments(dE, background, blocked, width, height, config) {
+  const n = width * height;
+  const candidate = new Uint8Array(n);
+  for (let pixel = 0; pixel < n; pixel += 1) {
+    if (background[pixel] && dE[pixel] > config.reclaimMinDeltaE && dE[pixel] <= config.connectivityDeltaE) {
+      candidate[pixel] = 1;
+    }
+  }
+  const seen = new Uint8Array(n);
+  const queue = new Int32Array(n);
+  const regions = [];
+  for (let start = 0; start < n; start += 1) {
+    if (!candidate[start] || seen[start]) continue;
+    let head = 0;
+    let tail = 0;
+    seen[start] = 1;
+    queue[tail] = start;
+    tail += 1;
+    const members = [];
+    let borderTouch = false;
+    let minX = width;
+    let minY = height;
+    let maxX = 0;
+    let maxY = 0;
+    let sum = 0;
+    let sx = 0;
+    let sy = 0;
+    while (head < tail) {
+      const pixel = queue[head];
+      head += 1;
+      members.push(pixel);
+      sum += dE[pixel];
+      const x = pixel % width;
+      const y = (pixel / width) | 0;
+      sx += x;
+      sy += y;
+      if (x === 0 || y === 0 || x === width - 1 || y === height - 1) borderTouch = true;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      const visit = (nx, ny) => {
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) return;
+        const next = ny * width + nx;
+        if (!seen[next] && candidate[next]) {
+          seen[next] = 1;
+          queue[tail] = next;
+          tail += 1;
+        }
+      };
+      visit(x - 1, y);
+      visit(x + 1, y);
+      visit(x, y - 1);
+      visit(x, y + 1);
+    }
+    if (!borderTouch || members.length < config.reclaimMinArea) continue;
+    const coreArea = erodeMemberCount(members, width, height, config.reclaimErodePx);
+    if (coreArea < config.reclaimMinCore) continue;
+    const contourFraction = contourHitFraction(members, blocked, width, height, config.reclaimContourRadius);
+    const reclaimed = contourFraction >= config.reclaimContourFraction;
+    if (reclaimed) {
+      for (const pixel of members) background[pixel] = 0;
+    }
+    regions.push({
+      area: members.length,
+      coreArea,
+      meanDeltaE: round(sum / members.length, 2),
+      contourFraction: round(contourFraction, 3),
+      reclaimed,
+      bbox: { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 },
+      centroid: { x: Math.round(sx / members.length), y: Math.round(sy / members.length) },
+    });
+  }
+  regions.sort((a, b) => b.area - a.area);
+  return regions;
+}
+
 export function extractForeground(image, overrides) {
   const config = resolveConfig(overrides);
   const { width, height, data, channels } = image;
@@ -884,6 +1015,15 @@ export function extractForeground(image, overrides) {
     if (pocketReport[index]?.action !== "cleared") continue;
     for (const p of components[index].pixels) cleared[p] = 1;
   }
+  const edgeGarments = reclaimMatteEdgeGarments(dE, background, blocked, width, height, config);
+  if (edgeGarments.length > 0) {
+    addFinding(findings, "matte-like-edge-contact", REVIEW_LEVEL, {
+      reclaimed: edgeGarments.filter((region) => region.reclaimed).map((region) => region.area),
+      withheld: edgeGarments.filter((region) => !region.reclaimed).map((region) => region.area),
+    });
+  }
+  const finalGeometry = foregroundBounds(background, width, height);
+  const finalFraction = finalGeometry.foreground / (width * height);
   const contacts = edgeContacts(background, width, height);
   if (contacts.some((edge) => edge.totalPixels > 0)) {
     addFinding(findings, "canvas-edge-contact", WARNING_LEVEL, {
@@ -925,12 +1065,17 @@ export function extractForeground(image, overrides) {
       perimeterSupport: round(estimated.support, 4),
       spatialDeltaE: round(spatialDelta, 2),
       matteCellCount: cells.cellCount,
-      backgroundArea: geometry.background,
-      foregroundArea: geometry.foreground,
-      foregroundFraction: round(areaFraction, 4),
-      foregroundBBox: geometry.bbox,
-      rectangularity: round(geometry.rectangularity, 3),
-      margins: geometry.margins,
+      backgroundArea: finalGeometry.background,
+      foregroundArea: finalGeometry.foreground,
+      foregroundFraction: round(finalFraction, 4),
+      foregroundBBox: finalGeometry.bbox,
+      rectangularity: round(finalGeometry.rectangularity, 3),
+      margins: finalGeometry.margins,
+      matteEdgeContact: edgeGarments.length === 0 ? null : {
+        reclaimedArea: edgeGarments.filter((region) => region.reclaimed).reduce((sum, region) => sum + region.area, 0),
+        regions: edgeGarments.slice(0, 6),
+        largest: edgeGarments[0],
+      },
       edgeContacts: contacts.map(({ runs, ...rest }) => rest),
       edgeContactRuns: contacts,
       enclosedComponents: pocketReport,

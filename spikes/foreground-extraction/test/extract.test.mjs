@@ -227,6 +227,41 @@ test("unexpected interior holes are distinct from cleared pockets", () => {
   assert.equal(interiorHoleArea(alpha, cleared, width, height), 0);
 });
 
+test("a matte-like jacket open at the canvas edge stays opaque", () => {
+  const matte = [94, 110, 133];
+  const jacket = [63, 84, 105];
+  const shirt = [210, 214, 220];
+  const image = blank(200, 240, matte);
+  paint(image, 50, 24, 130, 100, BLACK);
+  paint(image, 54, 28, 126, 96, SKIN);
+  paint(image, 40, 130, 199, 239, jacket);
+  paint(image, 40, 130, 199, 133, BLACK);
+  paint(image, 40, 130, 43, 239, BLACK);
+  paint(image, 70, 160, 120, 210, BLACK);
+  paint(image, 74, 164, 116, 206, shirt);
+  const result = extractForeground(image);
+  const garment = rgbaAt(result, 55, 220);
+  assert.equal(garment[3], 255, result.reasons.join(","));
+  assert.ok(Math.abs(garment[0] - jacket[0]) < 8);
+  assert.equal(rgbaAt(result, 90, 190)[3], 255);
+  assert.deepEqual(rgbaAt(result, 90, 190).slice(0, 3), shirt);
+  assert.equal(rgbaAt(result, 8, 8)[3], 0);
+  assert.equal(rgbaAt(result, 8, 180)[3], 0);
+  assert.equal(rgbaAt(result, 90, 50)[3], 255);
+  assert.ok(result.reasons.includes("matte-like-edge-contact"));
+  assert.notEqual(result.status, "candidate-pass");
+  assert.ok(result.metrics.matteEdgeContact?.reclaimedArea > 0);
+});
+
+test("a thin matte-like rim is not reclaimed into the foreground", () => {
+  const image = portrait();
+  paint(image, 34, 12, 62, 15, [63, 84, 105]);
+  const result = extractForeground(image);
+  assert.equal(result.status, "candidate-pass", result.reasons.join(","));
+  assert.equal(rgbaAt(result, 48, 13)[3], 0);
+  assert.equal(result.reasons.includes("matte-like-edge-contact"), false);
+});
+
 test("low-contrast material outside the contour is review, not a pass", () => {
   const image = portrait();
   paint(image, 34, 12, 62, 16, [140, 160, 170]);

@@ -81,6 +81,7 @@ function render() {
       ["crop-shoulder-contact.png", "Shoulder / canvas contact"],
       ["crop-enclosed-pocket.png", "Enclosed pocket"],
       ["crop-contour-gap.png", item.crops?.contourGap?.role === "leak-site" ? "Contour gap" : "Silhouette contour"],
+      ["crop-matte-edge-contact.png", "Matte-like edge contact"],
       ["crop-worst-boundary.png", "Worst boundary"],
     ];
     return `<article class="card" id="${escapeHtml(item.id)}">

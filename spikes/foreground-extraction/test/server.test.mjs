@@ -7,7 +7,7 @@ import { join } from "node:path";
 import test from "node:test";
 import sharp from "sharp";
 import { loadManifest } from "../manifest.mjs";
-import { createDiagnosticServer, unsafeRequestReason } from "../server.mjs";
+import { ARTIFACT_NAMES, createDiagnosticServer, unsafeRequestReason } from "../server.mjs";
 
 function request(port, path) {
   return new Promise((resolve, reject) => {
@@ -69,6 +69,9 @@ async function fixture() {
   await sharp({
     create: { width: 4, height: 4, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 1 } },
   }).png().toFile(join(runDir, "foreground.png"));
+  await sharp({
+    create: { width: 2, height: 2, channels: 3, background: { r: 10, g: 20, b: 30 } },
+  }).png().toFile(join(runDir, "crop-matte-edge-contact.png"));
   const secret = join(root, "secret.env");
   writeFileSync(secret, "TOPSECRET");
   symlinkSync(secret, join(runDir, "crop-hair.png"));
@@ -99,6 +102,11 @@ test("diagnostic server stays on localhost and refuses traversal", { timeout: 80
     assert.equal(source.body.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
     const artifact = await request(port, "/artifact/item-one/foreground.png");
     assert.equal(artifact.status, 200);
+    assert.equal(ARTIFACT_NAMES.has("crop-matte-edge-contact.png"), true);
+    const edgeCrop = await request(port, "/artifact/item-one/crop-matte-edge-contact.png");
+    assert.equal(edgeCrop.status, 200);
+    const unknownCrop = await request(port, "/artifact/item-one/crop-not-allowed.png");
+    assert.equal(unknownCrop.status, 404);
     const traversal = await request(port, "/artifact/item-one/../../.env");
     assert.equal(traversal.status, 400);
     assert.equal(traversal.body.includes(Buffer.from("TOPSECRET")), false);

@@ -175,6 +175,15 @@ export async function writeItemDirectory(directory, { rgba, source, boundary, re
         role: "silhouette-contour",
       });
       crops.contourGap.role = leak ? "leak-site" : "silhouette-contour";
+      const edgeGarment = report.metrics.matteEdgeContact?.largest;
+      if (edgeGarment?.centroid) {
+        crops.matteEdgeContact = await writeEnlarged(join(directory, "crop-matte-edge-contact.png"), checkerRgb, width, height, {
+          x: edgeGarment.centroid.x - 160,
+          y: edgeGarment.centroid.y - 120,
+          width: 320,
+          height: 240,
+        });
+      }
       const worst = report.metrics.decontamination?.worst || {
         x: bbox.x + bbox.width / 2,
         y: bbox.y + 8,

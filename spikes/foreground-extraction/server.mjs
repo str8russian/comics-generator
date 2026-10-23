@@ -22,6 +22,7 @@ export const ARTIFACT_NAMES = new Set([
   "crop-shoulder-contact.png",
   "crop-enclosed-pocket.png",
   "crop-contour-gap.png",
+  "crop-matte-edge-contact.png",
   "crop-worst-boundary.png",
   "report.json",
 ]);

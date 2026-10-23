@@ -3,7 +3,7 @@
  * Color distance is CIE76 (ΔE*ab) in D65 Lab.
  */
 export const EXTRACTION_CONFIG = Object.freeze({
-  version: "a1-known-matte-v1",
+  version: "a1-known-matte-v2",
   colorDistance: "CIE76",
   borderBandPx: 3,
   matteInlierDeltaE: 12,
@@ -45,5 +45,11 @@ export const EXTRACTION_CONFIG = Object.freeze({
   unstableBoundaryFractionReview: 0.35,
   unstableBoundaryFractionReject: 0.6,
   destructiveHoleMinPixels: 48,
+  reclaimMinDeltaE: 8,
+  reclaimMinArea: 2500,
+  reclaimMinCore: 800,
+  reclaimErodePx: 6,
+  reclaimContourRadius: 3,
+  reclaimContourFraction: 0.35,
   minImagePx: 16,
 });
