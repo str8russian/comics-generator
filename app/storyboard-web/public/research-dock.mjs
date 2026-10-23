@@ -186,12 +186,14 @@ export function projectOperations({ live = null, events = [], localEvidenceFailu
       historical: false,
       submittedText: operationSubmittedText(terminal, starts.get(terminal.correlationId)),
       commandTarget: terminal.commandTarget || starts.get(terminal.correlationId)?.commandTarget || null,
+      context: terminal.context || starts.get(terminal.correlationId)?.context || null,
       label: formatOperationLabel({
         status,
         semanticAction: terminal.semanticAction,
         outcomeKind: terminal.outcomeKind,
         outcomeFlags,
         commandTarget: terminal.commandTarget || starts.get(terminal.correlationId)?.commandTarget || null,
+        context: terminal.context || starts.get(terminal.correlationId)?.context || null,
       }),
     });
   }
@@ -267,16 +269,30 @@ function operationAddress(target) {
   return "";
 }
 
+function duplicateAddress(context) {
+  if (!context || typeof context !== "object") return "";
+  const createdId = typeof context.createdStructureFrameId === "string" ? context.createdStructureFrameId : "";
+  if (!createdId) return "";
+  const sourceId = typeof context.structureFrameId === "string" && context.structureFrameId
+    ? ` (${context.structureFrameId})`
+    : "";
+  const createdNumber = Number.isInteger(context.createdDisplayFrameNumber)
+    ? `кадр ${context.createdDisplayFrameNumber}`
+    : createdId;
+  return `${sourceId} → ${createdNumber} (${createdId})`;
+}
+
 function formatOperationLabel({
   status,
   semanticAction,
   outcomeKind,
   outcomeFlags = {},
   commandTarget = null,
+  context = null,
 }) {
   const action = semanticAction || "operation";
   const address = operationAddress(commandTarget);
-  const where = address ? ` · ${address}` : "";
+  const where = `${address ? ` · ${address}` : ""}${duplicateAddress(context)}`;
   if (status === "running") return `Выполняется: ${action}${where}`;
   if (status === "success") return `Успех: ${action}${where}`;
   if (status === "no-change") return `Без изменений: ${action}${where}`;

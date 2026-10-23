@@ -350,9 +350,26 @@ async function loadCapturePage() {
     }
     if (path.startsWith("/api/projects/00000000-0000-4000-8000-000000000001/research/events") && method === "POST") {
       researchPosts.push(body);
+      const start = body.eventKind === "action_terminal"
+        ? researchPosts.find((event) => (
+          event.eventKind === "action_start" && event.correlationId === body.correlationId
+        ))
+        : null;
       return jsonResponse(201, {
         event: {
           ...body,
+          semanticAction: body.semanticAction ?? start?.semanticAction ?? null,
+          surface: body.surface ?? start?.surface ?? null,
+          submittedText: body.submittedText ?? start?.submittedText ?? null,
+          commandTarget: body.commandTarget ?? start?.commandTarget ?? null,
+          editTarget: body.editTarget ?? start?.editTarget ?? null,
+          context: {
+            ...(start?.context && typeof start.context === "object" ? start.context : {}),
+            ...(body.context && typeof body.context === "object" ? body.context : {}),
+            ...(body.eventKind === "action_terminal" && body.resultContext && typeof body.resultContext === "object"
+              ? body.resultContext
+              : {}),
+          },
           seq: researchPosts.length,
           occurredAt: `2026-10-13T12:00:${String(researchPosts.length).padStart(2, "0")}.000Z`,
           durationMs: body.eventKind === "action_terminal" ? 12 : null,
@@ -2113,6 +2130,230 @@ test("page-level status still reports outside the frame detail dialog", async ()
     assert.match(statusText(), /Не удалось сохранить|Не удалось выполнить/);
     assert.equal(localStatus.hidden, true);
   } finally {
+    fetchImpl = original;
+  }
+});
+
+function frameCards() {
+  return [...document.querySelector("#storyboard").querySelectorAll(".story-card")];
+}
+
+function frameNumbers() {
+  return frameCards().map((card) => (
+    [...card.querySelectorAll("span")].map((node) => node.textContent).find((text) => String(text).startsWith("Кадр"))
+  ));
+}
+
+function buttonNamed(text, root = document.querySelector("#storyboard")) {
+  return [...root.querySelectorAll("button")].find((button) => button.textContent === text) ?? null;
+}
+
+function visualFrame(id, extras = {}) {
+  return {
+    id,
+    structureFrameId: id,
+    structureSegmentIndex: null,
+    durationFrames: 36,
+    layout: "single",
+    frameKind: "image",
+    dialogueMode: "spoken",
+    dialogue: "Привет",
+    visualReady: true,
+    panels: [{ id: `${id}-panel`, description: "описание", subject: "Аня", assetId: "asset-1" }],
+    ...extras,
+  };
+}
+
+test("duplicate frame control opens the copy and one undo returns to the source", async () => {
+  await ensurePage();
+  const source = visualFrame("structure-a");
+  const neighborFrame = visualFrame("structure-b", { dialogue: "Дальше", panels: [{ id: "panel-b", description: "сосед", assetId: "asset-2" }] });
+  page.applyVisual(readyVisual({
+    canUndo: false,
+    frames: [source, neighborFrame],
+  }));
+  const duplicate = buttonNamed("Дублировать кадр");
+  assert.ok(duplicate);
+  assert.ok(buttonNamed("Кадр с изображением после"));
+  assert.notEqual(duplicate.textContent, "Кадр с изображением после");
+  const textCard = visualFrame("structure-card", { frameKind: "text", textCard: "Пауза", panels: [], dialogue: "" });
+  page.applyVisual(readyVisual({ frames: [textCard] }));
+  assert.ok(buttonNamed("Дублировать кадр"));
+  page.applyVisual(readyVisual({
+    canUndo: true,
+    undoLabel: "дублирование кадра",
+    frames: [source, neighborFrame],
+  }));
+
+  const copy = visualFrame("structure-copy", { dialogue: "Привет" });
+  researchPosts.length = 0;
+  productPosts.length = 0;
+  globalThis.__visualScript = [{
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+    body: readyVisual({
+      canUndo: true,
+      undoLabel: "дублирование кадра",
+      storyboardVersionId: "version-copy",
+      approved: false,
+      readyForVideo: false,
+      changed: true,
+      operationResult: {
+        op: "duplicateFrame",
+        source: { structureFrameId: "structure-a", structureSegmentIndex: null },
+        created: { structureFrameId: "structure-copy", structureSegmentIndex: null },
+      },
+      frames: [source, copy, neighborFrame],
+    }),
+  }];
+  buttonNamed("Дублировать кадр").dispatchEvent({ type: "click" });
+  await flushTicks(8);
+  const operationPosts = productPosts.filter((entry) => entry.path.endsWith("/visual/operations"));
+  assert.equal(operationPosts.length, 1);
+  assert.equal(operationPosts[0].body.op, "duplicateFrame");
+  assert.equal(operationPosts[0].body.structureFrameId, "structure-a");
+  assert.deepEqual(frameNumbers(), ["Кадр 1", "Кадр 2", "Кадр 3"]);
+  assert.equal(document.querySelector("#detail").open, true);
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 2");
+  document.querySelector("#next-frame").dispatchEvent({ type: "click" });
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 3");
+  frameCards()[0].querySelector(".frame-preview").dispatchEvent({ type: "click" });
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
+  document.querySelector("#next-frame").dispatchEvent({ type: "click" });
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 2");
+
+  const pair = researchPair("frame_duplicate");
+  assert.equal(pair.start.context.structureFrameId, "structure-a");
+  assert.equal(pair.start.context.displayFrameNumber, 1);
+  assert.equal(pair.terminal.outcome, "success");
+  assert.equal(pair.terminal.resultContext.createdStructureFrameId, "structure-copy");
+  assert.equal(pair.terminal.resultContext.createdDisplayFrameNumber, 2);
+  const operations = document.querySelector("#research-operations-list").textContent
+    || [...document.querySelector("#research-operations-list").querySelectorAll("li")].map((item) => item.textContent).join(" ");
+  assert.match(operations, /frame_duplicate/);
+  assert.match(operations, /structure-a/);
+  assert.match(operations, /structure-copy/);
+
+  globalThis.__visualScript = [{
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo",
+    body: readyVisual({
+      canUndo: false,
+      undoLabel: null,
+      storyboardVersionId: "version-source",
+      frames: [source, neighborFrame],
+      undoneLabel: "дублирование кадра",
+      undoneTarget: {
+        op: "duplicateFrame",
+        structureFrameId: "structure-a",
+        source: { structureFrameId: "structure-a", structureSegmentIndex: null },
+        created: { structureFrameId: "structure-copy", structureSegmentIndex: null },
+      },
+    }),
+  }];
+  document.querySelector("#global-undo").dispatchEvent({ type: "click" });
+  await flushTicks(8);
+  assert.equal(document.querySelector("#detail").open, true);
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
+  assert.deepEqual(frameNumbers(), ["Кадр 1", "Кадр 2"]);
+  assert.equal(frameCards()[1].dataset.structureFrameId, "structure-b");
+});
+
+test("duplicating a directing-beat card opens the copied segment, not the next ordinal guess", async () => {
+  await ensurePage();
+  const first = visualFrame("beat#1", { structureFrameId: "beat", structureSegmentIndex: 0, dialogue: "Раз" });
+  const second = visualFrame("beat#2", { structureFrameId: "beat", structureSegmentIndex: 1, dialogue: "Два" });
+  const after = visualFrame("after");
+  page.applyVisual(readyVisual({ frames: [first, second, after] }));
+  const note = [...frameCards()[1].querySelectorAll(".assembly-note")].map((node) => node.textContent).join(" ");
+  assert.match(note, /Дублирование, вставка, удаление и порядок/);
+  const copyFirst = visualFrame("beat-copy#1", { structureFrameId: "beat-copy", structureSegmentIndex: 0, dialogue: "Раз" });
+  const copySecond = visualFrame("beat-copy#2", { structureFrameId: "beat-copy", structureSegmentIndex: 1, dialogue: "Два" });
+  globalThis.__visualScript = [{
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+    body: readyVisual({
+      canUndo: true,
+      undoLabel: "дублирование кадра",
+      changed: true,
+      operationResult: {
+        op: "duplicateFrame",
+        source: { structureFrameId: "beat", structureSegmentIndex: 1 },
+        created: { structureFrameId: "beat-copy", structureSegmentIndex: 1 },
+      },
+      frames: [first, second, copyFirst, copySecond, after],
+    }),
+  }];
+  frameCards()[1].querySelectorAll("button").find((button) => button.textContent === "Дублировать кадр")
+    .dispatchEvent({ type: "click" });
+  await flushTicks(8);
+  assert.deepEqual(frameNumbers(), ["Кадр 1", "Кадр 2", "Кадр 3", "Кадр 4", "Кадр 5"]);
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 4");
+  assert.equal(document.querySelector("#detail").open, true);
+});
+
+test("a failed duplicate leaves the source open and records failure", async () => {
+  await ensurePage();
+  const source = visualFrame("structure-a");
+  page.applyVisual(readyVisual({ frames: [source, visualFrame("structure-b")] }));
+  frameCards()[0].querySelector(".frame-preview").dispatchEvent({ type: "click" });
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
+  researchPosts.length = 0;
+  productPosts.length = 0;
+  globalThis.__visualScript = [{
+    path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
+    status: 400,
+    body: { status: "failed", kind: "frame-not-found" },
+  }];
+  buttonNamed("Дублировать кадр").dispatchEvent({ type: "click" });
+  await flushTicks(8);
+  assert.equal(document.querySelector("#detail").open, true);
+  assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
+  assert.equal(frameCards().length, 2);
+  const pair = researchPair("frame_duplicate");
+  assert.equal(pair.terminal.outcome, "failure");
+  assert.equal(pair.terminal.resultContext, undefined);
+  assert.equal(pair.start.context.structureFrameId, "structure-a");
+  assert.match(statusText(), /структурный кадр|Не удалось/);
+});
+
+test("a second duplicate click while the first request is busy does not send another operation", async () => {
+  await ensurePage();
+  page.applyVisual(readyVisual({ frames: [visualFrame("structure-a"), visualFrame("structure-b")] }));
+  const original = fetchImpl;
+  let release = null;
+  let operationPosts = 0;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  fetchImpl = async (url, init = {}) => {
+    const path = new URL(url, "http://127.0.0.1").pathname;
+    if (path.endsWith("/visual/operations")) {
+      operationPosts += 1;
+      await gate;
+      return jsonResponse(200, readyVisual({
+        changed: true,
+        canUndo: true,
+        undoLabel: "дублирование кадра",
+        operationResult: {
+          op: "duplicateFrame",
+          source: { structureFrameId: "structure-a", structureSegmentIndex: null },
+          created: { structureFrameId: "structure-copy", structureSegmentIndex: null },
+        },
+        frames: [visualFrame("structure-a"), visualFrame("structure-copy"), visualFrame("structure-b")],
+      }));
+    }
+    return original(url, init);
+  };
+  try {
+    buttonNamed("Дублировать кадр").dispatchEvent({ type: "click" });
+    for (let i = 0; i < 20 && operationPosts === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    buttonNamed("Дублировать кадр").dispatchEvent({ type: "click" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(operationPosts, 1);
+    release();
+    await flushTicks(8);
+  } finally {
+    release?.();
     fetchImpl = original;
   }
 });

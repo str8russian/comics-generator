@@ -149,6 +149,38 @@ async function backfillPanelIds(client, versionId, frames) {
   }
 }
 
+async function copyDuplicatedPanelState(client, fromVersionId, toVersionId, copies) {
+  for (const copy of copies || []) {
+    if (typeof copy?.sourcePanelId !== "string" || !copy.sourcePanelId) continue;
+    if (typeof copy.panelId !== "string" || !copy.panelId) continue;
+    if (typeof copy.frameId !== "string" || !copy.frameId) continue;
+    if (!Number.isInteger(copy.panelIndex) || copy.panelIndex < 0) continue;
+    // The generation pointer stays on the source panel's copied row. The duplicate
+    // keeps the effective asset, placement, and performance reference without a
+    // second panel_generation row or a claim on the source attempt.
+    await client.query(`
+      INSERT INTO panel_visual_state (
+        id, storyboard_version_id, frame_id, panel_index, panel_id, subject,
+        performance_asset_id, current_generation_id, zoom, position_x, position_y, mirrored,
+        assigned_asset_id, assignment_origin, current_asset_id, current_asset_origin
+      )
+      SELECT $1, $2, $3, $4, $5, subject,
+             performance_asset_id, NULL, zoom, position_x, position_y, mirrored,
+             assigned_asset_id, assignment_origin, current_asset_id, current_asset_origin
+      FROM panel_visual_state
+      WHERE storyboard_version_id = $6 AND panel_id = $7
+    `, [
+      randomUUID(),
+      toVersionId,
+      copy.frameId,
+      copy.panelIndex,
+      copy.panelId,
+      fromVersionId,
+      copy.sourcePanelId,
+    ]);
+  }
+}
+
 async function copyPanelState(client, fromVersionId, toVersionId, frames) {
   for (const frame of expandStoryboardFrames(frames)) {
     for (let index = 0; index < (frame.panels || []).length; index += 1) {
@@ -181,6 +213,7 @@ async function lockHead(client, resultId) {
 const UNDO_LABELS = {
   insertFrame: "вставку кадра",
   deleteFrame: "удаление кадра",
+  duplicateFrame: "дублирование кадра",
   reorderFrames: "перемещение кадра",
   addPanel: "добавление панели",
   deletePanel: "удаление панели",
@@ -1387,7 +1420,26 @@ function proposedPanelRows(currentRows, frames, patches, cast) {
   return next;
 }
 
-function operationContextFor(operations) {
+function publicDuplicateResult(duplicate) {
+  if (!duplicate?.created?.structureFrameId) return null;
+  return {
+    op: "duplicateFrame",
+    source: {
+      structureFrameId: duplicate.source?.structureFrameId ?? null,
+      structureSegmentIndex: Number.isInteger(duplicate.source?.structureSegmentIndex)
+        ? duplicate.source.structureSegmentIndex
+        : null,
+    },
+    created: {
+      structureFrameId: duplicate.created.structureFrameId,
+      structureSegmentIndex: Number.isInteger(duplicate.created.structureSegmentIndex)
+        ? duplicate.created.structureSegmentIndex
+        : null,
+    },
+  };
+}
+
+function operationContextFor(operations, duplicate = null) {
   const operation = operations.length === 1 ? operations[0] : { op: "batch" };
   const panelId = typeof operation.panelId === "string"
     ? operation.panelId
@@ -1405,6 +1457,14 @@ function operationContextFor(operations) {
   if (operation.dialogueMode === "spoken" || operation.dialogueMode === "silent" || operation.dialogueMode === "hidden") {
     context.dialogueMode = operation.dialogueMode;
   }
+  const result = publicDuplicateResult(duplicate);
+  if (result) {
+    context.op = "duplicateFrame";
+    context.structureFrameId = result.source.structureFrameId;
+    context.structureSegmentIndex = result.source.structureSegmentIndex;
+    context.source = result.source;
+    context.created = result.created;
+  }
   return context;
 }
 
@@ -1414,6 +1474,9 @@ export async function applyProductOperation(pool, input) {
     return failed("invalid-operation");
   }
   if (operations.some((operation) => !operation || typeof operation.op !== "string" || operation.op === "batch")) {
+    return failed("invalid-operation");
+  }
+  if (input?.op === "batch" && operations.some((operation) => operation.op === "duplicateFrame")) {
     return failed("invalid-operation");
   }
   try {
@@ -1432,6 +1495,8 @@ export async function applyProductOperation(pool, input) {
       await ensurePanelRows(client, current, cast);
       let frames = current.version.frames;
       const patches = [];
+      let duplicate = null;
+      const panelCopies = [];
       for (const operation of operations) {
         if (operation.op === "setManualSubject") {
           const name = typeof operation.characterName === "string" ? operation.characterName.trim() : "";
@@ -1455,6 +1520,10 @@ export async function applyProductOperation(pool, input) {
           return failed(applied.kind);
         }
         frames = applied.frames;
+        if (applied.duplicate) {
+          duplicate = applied.duplicate;
+          panelCopies.push(...(applied.duplicate.panelCopies || []));
+        }
       }
       applyMetadataCarry(frames, patches, cast.characters.map((entry) => entry.name));
       const beforeRows = await client.query(`
@@ -1470,13 +1539,17 @@ export async function applyProductOperation(pool, input) {
         await client.query("COMMIT");
         return { ok: true, changed: false, invalidateRender: false, storyboardVersionId: current.version.id };
       }
-      const invalidateRender = operations.some((operation) => operation.op === "setFrameDialogue");
+      const invalidateRender = operations.some((operation) => (
+        operation.op === "setFrameDialogue" || operation.op === "duplicateFrame"
+      ));
       const instruction = operations.length === 1 ? operations[0].op : "batch";
+      const parentVersionId = current.version.id;
       const next = await forkVisibleState(client, current, {
         instruction,
         frames,
-        operationContext: operationContextFor(operations),
+        operationContext: operationContextFor(operations, duplicate),
         customize: async (forkClient, version) => {
+          await copyDuplicatedPanelState(forkClient, parentVersionId, version.version.id, panelCopies);
           for (const patch of patches) {
             for (const panelId of patch.panelIds) {
               await forkClient.query(`
@@ -1493,7 +1566,14 @@ export async function applyProductOperation(pool, input) {
         },
       });
       await client.query("COMMIT");
-      return { ok: true, changed: true, invalidateRender, storyboardVersionId: next.version.id };
+      const operationResult = publicDuplicateResult(duplicate);
+      return {
+        ok: true,
+        changed: true,
+        invalidateRender,
+        storyboardVersionId: next.version.id,
+        ...(operationResult ? { operationResult } : {}),
+      };
     });
   } catch (error) {
     if (error?.kind === "invalid-image") return failed("invalid-image");
