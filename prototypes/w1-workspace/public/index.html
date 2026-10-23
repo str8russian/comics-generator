@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>W1 workspace prototype</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="identity">
+      <span class="proto-tag" title="Isolated prototype. Edits stay in this tab's memory.">W1 prototype</span>
+      <h1 id="project-title">Loading…</h1>
+      <span id="data-source" class="data-source"></span>
+    </div>
+    <nav id="stage-nav" class="stage-nav" aria-label="Workflow stages"></nav>
+    <div class="history">
+      <button id="undo" type="button" disabled>Nothing to undo</button>
+      <button id="reset" type="button" class="quiet" disabled>Reset to snapshot</button>
+    </div>
+  </header>
+  <section class="assistant" aria-label="Assistant command (mock)">
+    <form id="assistant-form" class="assistant-form">
+      <span class="scope-label">Scope</span>
+      <span id="assistant-scope" class="scope-chip" aria-live="polite">Project</span>
+      <label for="assistant-input" class="visually-hidden">Assistant command</label>
+      <input id="assistant-input" autocomplete="off" maxlength="500">
+      <button type="submit">Preview plan</button>
+    </form>
+    <p class="assistant-note">Mock assistant: no model call. Commands, Notes, and Operations remain separate dock parts.</p>
+    <div id="plan-preview" class="plan-preview" hidden></div>
+  </section>
+  <div id="warnings" class="warnings" hidden></div>
+  <main id="workspace" class="workspace">
+    <section id="stage-view" class="stage-view" aria-live="polite"></section>
+    <aside id="inspector" class="inspector" hidden aria-label="Selected frame"></aside>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="/app.mjs"></script>
+</body>
+</html>

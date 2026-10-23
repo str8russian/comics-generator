@@ -1,0 +1,147 @@
+{
+  "format": "w1-workspace-snapshot/v1",
+  "source": {
+    "method": "synthetic-fixture",
+    "exportedAt": null,
+    "selection": { "rule": "committed synthetic fixture; no real photos or project data" }
+  },
+  "project": {
+    "id": "fixture-project",
+    "title": "Синтетический проект (fixture)"
+  },
+  "story": {
+    "sourceRevisionId": "fixture-source",
+    "sourceText": "Анна: Ты опять опоздал.\nБорис: Пробки.\n(Оба молчат.)\nБорис отворачивается.\nВера: Я всё слышала. И это ещё не всё.",
+    "materialStateId": "fixture-material",
+    "cast": ["Анна", "Борис", "Вера"],
+    "aliases": [
+      { "surface": "Анна", "characterName": "Анна" },
+      { "surface": "Борис", "characterName": "Борис" },
+      { "surface": "Вера", "characterName": "Вера" }
+    ]
+  },
+  "characters": [
+    { "name": "Анна", "anchor": { "status": "approved", "assetId": "fx-anna-anchor", "provenance": "uploaded_as_ready_anchor" } },
+    { "name": "Борис", "anchor": { "status": "approved", "assetId": "fx-boris-anchor", "provenance": "generated_from_source" } },
+    { "name": "Вера", "anchor": { "status": "none", "assetId": null, "provenance": null } }
+  ],
+  "storyboard": {
+    "versionId": "fixture-version",
+    "frames": [
+      {
+        "id": "fx-frame-1",
+        "layout": "single",
+        "origin": "source",
+        "sourceItemId": "fx-item-1",
+        "sourceRole": "utterance",
+        "dialogue": "Ты опять опоздал.",
+        "dialogueMode": "spoken",
+        "speakerPanel": 0,
+        "dormantSpeakerPanelId": "fx-p1",
+        "panels": [
+          { "id": "fx-p1", "description": "Анна, chest-up crop; arms folded, head tilted, eyes narrowed toward screen right." }
+        ]
+      },
+      {
+        "id": "fx-frame-2",
+        "layout": "split2",
+        "origin": "source",
+        "sourceItemId": "fx-item-2",
+        "sourceRole": "utterance",
+        "dialogue": "Пробки.",
+        "dialogueMode": "spoken",
+        "speakerPanel": 1,
+        "dormantSpeakerPanelId": "fx-p3",
+        "durationFrames": 60,
+        "panels": [
+          { "id": "fx-p2", "description": "Анна, medium close-up; eyebrows raised, listening, gaze toward screen right." },
+          { "id": "fx-p3", "description": "Борис, chest-up crop; shoulders shrugged, palms half-raised, gaze toward screen left." }
+        ]
+      },
+      {
+        "id": "fx-frame-3",
+        "layout": "split2",
+        "origin": "derived",
+        "frameKind": "image",
+        "dialogue": "",
+        "dialogueMode": "silent",
+        "speakerPanel": null,
+        "panels": [
+          { "id": "fx-p4", "description": "Анна, close-up; lips pressed, looking at Борис.", "manualSubject": "Анна" },
+          { "id": "fx-p5", "description": "Борис, close-up; looking down, avoiding eye contact.", "manualSubject": "Борис" }
+        ]
+      },
+      {
+        "id": "fx-frame-4",
+        "layout": "single",
+        "origin": "source",
+        "sourceItemId": "fx-item-4",
+        "sourceRole": "action",
+        "dialogue": "",
+        "dialogueMode": "hidden",
+        "speakerPanel": null,
+        "panels": [
+          { "id": "fx-p6", "description": "Борис, waist-up; torso turned away, head turned over the shoulder." }
+        ]
+      },
+      {
+        "id": "fx-frame-5",
+        "layout": "single",
+        "origin": "derived",
+        "frameKind": "text",
+        "textCard": "Пять минут спустя",
+        "durationFrames": 45,
+        "panels": []
+      },
+      {
+        "id": "fx-frame-6",
+        "layout": "single",
+        "origin": "source",
+        "sourceItemId": "fx-item-5",
+        "sourceRole": "utterance",
+        "directingBeat": true,
+        "dialogue": "Я всё слышала. И это ещё не всё.",
+        "segments": [
+          {
+            "quote": "Я всё слышала. ",
+            "layout": "single",
+            "dialogueMode": "spoken",
+            "speakerPanel": 0,
+            "panels": [
+              { "id": "fx-p7", "description": "Вера, chest-up crop; one eyebrow raised, gaze straight ahead." }
+            ]
+          },
+          {
+            "quote": "И это ещё не всё.",
+            "layout": "single",
+            "dialogueMode": "spoken",
+            "speakerPanel": 0,
+            "panels": [
+              { "id": "fx-p8", "description": "Вера, close-up; leaning in, slight smile." }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "panelStates": {
+    "fx-p1": { "subject": "Анна", "assetId": "fx-anna-gen", "assetOrigin": "generation", "zoom": 1.2, "positionX": 50, "positionY": 25, "mirrored": false },
+    "fx-p2": { "subject": "Анна", "assetId": "fx-anna-gen", "assetOrigin": "reuse", "zoom": 1, "positionX": 50, "positionY": 30, "mirrored": false },
+    "fx-p3": { "subject": "Борис", "assetId": "fx-boris-gen", "assetOrigin": "generation", "zoom": 1, "positionX": 50, "positionY": 30, "mirrored": true },
+    "fx-p4": { "subject": "Анна", "assetId": "fx-anna-upload", "assetOrigin": "upload", "zoom": 1.5, "positionX": 45, "positionY": 20, "mirrored": false },
+    "fx-p5": { "subject": "Борис", "assetId": null, "zoom": 1, "positionX": 50, "positionY": 30, "mirrored": false },
+    "fx-p6": { "subject": "Борис", "assetId": null, "zoom": 1, "positionX": 50, "positionY": 30, "mirrored": false },
+    "fx-p7": { "subject": "Вера", "assetId": null, "zoom": 1, "positionX": 50, "positionY": 30, "mirrored": false },
+    "fx-p8": { "subject": "Вера", "assetId": null, "zoom": 1, "positionX": 50, "positionY": 30, "mirrored": false }
+  },
+  "approval": { "recordedAt": null, "matchesCurrent": false },
+  "render": { "status": "not-captured" },
+  "assets": {
+    "fx-anna-anchor": { "file": "assets/anna-anchor.svg", "kind": "base-anchor", "mime": "image/svg+xml" },
+    "fx-boris-anchor": { "file": "assets/boris-anchor.svg", "kind": "base-anchor", "mime": "image/svg+xml" },
+    "fx-anna-gen": { "file": "assets/anna-generated.svg", "kind": "panel-image", "mime": "image/svg+xml", "origin": "generation", "submittedText": "строже взгляд" },
+    "fx-boris-gen": { "file": "assets/boris-generated.svg", "kind": "panel-image", "mime": "image/svg+xml", "origin": "generation" },
+    "fx-anna-upload": { "file": "assets/anna-upload.svg", "kind": "uploaded-image", "mime": "image/svg+xml", "origin": "upload" }
+  },
+  "warnings": []
+}
