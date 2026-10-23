@@ -285,7 +285,7 @@ async function seed(pool) {
   `, [ids.otherAsset, OTHER_PROJECT_ID, tinyPng.length, sha256(tinyPng), tinyPng]);
 }
 
-async function versionCount(pool) {
+async function versionCount(pool, projectId = FIXTURE_PROJECT_ID) {
   const result = await pool.query(`
     SELECT count(*)::int AS count
     FROM storyboard_version
@@ -293,7 +293,7 @@ async function versionCount(pool) {
     JOIN material_state ON material_state.id = storyboard_result.material_state_id
     JOIN source_revision ON source_revision.id = material_state.source_revision_id
     WHERE source_revision.project_id = $1
-  `, [FIXTURE_PROJECT_ID]);
+  `, [projectId]);
   return result.rows[0].count;
 }
 
@@ -320,6 +320,215 @@ async function extractionFor(pool, assetId) {
   );
   return result.rows[0] ?? null;
 }
+
+const SQL_PROJECT_ID = "02000000-0000-4000-8000-0000000000d1";
+const SQL_SENTINEL_ID = "02000000-0000-4000-8000-0000000000d2";
+const SQL_SENTINEL_TEXT = "020-sql-sentinel-draft";
+const SQL_TRIGGER = "foreground_test_fail_panel_foreground";
+
+async function installForegroundInsertFailure(pool) {
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION ${SQL_TRIGGER}()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      IF NEW.kind = 'panel-foreground' THEN
+        RAISE EXCEPTION 'forced foreground persistence failure'
+          USING ERRCODE = '23514';
+      END IF;
+      RETURN NEW;
+    END;
+    $$
+  `);
+  await pool.query(`DROP TRIGGER IF EXISTS ${SQL_TRIGGER} ON visual_asset`);
+  await pool.query(`
+    CREATE TRIGGER ${SQL_TRIGGER}
+    BEFORE INSERT ON visual_asset
+    FOR EACH ROW
+    EXECUTE FUNCTION ${SQL_TRIGGER}()
+  `);
+}
+
+async function removeForegroundInsertFailure(pool) {
+  await pool.query(`DROP TRIGGER IF EXISTS ${SQL_TRIGGER} ON visual_asset`);
+  await pool.query(`DROP FUNCTION IF EXISTS ${SQL_TRIGGER}()`);
+}
+
+test("a sql failure while storing the foreground still commits the original", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+  timeout: 120000,
+}, async () => {
+  const url = new URL(databaseUrl);
+  assert.equal(url.pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  const sourceId = "02000000-0000-4000-8000-0000000000d3";
+  const readingId = "02000000-0000-4000-8000-0000000000d4";
+  const interpretationId = "02000000-0000-4000-8000-0000000000d5";
+  const materialId = "02000000-0000-4000-8000-0000000000d6";
+  const characterId = "02000000-0000-4000-8000-0000000000d7";
+  const resultId = "02000000-0000-4000-8000-0000000000d8";
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+    await removeForegroundInsertFailure(pool);
+    await removeOwned(pool, [SQL_PROJECT_ID, SQL_SENTINEL_ID]);
+    await pool.query("INSERT INTO project (id, title) VALUES ($1, '020 sql sentinel')", [SQL_SENTINEL_ID]);
+    await pool.query(
+      "INSERT INTO working_draft (project_id, text, revision_token) VALUES ($1, $2, $3)",
+      [SQL_SENTINEL_ID, SQL_SENTINEL_TEXT, randomUUID()],
+    );
+    await pool.query("INSERT INTO project (id, title) VALUES ($1, '020 sql foreground')", [SQL_PROJECT_ID]);
+    await pool.query(
+      "INSERT INTO working_draft (project_id, text, revision_token) VALUES ($1, 'sql fixture', $2)",
+      [SQL_PROJECT_ID, randomUUID()],
+    );
+    await pool.query(
+      "INSERT INTO source_revision (id, project_id, text) VALUES ($1, $2, 'sql')",
+      [sourceId, SQL_PROJECT_ID],
+    );
+    await pool.query(`
+      INSERT INTO reading (id, project_id, draft_text, draft_revision_token, status)
+      VALUES ($1, $2, 'sql', $3, 'ready')
+    `, [readingId, SQL_PROJECT_ID, randomUUID()]);
+    await pool.query(
+      "INSERT INTO interpretation (id, source_revision_id, reading_id) VALUES ($1, $2, $3)",
+      [interpretationId, sourceId, readingId],
+    );
+    await pool.query(
+      "INSERT INTO material_state (id, source_revision_id, interpretation_id) VALUES ($1, $2, $3)",
+      [materialId, sourceId, interpretationId],
+    );
+    await pool.query(`
+      INSERT INTO canonical_character (id, material_state_id, ordinal, name)
+      VALUES ($1, $2, 0, 'Персонаж')
+    `, [characterId, materialId]);
+    await pool.query(`
+      UPDATE project SET active_source_revision_id = $1, active_material_state_id = $2 WHERE id = $3
+    `, [sourceId, materialId, SQL_PROJECT_ID]);
+    await pool.query(`
+      INSERT INTO storyboard_result (id, material_state_id, status, stage_payload)
+      VALUES ($1, $2, 'checked', $3::jsonb)
+    `, [resultId, materialId, JSON.stringify({
+      frames: [{
+        id: "frame-sql",
+        layout: "split2",
+        origin: "source",
+        dialogue: "",
+        panels: [
+          { id: "sql-gen", description: "Персонаж смотрит спокойно" },
+          { id: "sql-up", description: "Персонаж слева" },
+        ],
+      }],
+    })]);
+
+    enterProject(SQL_PROJECT_ID);
+    const store = createVisualStore(pool);
+    await store.load();
+    assertOk(await store.saveIdentity({
+      characterName: "Персонаж",
+      image: { bytes: tinyPng },
+      comment: "sql",
+    }), "sql-identity");
+    const pendingAnchor = await store.beginAnchor({ characterName: "Персонаж", instruction: "sql" });
+    assertOk(pendingAnchor, "sql-begin-anchor");
+    assertOk(await store.finishAnchor({
+      id: pendingAnchor.id,
+      result: { ok: true, image: { bytes: tinyPng }, metadata: { test: true } },
+    }), "sql-finish-anchor");
+    assertOk(await store.approveAnchor({
+      characterName: "Персонаж",
+      anchorId: pendingAnchor.id,
+    }), "sql-approve-anchor");
+
+    const passPng = await pngOf(portrait());
+    await installForegroundInsertFailure(pool);
+    const versionsBefore = await versionCount(pool, SQL_PROJECT_ID);
+    const pending = await store.beginPanelGeneration({
+      frameId: "frame-sql",
+      panelIndex: 0,
+      instruction: "",
+    });
+    assertOk(pending, "sql-begin-generation");
+    const finished = await store.finishPanelGeneration({
+      id: pending.id,
+      result: { ok: true, image: { bytes: passPng }, metadata: { test: true } },
+      provenance: { origin: "generation", subject: "Персонаж" },
+    });
+    assertOk(finished, "sql-finish-generation");
+    assert.equal(await versionCount(pool, SQL_PROJECT_ID), versionsBefore + 1);
+    const stored = await pool.query(
+      "SELECT bytes, sha256, kind FROM visual_asset WHERE id = $1",
+      [finished.assetId],
+    );
+    assert.equal(stored.rows[0].kind, "panel-image");
+    assert.equal(stored.rows[0].sha256, sha256(passPng));
+    assert.ok(Buffer.from(stored.rows[0].bytes).equals(passPng));
+    const generation = await pool.query(
+      "SELECT status, output_asset_id FROM panel_generation WHERE id = $1",
+      [pending.id],
+    );
+    assert.equal(generation.rows[0].status, "ready");
+    assert.equal(generation.rows[0].output_asset_id, finished.assetId);
+    const shown = (await store.load()).frames[0].panels[0];
+    assert.equal(shown.assetId, finished.assetId);
+    assert.equal(shown.drawAssetId, finished.assetId);
+    const failed = await extractionFor(pool, finished.assetId);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.findings[0].code, "extraction-exception");
+    assert.equal(failed.foreground_asset_id, null);
+    assert.equal(await pool.query(
+      "SELECT count(*)::int AS count FROM visual_asset WHERE project_id = $1 AND kind = 'panel-foreground'",
+      [SQL_PROJECT_ID],
+    ).then((result) => result.rows[0].count), 0);
+    assertOk(await store.undoStoryboardEdit(), "sql-undo-generation");
+    assert.equal((await store.load()).frames[0].panels[0].assetId, null);
+    assert.equal((await extractionFor(pool, finished.assetId)).status, "failed");
+
+    const uploadImage = portrait();
+    paint(uploadImage, 40, 40, 48, 48, [180, 90, 70]);
+    const uploadPng = await pngOf(uploadImage);
+    const versionsBeforeUpload = await versionCount(pool, SQL_PROJECT_ID);
+    const uploaded = await store.applyOperation({
+      op: "uploadAsset",
+      imageDataUrl: dataUrl(uploadPng),
+      targets: [{ panelId: "sql-up" }],
+    });
+    assertOk(uploaded, "sql-upload");
+    assert.equal(await versionCount(pool, SQL_PROJECT_ID), versionsBeforeUpload + 1);
+    const uploadedPanel = (await store.load()).frames[0].panels[1];
+    const uploadedAsset = await pool.query(
+      "SELECT bytes, sha256, kind FROM visual_asset WHERE id = $1",
+      [uploadedPanel.assetId],
+    );
+    assert.equal(uploadedAsset.rows[0].kind, "uploaded-image");
+    assert.equal(uploadedAsset.rows[0].sha256, sha256(uploadPng));
+    assert.ok(Buffer.from(uploadedAsset.rows[0].bytes).equals(uploadPng));
+    assert.equal(uploadedPanel.assignmentOrigin, "upload");
+    assert.equal(uploadedPanel.drawAssetId, uploadedPanel.assetId);
+    const uploadFailure = await extractionFor(pool, uploadedPanel.assetId);
+    assert.equal(uploadFailure.status, "failed");
+    assert.equal(uploadFailure.findings[0].code, "extraction-exception");
+    assert.equal(uploadFailure.foreground_asset_id, null);
+    assert.equal(await pool.query(
+      "SELECT count(*)::int AS count FROM visual_asset WHERE project_id = $1 AND kind = 'panel-foreground'",
+      [SQL_PROJECT_ID],
+    ).then((result) => result.rows[0].count), 0);
+    assertOk(await store.undoStoryboardEdit(), "sql-undo-upload");
+    assert.equal((await store.load()).frames[0].panels[1].assetId, null);
+    assert.equal((await extractionFor(pool, uploadedPanel.assetId)).status, "failed");
+    const sentinel = await pool.query("SELECT text FROM working_draft WHERE project_id = $1", [SQL_SENTINEL_ID]);
+    assert.equal(sentinel.rows[0].text, SQL_SENTINEL_TEXT);
+    assert.equal(await extractionCount(pool, SQL_SENTINEL_ID), 0);
+  } finally {
+    await removeForegroundInsertFailure(pool).catch(() => {});
+    await removeOwned(pool, [SQL_PROJECT_ID, SQL_SENTINEL_ID]).catch(() => {});
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
 
 test("panel foreground storage, reuse, backfill, and migration stay isolated", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",

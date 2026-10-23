@@ -30,6 +30,28 @@ function elapsedMs(started) {
   return Math.round(Number(process.hrtime.bigint() - started) / 1e6);
 }
 
+const FOREGROUND_SAVEPOINT = "panel_foreground_attach";
+
+async function rollbackForegroundSavepoint(client) {
+  await client.query(`ROLLBACK TO SAVEPOINT ${FOREGROUND_SAVEPOINT}`);
+}
+
+async function openForegroundSavepoint(client) {
+  try {
+    await client.query(`SAVEPOINT ${FOREGROUND_SAVEPOINT}`);
+    return false;
+  } catch (error) {
+    if (error.code !== "25P01") throw error;
+    await client.query("BEGIN");
+    await client.query(`SAVEPOINT ${FOREGROUND_SAVEPOINT}`);
+    return true;
+  }
+}
+
+async function closeForegroundTransaction(client, ownTransaction) {
+  if (ownTransaction) await client.query("COMMIT");
+}
+
 async function insertExtraction(client, row) {
   await client.query(`
     INSERT INTO panel_foreground_extraction (
@@ -49,9 +71,23 @@ async function insertExtraction(client, row) {
   ]);
 }
 
+function failedExtraction(sourceAsset, projectId, contractVersion, started) {
+  return {
+    sourceAssetId: sourceAsset.id,
+    projectId,
+    foregroundAssetId: null,
+    extractorVersion: EXTRACTION_CONFIG.version,
+    contractVersion,
+    status: "failed",
+    findings: [{ code: EXTRACTION_EXCEPTION_CODE, level: "reject" }],
+    timingMs: elapsedMs(started),
+  };
+}
+
 /**
  * Store a foreground PNG when extraction passes, and always store metadata.
- * Exceptions degrade to a failed record and do not propagate.
+ * Foreground SQL runs inside a savepoint so a constraint or statement error
+ * cannot abort the caller's transaction or discard the original image.
  */
 export async function attachPanelForeground(client, {
   sourceAsset,
@@ -62,6 +98,7 @@ export async function attachPanelForeground(client, {
 }) {
   const projectId = requireProjectId();
   const started = process.hrtime.bigint();
+  const ownTransaction = await openForegroundSavepoint(client);
   try {
     const { decoded, result } = await runExtraction(bytes);
     const pass = result?.status === "candidate-pass" && result.rgba;
@@ -87,21 +124,32 @@ export async function attachPanelForeground(client, {
       findings: findings.length ? findings : [{ code: EXTRACTION_EXCEPTION_CODE, level: "reject" }],
       timingMs: elapsedMs(started),
     });
+    await client.query(`RELEASE SAVEPOINT ${FOREGROUND_SAVEPOINT}`);
+    await closeForegroundTransaction(client, ownTransaction);
     return { ok: true, status, foregroundAssetId: status === "candidate-pass" ? foregroundAssetId : null };
   } catch {
     try {
-      await insertExtraction(client, {
-        sourceAssetId: sourceAsset.id,
-        projectId,
-        foregroundAssetId: null,
-        extractorVersion: EXTRACTION_CONFIG.version,
-        contractVersion,
-        status: "failed",
-        findings: [{ code: EXTRACTION_EXCEPTION_CODE, level: "reject" }],
-        timingMs: elapsedMs(started),
-      });
+      await rollbackForegroundSavepoint(client);
+      await insertExtraction(client, failedExtraction(sourceAsset, projectId, contractVersion, started));
+      await client.query(`RELEASE SAVEPOINT ${FOREGROUND_SAVEPOINT}`);
     } catch {
-      // The generated or uploaded original must still commit.
+      try {
+        await rollbackForegroundSavepoint(client);
+        await client.query(`RELEASE SAVEPOINT ${FOREGROUND_SAVEPOINT}`);
+      } catch {
+        // The generated or uploaded original must still commit.
+      }
+    }
+    try {
+      await closeForegroundTransaction(client, ownTransaction);
+    } catch {
+      if (ownTransaction) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          // The caller's original image is already stored outside this transaction.
+        }
+      }
     }
     return { ok: true, status: "failed", foregroundAssetId: null };
   }

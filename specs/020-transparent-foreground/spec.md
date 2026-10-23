@@ -60,7 +60,7 @@ Project or frame background UI, per-frame or panel-region backgrounds, intro-tem
 
 - Manual UI and commands call the same addressable operations. Extraction is part of asset creation, not a new operation.
 - One generation still creates one storyboard version, and one Undo reverts it. The foreground follows its source asset, so Undo does not leave a panel showing an orphaned foreground.
-- The original asset bytes and SHA-256 are never modified.
+- The original asset bytes and SHA-256 are never modified. A foreground persistence failure is isolated, and the original asset always commits.
 - Whether the foreground or the original is drawn, the Panel Editor states that fact.
 - The same input bytes and frozen config produce the same RGBA pixels and the same extraction findings.
 - `GET /api/visual` does not extract.
