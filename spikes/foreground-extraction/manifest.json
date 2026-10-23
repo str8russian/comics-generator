@@ -1,0 +1,144 @@
+{
+  "id": "spike-a-stage-a1",
+  "version": 1,
+  "description": "Stage A1 offline known-matte corpus. Owner style judgements explain corpus selection only. They are not extraction results.",
+  "roots": {
+    "sdg": "/Users/andrey/Documents/Projects/comics-pipeline-local-archive/2026-10-23-branch-cleanup/style-determinism-generation/results/sdg-20261022T162253Z/outputs",
+    "sdc": "/Users/andrey/Documents/Projects/comics-pipeline-local-archive/2026-10-23-branch-cleanup/style-determinism-cross-identity/results/sdc-20261022T233452Z/outputs",
+    "historical": "/Users/andrey/Downloads/ComicsGeneratorAssets"
+  },
+  "items": [
+    {
+      "id": "sdg-source-a-prompt-only-r1",
+      "root": "sdg",
+      "path": "source-a.prompt-only.r1.png",
+      "sha256": "4183640ac51201f0a05bfb280c075e058b6f608ed8c8af800f3e1e908d13495c",
+      "corpus": "contemporary-prompt-only",
+      "extractionRole": "primary",
+      "ownerStyleJudgement": "acceptable",
+      "identity": "weakened",
+      "contourAndTonalComplexity": "target",
+      "selectionNote": "Accepted prompt-only output. Contour and tonal complexity are in the target envelope."
+    },
+    {
+      "id": "sdg-source-a-prompt-only-r2",
+      "root": "sdg",
+      "path": "source-a.prompt-only.r2.png",
+      "sha256": "cca77b76a88479643f8def5eed0fd2eeda202702648bc56b764df7a54707806d",
+      "corpus": "contemporary-prompt-only",
+      "extractionRole": "primary",
+      "ownerStyleJudgement": "acceptable",
+      "identity": "recognizable",
+      "contourAndTonalComplexity": "target",
+      "selectionNote": "Accepted prompt-only output. Contour and tonal complexity are in the target envelope."
+    },
+    {
+      "id": "sdg-source-b-prompt-only-r1",
+      "root": "sdg",
+      "path": "source-b.prompt-only.r1.png",
+      "sha256": "c6c78663ba4b70d136beebcce158e0de79e55ce1bc4ca05b2a588f7fed7bd38b",
+      "corpus": "contemporary-prompt-only",
+      "extractionRole": "primary",
+      "ownerStyleJudgement": "acceptable",
+      "identity": "recognizable",
+      "contourAndTonalComplexity": "target",
+      "selectionNote": "Accepted prompt-only output. Contour and tonal complexity are in the target envelope."
+    },
+    {
+      "id": "sdg-source-b-prompt-only-r2",
+      "root": "sdg",
+      "path": "source-b.prompt-only.r2.png",
+      "sha256": "f3ed87fb980aad57c8b70fe1d5393aea69f258f38151d4e6a14d868c34845a06",
+      "corpus": "contemporary-prompt-only",
+      "extractionRole": "primary",
+      "ownerStyleJudgement": "acceptable",
+      "identity": "recognizable",
+      "contourAndTonalComplexity": "target",
+      "selectionNote": "Accepted prompt-only output. Contour and tonal complexity are in the target envelope."
+    },
+    {
+      "id": "sdc-source-a-prompt-baseline-r1",
+      "root": "sdc",
+      "path": "source-a.prompt-baseline.r1.png",
+      "sha256": "f7d586f3deaba6ebbca606e32faba000ad8b360641f6af6ba01b1dd12121387a",
+      "corpus": "contemporary-prompt-only",
+      "extractionRole": "primary",
+      "ownerStyleJudgement": "acceptable",
+      "identity": "recognizable",
+      "contourAndTonalComplexity": "target",
+      "selectionNote": "Accepted prompt-only output from the cross-identity run."
+    },
+    {
+      "id": "sdc-source-a-prompt-baseline-r2",
+      "root": "sdc",
+      "path": "source-a.prompt-baseline.r2.png",
+      "sha256": "7c66f07b29786def141e1ec58b36c7863f9147743751d43ed8829a011b5498ff",
+      "corpus": "contemporary-prompt-only",
+      "extractionRole": "stress-sample",
+      "ownerStyleJudgement": "uncertain",
+      "identity": "weakened",
+      "contourAndTonalComplexity": "target",
+      "selectionNote": "Uncertain because identity was weakened. Contour and tonal complexity remain target. Extraction stress sample, not a failed extraction input."
+    },
+    {
+      "id": "sdc-source-b-prompt-baseline-r1",
+      "root": "sdc",
+      "path": "source-b.prompt-baseline.r1.png",
+      "sha256": "6eacbeb426fa86f6e9d41efb1deb98024edbaa4802e4fade414869fb7f902c65",
+      "corpus": "contemporary-prompt-only",
+      "extractionRole": "primary",
+      "ownerStyleJudgement": "acceptable",
+      "identity": "recognizable",
+      "contourAndTonalComplexity": "target",
+      "selectionNote": "Accepted prompt-only output from the cross-identity run."
+    },
+    {
+      "id": "sdc-source-b-prompt-baseline-r2",
+      "root": "sdc",
+      "path": "source-b.prompt-baseline.r2.png",
+      "sha256": "08d81874266cfcc7e06aac6e9191f5ed1cebdb147bd3835b1d6bb5e7fc4dbcdb",
+      "corpus": "contemporary-prompt-only",
+      "extractionRole": "primary",
+      "ownerStyleJudgement": "acceptable",
+      "identity": "recognizable",
+      "contourAndTonalComplexity": "target",
+      "selectionNote": "Accepted prompt-only output from the cross-identity run."
+    },
+    {
+      "id": "historical-unknown-4-7",
+      "root": "historical",
+      "path": "Unknown-4 7.png",
+      "sha256": "30ca7386b0d53f3cc90fd25c58ca23b80a6d8e6ec8e8645fb5d62606c2758bee",
+      "corpus": "historical-hard-case",
+      "extractionRole": "historical-hard-case",
+      "ownerStyleJudgement": null,
+      "identity": null,
+      "contourAndTonalComplexity": null,
+      "selectionNote": "Dense curled silhouette and small hair pockets."
+    },
+    {
+      "id": "historical-34b18597",
+      "root": "historical",
+      "path": "34b18597-c54e-48c9-a9a8-230d6bd31cf4.png",
+      "sha256": "8bc522a1ea17d5fbd1ee8f82d6a8cb88e7ea396a6ca795f696a0980bf669db3b",
+      "corpus": "historical-hard-case",
+      "extractionRole": "historical-hard-case",
+      "ownerStyleJudgement": null,
+      "identity": null,
+      "contourAndTonalComplexity": null,
+      "selectionNote": "Visible hand near the face and a more difficult enclosed region."
+    },
+    {
+      "id": "historical-unknown-2",
+      "root": "historical",
+      "path": "Unknown 2.png",
+      "sha256": "5675ba4b886d7f40e0c5350d359c79fd4987f44991c1b37179803eedff3829e4",
+      "corpus": "historical-hard-case",
+      "extractionRole": "negative-inset-frame",
+      "ownerStyleJudgement": null,
+      "identity": null,
+      "contourAndTonalComplexity": null,
+      "selectionNote": "Visible inset/frame treatment. Negative validation case that must not silently become a clean candidate-pass."
+    }
+  ]
+}

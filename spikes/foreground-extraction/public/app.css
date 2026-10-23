@@ -1,0 +1,98 @@
+:root {
+  color: #1c1915;
+  background: #f4f1ea;
+  font-family: "Iowan Old Style", Palatino, Georgia, serif;
+  line-height: 1.4;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  max-width: 1280px;
+  padding: 24px 20px 64px;
+}
+
+button, input, textarea { font: inherit; }
+
+.top, .summary, .filters, .card-head, .pair, .composites, .crops, .meta {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.top { justify-content: space-between; align-items: end; }
+
+h1, h2, h3, p { margin: 0; }
+
+h1 { font-size: 32px; font-weight: 650; }
+
+h2 { font-size: 20px; }
+
+.eyebrow, .meta, .disclosure, figcaption, .thresholds {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 13px;
+}
+
+.eyebrow { letter-spacing: 0.04em; text-transform: uppercase; color: #5e584f; }
+
+.disclosure {
+  margin: 14px 0;
+  padding: 10px 12px;
+  background: #fff8e8;
+  border: 1px solid #e2d3a8;
+}
+
+.summary { margin-bottom: 12px; }
+
+.filters { margin-bottom: 18px; }
+
+button, .pill {
+  border: 1px solid #c9c1b4;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button[aria-pressed="true"] { background: #1c1915; color: #fff; border-color: #1c1915; }
+
+.card {
+  background: #fff;
+  border: 1px solid #ddd6cb;
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+
+.status {
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 12px;
+}
+
+.status.candidate-pass { background: #e5f4e8; }
+.status.review { background: #fff1cc; }
+.status.reject { background: #fde2dc; }
+
+figure { margin: 0; width: min(320px, 100%); }
+img { width: 100%; height: auto; background: #ece8e1; border-radius: 8px; }
+.crops figure { width: min(280px, 100%); }
+
+.judgement {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+}
+
+.judgement label { display: inline-flex; gap: 6px; margin-right: 12px; }
+textarea { width: min(640px, 100%); min-height: 64px; }
+
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+.thresholds { margin-top: 8px; }
+details { margin-top: 8px; }
