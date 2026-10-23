@@ -47,6 +47,7 @@ import {
   validatePanelReadyAuthorities,
 } from "./visual-model.mjs";
 import { createResearchStore } from "./research-store.mjs";
+import { MATTE_CONTRACT_SHA256, MATTE_CONTRACT_VERSION } from "./foreground/contract.mjs";
 import { createVisualStore } from "./visual-store.mjs";
 
 export const DEFAULT_MAX_BODY_BYTES = 262144;
@@ -1772,6 +1773,8 @@ async function generateOnePanel({
       panelIndex,
       styleAssetId: pending.refs?.style?.id || pending.refs?.anchor?.id || null,
       sourceAssetId: pending.refs?.previous?.id || null,
+      matteContractVersion: MATTE_CONTRACT_VERSION,
+      matteContractSha256: MATTE_CONTRACT_SHA256,
     },
   });
   logVisual(logger, request, "visual-panel-storage", {

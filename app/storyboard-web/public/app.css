@@ -1548,6 +1548,26 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
   font-size: 14px;
 }
 
+.panel-foreground {
+  margin-left: 8px;
+  color: inherit;
+}
+
+.panel-foreground-findings {
+  display: inline;
+  margin-left: 6px;
+}
+
+.panel-foreground-findings summary {
+  display: inline;
+  cursor: pointer;
+  color: #5d665f;
+}
+
+.panel-foreground-codes {
+  margin-left: 6px;
+}
+
 .panel-reference {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr);

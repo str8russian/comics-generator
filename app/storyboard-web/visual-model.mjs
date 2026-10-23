@@ -1,4 +1,5 @@
 import { PLACEMENT_DEFAULTS } from "../../prototypes/storyboard-viewer/frame-renderer.mjs";
+import { appendMatteContract } from "./foreground/contract.mjs";
 
 const STYLE_LANGUAGE = `
 Rendering language:
@@ -442,7 +443,7 @@ export function compilePanelReadyPrompt(intent, {
     lines.push(`User revision request: ${overlay}`);
   }
 
-  return lines.join("\n");
+  return appendMatteContract(lines.join("\n"));
 }
 
 export function resolvePanelSubject(description, characters, aliases = []) {
@@ -571,7 +572,7 @@ export function panelPrompt({
   const role = Number.isInteger(speakerPanel)
     ? (panelIndex === speakerPanel ? "This is the speaking panel." : "This is a listening or reaction panel.")
     : "This is a silent action panel.";
-  return `Create one scene-specific storyboard panel${characterName ? ` featuring ${clean(characterName, 160)}` : ""}.
+  return appendMatteContract(`Create one scene-specific storyboard panel${characterName ? ` featuring ${clean(characterName, 160)}` : ""}.
 
 Panel description: ${clean(description)}
 User revision request: ${clean(instruction) || "No additional revision."}
@@ -583,7 +584,7 @@ ${roles.length ? roles.join("\n") : "No reference image is supplied. Follow the 
 The finished image must visibly match the described action, emotion, gaze, pose, and composition. Keep the face, mouth, expression, gesture, and essential upper body safely inside the image so placement zoom can be adjusted later without losing them.
 ${STYLE_LANGUAGE}
 
-No text, speech bubbles, logo, or watermark.`;
+No text, speech bubbles, logo, or watermark.`);
 }
 
 export function aspectRatioForFrame(frame) {

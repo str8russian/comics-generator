@@ -1,4 +1,5 @@
 import { acceptedIntroSegment } from "./intro-templates.mjs";
+import { SYSTEM_PANEL_BACKGROUND } from "./panel-background.mjs";
 import { compileTransitionTimeline } from "./public/export-timing.mjs";
 import {
   CHARACTERS_PER_SECOND,
@@ -43,20 +44,29 @@ export function compileVideoSpec(visual, { assetOrigin = "", transition = "hard-
         ? null
         : (Number.isInteger(frame.speakerPanel) ? frame.speakerPanel : 0),
       layout: frame.layout === "split2" ? "split2" : "single",
-      panels: (frame.panels || []).map((panel) => ({
-        id: panel.id ?? null,
-        subject: panel.subject || "",
-        assetId: panel.assetId || null,
-        asset: panel.assetId && assetOrigin
-          ? `${assetOrigin}/visual/assets/${panel.assetId}`
-          : (typeof panel.asset === "string" ? panel.asset : null),
-        position: panel.position,
-        align: panel.align,
-        zoom: panel.zoom,
-        positionX: panel.positionX,
-        positionY: panel.positionY,
-        mirrored: panel.mirrored === true,
-      })),
+      panels: (frame.panels || []).map((panel) => {
+        const sourceAssetId = panel.assetId || null;
+        const drawAssetId = panel.drawAssetId || sourceAssetId;
+        return {
+          id: panel.id ?? null,
+          subject: panel.subject || "",
+          assetId: sourceAssetId,
+          sourceAssetId,
+          drawAssetId,
+          asset: drawAssetId && assetOrigin
+            ? `${assetOrigin}/visual/assets/${drawAssetId}`
+            : (typeof panel.asset === "string" ? panel.asset : null),
+          backgroundColor: panel.backgroundColor || SYSTEM_PANEL_BACKGROUND,
+          extractionStatus: panel.extraction?.status ?? null,
+          usesForeground: panel.extraction?.usesForeground === true,
+          position: panel.position,
+          align: panel.align,
+          zoom: panel.zoom,
+          positionX: panel.positionX,
+          positionY: panel.positionY,
+          mirrored: panel.mirrored === true,
+        };
+      }),
     });
   }
   const timeline = compileTransitionTimeline(compiled, transition);

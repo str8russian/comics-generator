@@ -9,6 +9,9 @@ import {
 import { backfillDialogueModes } from "./dialogue-mode.mjs";
 import { inspectImage, parseIdentityImage } from "./image-info.mjs";
 import { presentFrameTiming } from "./timing.mjs";
+import { MATTE_CONTRACT_VERSION } from "./foreground/contract.mjs";
+import { attachPanelForeground } from "./foreground/persist.mjs";
+import { SYSTEM_PANEL_BACKGROUND } from "./panel-background.mjs";
 import { requireProjectId, touchProjectContent } from "./project-scope.mjs";
 import {
   expandStoryboardFrames,
@@ -390,6 +393,10 @@ export function sanitizeProvenance(value) {
   if (typeof value.styleAssetId === "string" && value.styleAssetId) out.styleAssetId = value.styleAssetId;
   if (typeof value.anchorVersionId === "string" && value.anchorVersionId) out.anchorVersionId = value.anchorVersionId;
   if (typeof value.sourceAssetId === "string" && value.sourceAssetId) out.sourceAssetId = value.sourceAssetId;
+  if (value.matteContractVersion === MATTE_CONTRACT_VERSION) out.matteContractVersion = value.matteContractVersion;
+  if (typeof value.matteContractSha256 === "string" && /^[0-9a-f]{64}$/.test(value.matteContractSha256)) {
+    out.matteContractSha256 = value.matteContractSha256;
+  }
   if (value.intent && typeof value.intent === "object" && !Array.isArray(value.intent)) {
     const intent = {};
     for (const key of PROVENANCE_INTENT_KEYS) {
@@ -414,7 +421,7 @@ function publicProvenance(value) {
   };
 }
 
-async function insertAsset(client, kind, image, provenance = null) {
+export async function insertAsset(client, kind, image, provenance = null) {
   const bytes = imageBytes(image);
   const inspected = bytes ? inspectImage(bytes) : { mime: null };
   if (!inspected.mime || !["image/png", "image/jpeg", "image/webp"].includes(inspected.mime)) {
@@ -610,6 +617,15 @@ async function loadVisualWithClient(client) {
     `, [context.version.id]);
     const latestByState = new Map(latest.rows.map((row) => [row.panel_visual_state_id, row]));
     const stateByKey = new Map(states.rows.map((row) => [`${row.frame_id}:${row.panel_index}`, row]));
+    const currentAssetIds = states.rows.map((row) => row.current_asset_id).filter(Boolean);
+    const extractionRows = currentAssetIds.length === 0
+      ? { rows: [] }
+      : await client.query(`
+        SELECT source_asset_id, foreground_asset_id, status, findings, extractor_version, contract_version
+        FROM panel_foreground_extraction
+        WHERE project_id = $1 AND source_asset_id = ANY($2::uuid[])
+      `, [requireProjectId(), currentAssetIds]);
+    const extractionByAsset = new Map(extractionRows.rows.map((row) => [row.source_asset_id, row]));
 
     const anchors = [];
     const approvedByName = new Map();
@@ -656,6 +672,10 @@ async function loadVisualWithClient(client) {
         const latestGeneration = state ? latestByState.get(state.id) : null;
         const derivedSubject = resolvePanelSubject(panel.description, cast.characters, cast.aliases);
         const outputAssetId = state?.current_asset_id ?? null;
+        const extractionRow = outputAssetId ? extractionByAsset.get(outputAssetId) : null;
+        const usesForeground = extractionRow?.status === "candidate-pass" && Boolean(extractionRow.foreground_asset_id);
+        const drawAssetId = usesForeground ? extractionRow.foreground_asset_id : outputAssetId;
+        const extractionFindings = Array.isArray(extractionRow?.findings) ? extractionRow.findings : [];
         const placed = placement({
           zoom: state?.zoom ?? 1,
           positionX: state?.position_x ?? 50,
@@ -672,7 +692,19 @@ async function loadVisualWithClient(client) {
               : (frame.speakerPanel === panelIndex ? "Говорит" : "Слушает")),
           stateId: state?.id ?? null,
           assetId: outputAssetId,
-          asset: assetUrl(outputAssetId),
+          drawAssetId: outputAssetId ? drawAssetId : null,
+          asset: assetUrl(outputAssetId ? drawAssetId : null),
+          backgroundColor: SYSTEM_PANEL_BACKGROUND,
+          extraction: outputAssetId ? {
+            status: extractionRow?.status ?? "not-extracted",
+            usesForeground,
+            findings: extractionFindings.map((finding) => ({
+              code: finding.code,
+              level: finding.level,
+            })),
+            extractorVersion: extractionRow?.extractor_version ?? null,
+            contractVersion: extractionRow?.contract_version ?? null,
+          } : null,
           assignmentOrigin: outputAssetId ? (state?.current_asset_origin ?? null) : null,
           subjectEditable: !derivedSubject,
           ownerDescription: typeof panel.ownerDescription === "string" ? panel.ownerDescription : "",
@@ -1004,7 +1036,7 @@ export async function beginPanelGeneration(pool, {
   }
 }
 
-export async function finishPanelGeneration(pool, { id, result, provenance = null }) {
+export async function finishPanelGeneration(pool, { id, result, provenance = null, runExtraction = undefined } = {}) {
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
@@ -1026,6 +1058,13 @@ export async function finishPanelGeneration(pool, { id, result, provenance = nul
         return failed(result?.kind || "provider", result?.httpStatus || 502);
       }
       const asset = await insertAsset(client, "panel-image", result.image, provenance);
+      await attachPanelForeground(client, {
+        sourceAsset: asset,
+        bytes: imageBytes(result.image),
+        contractVersion: asset.provenance?.matteContractVersion ?? null,
+        insertAsset,
+        ...(typeof runExtraction === "function" ? { runExtraction } : {}),
+      });
       await client.query(
         `UPDATE panel_generation
          SET status = 'ready', output_asset_id = $2, provider_metadata = $3::jsonb
@@ -1314,6 +1353,12 @@ async function prepareAssignment(client, current, operation) {
       origin = "reuse";
     } else {
       const inserted = await insertAsset(client, "uploaded-image", image, { origin: "upload" });
+      await attachPanelForeground(client, {
+        sourceAsset: inserted,
+        bytes: imageBytes(image),
+        contractVersion: null,
+        insertAsset,
+      });
       assetId = inserted.id;
       origin = "upload";
     }

@@ -27,9 +27,15 @@ export type ExpressionEntry = {
   asset: Asset;
 };
 
+export type PanelForeground = {
+  backgroundColor?: string;
+  extractionStatus?: 'candidate-pass' | 'review' | 'reject' | 'failed' | 'not-extracted';
+  drawAsset?: Asset;
+};
+
 export type Panel =
-  | { kind: 'character'; characterId: string; expressionId: string; shot: Shot; flipHorizontal?: boolean; focalPoint?: { x: number; y: number } }
-  | { kind: 'insert'; label?: string; asset: Asset; shot: Shot; flipHorizontal?: boolean };
+  | ({ kind: 'character'; characterId: string; expressionId: string; shot: Shot; flipHorizontal?: boolean; focalPoint?: { x: number; y: number } } & PanelForeground)
+  | ({ kind: 'insert'; label?: string; asset: Asset; shot: Shot; flipHorizontal?: boolean } & PanelForeground);
 
 export type Line = {
   id: string;

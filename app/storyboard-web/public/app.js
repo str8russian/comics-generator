@@ -15,7 +15,7 @@ import { compileTransitionTimeline, formatExportRuntime } from "/export-timing.m
 import { presentFrameForMount } from "/visual-anchors.mjs";
 import { bindWorkspaceStages, STAGES } from "./workspace-stages.mjs";
 import { renderFrameInspector } from "./frame-inspector.mjs";
-import { basisChip, panelBasis } from "./panel-basis.mjs";
+import { basisChip, foregroundChip, panelBasis } from "./panel-basis.mjs";
 export { presentFrameForMount };
 
 const form = document.querySelector("#draft-form");
@@ -2393,6 +2393,8 @@ function renderPanelControls(frame) {
       const basisLine = document.createElement("p");
       basisLine.className = "panel-basis-line";
       basisLine.append(textElement("span", "panel-basis-label", "Сейчас: "), basisChip(frame, panelIndex));
+      const foreground = foregroundChip(frame.panels[panelIndex]);
+      if (foreground) basisLine.append(foreground);
       imagePart.append(basisLine);
       if (basis.hint) imagePart.append(textElement("p", "helper", basis.hint));
     }

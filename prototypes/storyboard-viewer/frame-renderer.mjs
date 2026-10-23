@@ -161,6 +161,9 @@ export function render(frame, options) {
         zoom: panel.zoom,
         mirrored: panel.mirrored === true,
       });
+      if (typeof panel.backgroundColor === "string" && panel.backgroundColor) {
+        column.style.background = panel.backgroundColor;
+      }
       column.append(image);
     }
     strip.append(column);

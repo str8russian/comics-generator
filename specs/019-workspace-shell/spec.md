@@ -82,7 +82,7 @@ The label is derived only from persisted data:
 | no image, frame shown with base character portraits by `presentFrameForMount` | Базовый образ персонажа, with a hint that this is not a failed generation |
 | otherwise | Нет изображения |
 
-It appears in small form on cards, in the inspector panel blocks, and in the Panel Editor. No speaking/listening state mapping is implemented.
+It appears in small form on cards, in the inspector panel blocks, and in the Panel Editor. No speaking/listening state mapping is implemented. Feature 020 adds a separate neutral extraction label beside this basis label in the Panel Editor (`Фон отделён` or `Фон не отделён`); the basis label itself is unchanged.
 
 ## Commands dock
 

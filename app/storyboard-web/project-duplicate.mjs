@@ -93,6 +93,45 @@ async function effectivePanelState(client, state) {
   return { ...state, effective_asset_id: assetId, effective_origin: assetId ? origin : null };
 }
 
+async function copyPanelForegrounds(client, sourceProjectId, destinationId, maps) {
+  const sourceIds = [...maps.assets.keys()];
+  if (!sourceIds.length) return;
+  const rows = await client.query(`
+    SELECT source_asset_id, foreground_asset_id, extractor_version, contract_version,
+           status, findings, timing_ms
+    FROM panel_foreground_extraction
+    WHERE project_id = $1 AND source_asset_id = ANY($2::uuid[])
+  `, [sourceProjectId, sourceIds]);
+  const missingForegrounds = rows.rows
+    .map((row) => row.foreground_asset_id)
+    .filter((id) => id && !maps.assets.has(id));
+  if (missingForegrounds.length) {
+    await copyOwnedAssets(client, sourceProjectId, destinationId, missingForegrounds, maps);
+  }
+  for (const row of rows.rows) {
+    const sourceId = maps.assets.get(row.source_asset_id);
+    if (!sourceId) continue;
+    const foregroundId = row.foreground_asset_id ? (maps.assets.get(row.foreground_asset_id) ?? null) : null;
+    if (row.status === "candidate-pass" && !foregroundId) continue;
+    await client.query(`
+      INSERT INTO panel_foreground_extraction (
+        source_asset_id, project_id, foreground_asset_id,
+        extractor_version, contract_version, status, findings, timing_ms
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+      ON CONFLICT (source_asset_id) DO NOTHING
+    `, [
+      sourceId,
+      destinationId,
+      row.status === "candidate-pass" ? foregroundId : null,
+      row.extractor_version,
+      row.contract_version,
+      row.status,
+      JSON.stringify(row.findings ?? []),
+      row.timing_ms,
+    ]);
+  }
+}
+
 async function copyOwnedAssets(client, sourceProjectId, destinationId, assetIds, maps) {
   const ids = [...assetIds].filter(Boolean);
   if (!ids.length) return;
@@ -451,6 +490,7 @@ async function copyStoryboard(client, {
   }
 
   await copyOwnedAssets(client, sourceProjectId, destinationId, assetIds, maps);
+  await copyPanelForegrounds(client, sourceProjectId, destinationId, maps);
   if (nextResultId) {
     for (const sourceAssetId of reusableIds) {
       const destinationAssetId = mappedAsset(maps, sourceAssetId);

@@ -1,5 +1,6 @@
 import React from 'react';
 import {AbsoluteFill, Img, Sequence, staticFile, useCurrentFrame} from 'remotion';
+import {SYSTEM_PANEL_BACKGROUND} from '../../../app/storyboard-web/panel-background.mjs';
 import {introRendererKey} from '../../../app/storyboard-web/intro-templates.mjs';
 import {StoryShardsIntro} from './StoryShardsIntro.jsx';
 
@@ -92,7 +93,9 @@ const FrameView = ({frame, spec}) => {
               overflow: 'hidden',
               boxSizing: 'border-box',
               borderLeft: index > 0 ? `${theme.panelGutterPx}px solid ${theme.backgroundColor}` : undefined,
-              backgroundColor: '#082b31',
+              backgroundColor: imageSource(panel.asset)
+                ? (panel.backgroundColor || SYSTEM_PANEL_BACKGROUND)
+                : '#082b31',
             }}
           >
             {imageSource(panel.asset) ? (

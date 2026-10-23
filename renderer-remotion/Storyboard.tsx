@@ -120,7 +120,7 @@ const assetForPanel = (sb: Storyboard, panel: Panel): Asset | null => {
 const PanelLayer: React.FC<{
   sb: Storyboard; panel: Panel; index: number; count: number; scale: number; theme: Theme;
 }> = ({sb, panel, index, count, scale, theme}) => {
-  const asset = assetForPanel(sb, panel);
+  const asset = panel.drawAsset ?? assetForPanel(sb, panel);
   return (
     <div
       style={{
@@ -130,7 +130,7 @@ const PanelLayer: React.FC<{
         overflow: 'hidden',
         borderLeft: index > 0 ? `${theme.panelGutterPx ?? 8}px solid ${theme.backgroundColor}` : undefined,
         boxSizing: 'border-box',
-        backgroundColor: '#082b31',
+        backgroundColor: asset ? (panel.backgroundColor || '#082b31') : '#082b31',
       }}
     >
       {asset ? (

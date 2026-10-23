@@ -24,6 +24,47 @@ export function panelBasis(frame, panelIndex) {
   return { kind: "none", label: "Нет изображения" };
 }
 
+export function foregroundPresentation(panel) {
+  if (!panel?.assetId) return null;
+  const extraction = panel.extraction;
+  if (!extraction) {
+    return { label: "Фон не отделён", status: "not-extracted", codes: ["not-extracted"] };
+  }
+  const codes = Array.isArray(extraction.findings)
+    ? extraction.findings.map((finding) => finding?.code).filter(Boolean)
+    : [];
+  return {
+    label: extraction.usesForeground === true ? "Фон отделён" : "Фон не отделён",
+    status: extraction.status || "not-extracted",
+    codes,
+  };
+}
+
+export function foregroundChip(panel, { document = globalThis.document } = {}) {
+  const presentation = foregroundPresentation(panel);
+  if (!presentation || !document?.createElement) return null;
+  const wrap = document.createElement("span");
+  wrap.className = "panel-foreground";
+  wrap.dataset.status = presentation.status;
+  const label = document.createElement("span");
+  label.className = "panel-foreground-label";
+  label.textContent = presentation.label;
+  wrap.append(label);
+  if (presentation.codes.length) {
+    const details = document.createElement("details");
+    details.className = "panel-foreground-findings";
+    const summary = document.createElement("summary");
+    summary.textContent = "Коды";
+    details.append(summary);
+    const codes = document.createElement("span");
+    codes.className = "panel-foreground-codes";
+    codes.textContent = presentation.codes.join(", ");
+    details.append(codes);
+    wrap.append(details);
+  }
+  return wrap;
+}
+
 export function basisChip(frame, panelIndex, { document = globalThis.document, prefix = null } = {}) {
   const basis = panelBasis(frame, panelIndex);
   if (!basis) return null;
