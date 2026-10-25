@@ -1316,13 +1316,13 @@
         "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/display-1/panels/0/revision-candidate",
         "body": {
           "mode": "refine",
-          "instruction": "сделай крупнее"
+          "instruction": "смотрит влево"
         }
       },
       "research": {
         "semanticAction": "panel_generate",
         "surface": "product_control",
-        "submittedText": "сделай крупнее",
+        "submittedText": "смотрит влево",
         "commandTarget": {
           "kind": "panel",
           "displayFrameNumber": 1,

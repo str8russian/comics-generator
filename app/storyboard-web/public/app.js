@@ -19,6 +19,21 @@ import { basisChip, foregroundChip, panelBasis } from "./panel-basis.mjs";
 import { REVISION_COPY, deterministicRevisionControl, renderRevisionSummary } from "./panel-revision-view.mjs";
 export { presentFrameForMount };
 
+const draftCompiler = typeof globalThis.window === "undefined"
+  ? (await import(new URL("../panel-revision.mjs", import.meta.url).href)).summarizeRevision
+  : null;
+
+function compileDraft(mode, instructionText) {
+  if (typeof draftCompiler !== "function") return null;
+  const summary = draftCompiler({
+    mode,
+    instruction: instructionText,
+    baseline: {},
+    basis: mode === "new-variation" ? { kind: "none" } : { kind: "current-panel" },
+  });
+  return summary?.ok ? summary : null;
+}
+
 const form = document.querySelector("#draft-form");
 const draftField = document.querySelector("#draft");
 const loading = document.querySelector("#loading");
@@ -109,6 +124,7 @@ let selection = null;
 let inspectorDialogueError = null;
 let detailPanelIndex = 0;
 let detailView = "frame";
+let revisionPreflightEpoch = 0;
 let dockSuspended = false;
 let dockRestoreCollapsed = null;
 let revisionCancelHandler = null;
@@ -1490,12 +1506,20 @@ function createdFrameResearchAddress(created, requestedSegment = null) {
   };
 }
 
+function placeDetailScroll(top) {
+  if (!detailScroll) return;
+  detailScroll.scrollTop = top > 0 ? top : 0;
+}
+
 function openDetail(index, { panelIndex = null } = {}) {
   const frame = readyFrames[index];
   if (!frame) return;
+  const wasOpen = Boolean(detail?.open);
+  const previousView = wasOpen ? detailView : null;
+  const preservedScroll = Number(detailScroll?.scrollTop) || 0;
   const structureId = frame.structureFrameId || frame.id;
   const segmentIndex = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
-  const sameFrame = Boolean(detail?.open) && detailStructureId === structureId && detailSegmentIndex === segmentIndex;
+  const sameFrame = wasOpen && detailStructureId === structureId && detailSegmentIndex === segmentIndex;
   if (Number.isInteger(panelIndex)) {
     detailPanelIndex = panelIndex;
     detailView = "panel";
@@ -1526,6 +1550,11 @@ function openDetail(index, { panelIndex = null } = {}) {
   }
   researchDock?.enterDetail();
   if (!detail.open) detail.showModal();
+  const stayingInPanel = wasOpen && previousView === "panel" && detailView === "panel";
+  const enteredPanel = detailView === "panel" && (!wasOpen || previousView !== "panel");
+  const leftPanel = wasOpen && previousView === "panel" && detailView !== "panel";
+  if (stayingInPanel) placeDetailScroll(preservedScroll);
+  else if (enteredPanel || leftPanel) placeDetailScroll(0);
   // Sync after the modal is open so panel options depend on actual open state.
   syncResearchCommandTargets();
 }
@@ -2553,35 +2582,39 @@ function renderFramePanelActions(frame) {
     const subject = panel.subject ? ` · ${panel.subject}` : "";
     button.textContent = `Редактировать изображение панели ${panelAddress(panelIndex)}${subject}`;
     button.addEventListener("click", () => {
+      const enteredPanel = detailView !== "panel";
       detailView = "panel";
       selectDetailPanel(panelIndex, { explicit: true });
       applyDetailView();
+      if (enteredPanel) placeDetailScroll(0);
     });
     framePanelActions.append(button);
   });
 }
 
-function bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart }) {
+function bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart, epoch }) {
   const revision = panel.revision || null;
   instruction.value = revision?.draftInstruction || "";
   let activeMode = revision?.draftMode || "refine";
+  let currentSummary = null;
+  let revisionLocked = false;
   const summaryHost = document.createElement("div");
   summaryHost.className = "revision-summary-host";
-  const paintSummary = (summary) => {
-    summaryHost.replaceChildren();
-    if (summary) summaryHost.append(renderRevisionSummary(document, summary));
+  const compiledDraft = (mode, instructionText = instruction.value) => compileDraft(mode, instructionText);
+  const localSummary = (mode) => {
+    const compiled = compiledDraft(mode);
+    return {
+      basis: mode === "new-variation"
+        ? { kind: "none", ordinal: null }
+        : { kind: "current-panel", ordinal: null },
+      changes: [],
+      preserved: [],
+      notApplied: [],
+      reconstruction: revision?.summary?.reconstruction || compiled?.reconstruction || null,
+      blockReason: compiled?.blockReason ?? (mode === "refine" && !instruction.value.trim() ? "empty-refine" : null),
+      providerCall: compiled ? compiled.providerCall === true : false,
+    };
   };
-  const localSummary = (mode) => ({
-    basis: mode === "new-variation"
-      ? { kind: "none", ordinal: null }
-      : { kind: "current-panel", ordinal: null },
-    changes: [],
-    preserved: [],
-    notApplied: [],
-    reconstruction: revision?.summary?.reconstruction || null,
-    blockReason: mode === "refine" && !instruction.value.trim() ? "empty-refine" : null,
-    providerCall: mode === "new-variation" || Boolean(instruction.value.trim()),
-  });
   const candidates = revision?.candidates || [];
   const selected = candidates.find((candidate) => candidate.id === revision?.selectedCandidateId) || null;
   const compare = document.createElement("div");
@@ -2636,13 +2669,12 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
     input.addEventListener("change", () => {
       if (!input.checked) return;
       activeMode = value;
-      if (!instruction.value.trim()) {
-        paintSummary(localSummary(value));
-        return;
+      globalThis.clearTimeout(instruction.revisionTimer);
+      if (!instruction.value.trim() || compiledDraft(value)) {
+        paintSummary(instruction.value.trim() ? compiledDraft(value) : localSummary(value));
+        if (compiledDraft(value)) return;
       }
-      postPanelRevision(frame, panelIndex, "-preview", { mode: value, instruction: instruction.value })
-        .then((preview) => paintSummary(preview.summary))
-        .catch(() => paintSummary(localSummary(value)));
+      schedulePreflight(0);
     });
     modeField.append(choice);
   }
@@ -2668,17 +2700,70 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
     cancel.className = "secondary";
     review.append(cancel);
   }
+  const syncGenerate = () => {
+    generate.disabled = revisionLocked || currentSummary?.providerCall !== true;
+  };
+  const paintSummary = (summary) => {
+    currentSummary = summary || null;
+    summaryHost.replaceChildren();
+    if (summary) summaryHost.append(renderRevisionSummary(document, summary));
+    syncGenerate();
+  };
+  const applyServerPreflight = (mode, instructionText, summary) => {
+    if (!String(instructionText).trim()) {
+      const local = localSummary(mode);
+      local.providerCall = summary.providerCall === true;
+      local.blockReason = summary.blockReason ?? local.blockReason;
+      if (summary.basis) local.basis = summary.basis;
+      paintSummary(local);
+      return;
+    }
+    paintSummary(summary);
+  };
+  const refreshPreflight = async (mode) => {
+    const instructionText = instruction.value;
+    const compiled = compiledDraft(mode, instructionText);
+    if (compiled) {
+      if (epoch !== revisionPreflightEpoch) return;
+      paintSummary(String(instructionText).trim() ? compiled : localSummary(mode));
+      return;
+    }
+    try {
+      const preview = await postPanelRevision(frame, panelIndex, "-preview", { mode, instruction: instructionText });
+      if (epoch !== revisionPreflightEpoch || instruction.value !== instructionText || activeMode !== mode) return;
+      if (preview?.summary && typeof preview.summary.providerCall === "boolean") {
+        applyServerPreflight(mode, instructionText, preview.summary);
+        return;
+      }
+    } catch {
+      // A missing compiler result keeps the create action blocked.
+    }
+    if (epoch !== revisionPreflightEpoch || instruction.value !== instructionText || activeMode !== mode) return;
+    paintSummary(localSummary(mode));
+  };
+  const schedulePreflight = (delay) => {
+    globalThis.clearTimeout(instruction.revisionTimer);
+    instruction.revisionTimer = globalThis.setTimeout(() => {
+      if (epoch !== revisionPreflightEpoch) return;
+      refreshPreflight(activeMode);
+    }, delay);
+  };
   const setLocked = (locked) => {
-    for (const button of imagePart.querySelectorAll("[data-revision-action]")) button.disabled = locked;
+    revisionLocked = locked;
+    for (const button of imagePart.querySelectorAll("[data-revision-action]")) {
+      if (button === generate) continue;
+      button.disabled = locked;
+    }
     for (const input of modeField.querySelectorAll("input")) input.disabled = locked;
-    if (locked) return;
-    const undo = history.querySelector('[data-revision-action="undo"]');
-    const redo = history.querySelector('[data-revision-action="redo"]');
-    if (undo) undo.disabled = !selected || selected.ordinal <= 1;
-    if (redo) redo.disabled = !selected || selected.ordinal >= candidates.length;
-    if (accept) accept.disabled = false;
-    if (cancel) cancel.disabled = false;
-    generate.disabled = false;
+    if (!locked) {
+      const undo = history.querySelector('[data-revision-action="undo"]');
+      const redo = history.querySelector('[data-revision-action="redo"]');
+      if (undo) undo.disabled = !selected || selected.ordinal <= 1;
+      if (redo) redo.disabled = !selected || selected.ordinal >= candidates.length;
+      if (accept) accept.disabled = false;
+      if (cancel) cancel.disabled = false;
+    }
+    syncGenerate();
   };
   const runRevision = async (suffix, body, { semanticAction, busy, success }) => {
     const addressed = panelRevisionAddress(frame, panel, panelIndex);
@@ -2751,16 +2836,9 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
     }));
   });
   instruction.addEventListener("input", () => {
-    const mode = activeMode;
-    window.clearTimeout(instruction.revisionTimer);
-    instruction.revisionTimer = window.setTimeout(async () => {
-      try {
-        const preview = await postPanelRevision(frame, panelIndex, "-preview", { mode, instruction: instruction.value });
-        paintSummary(preview.summary);
-      } catch {
-        paintSummary(localSummary(mode));
-      }
-    }, 200);
+    currentSummary = { ...(currentSummary || {}), providerCall: false };
+    syncGenerate();
+    schedulePreflight(200);
   });
   if (revision?.summary) paintSummary(revision.summary);
   else paintSummary(localSummary(activeMode));
@@ -2769,6 +2847,7 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
 }
 
 function renderPanelControls(frame) {
+  const epoch = ++revisionPreflightEpoch;
   detailPanelControls.replaceChildren();
   const panelCount = (frame.panels || []).length;
   if (!Number.isInteger(detailPanelIndex) || detailPanelIndex < 0 || detailPanelIndex >= panelCount) detailPanelIndex = 0;
@@ -2786,6 +2865,7 @@ function renderPanelControls(frame) {
     back.addEventListener("click", () => {
       detailView = "frame";
       applyDetailView({ restoreFrame: true });
+      placeDetailScroll(0);
     });
     const closePanel = document.createElement("button");
     closePanel.type = "button";
@@ -2842,7 +2922,7 @@ function renderPanelControls(frame) {
     }
     if (lineageCopy) imagePart.append(lineageCopy);
     if (failure) imagePart.append(failure);
-    if (panel.assetId) bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart });
+    if (panel.assetId) bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart, epoch });
     else bindInitialPanelCreate({ frame, panel, panelIndex, instruction, performance, imagePart });
     const framingPart = panelSubsection("framing", "Кадрирование");
     const referencesPart = panelSubsection("references", "Референсы");

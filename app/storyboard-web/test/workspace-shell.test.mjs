@@ -64,6 +64,13 @@ async function reset(visual = readyVisual()) {
   resetRecorder();
 }
 
+async function typeSupportedRevision(section) {
+  const field = section.querySelector("textarea");
+  field.value = "смотрит влево";
+  field.dispatchEvent({ type: "input" });
+  await new Promise((resolve) => setTimeout(resolve, 260));
+}
+
 async function captured(run) {
   await run();
   await flush(12);
@@ -395,7 +402,7 @@ for (const [name, run] of Object.entries({
     resetRecorder();
     buttonNamed($("#frame-panel-actions"), "Редактировать изображение панели 1.1 · Путин").click();
     const section = panelSection(0);
-    section.querySelector("textarea").value = "сделай крупнее";
+    await typeSupportedRevision(section);
     section.querySelectorAll("button").find((node) => node.textContent === "Создать кандидат").click();
   },
 })) {
@@ -411,7 +418,7 @@ test("parity · inspector panel shortcut opens the Panel Editor on that panel fo
     assert.equal($("#detail").open, true);
     assert.equal(panelSection(0).hidden, false);
     resetRecorder();
-    panelSection(0).querySelector("textarea").value = "сделай крупнее";
+    await typeSupportedRevision(panelSection(0));
     panelSection(0).querySelectorAll("button").find((node) => node.textContent === "Создать кандидат").click();
   });
 });

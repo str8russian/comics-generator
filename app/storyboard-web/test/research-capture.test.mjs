@@ -2074,6 +2074,26 @@ function panelRegenerateButton() {
   return [...section.querySelectorAll("button")].find((button) => /Переделать|Создать/i.test(button.textContent));
 }
 
+function visualPermittedToRevise() {
+  const visual = readyVisual();
+  visual.frames[0].panels[0] = {
+    ...visual.frames[0].panels[0],
+    revision: {
+      draftMode: "refine",
+      draftInstruction: "смотрит влево",
+      summary: {
+        basis: { kind: "current-panel" },
+        changes: [{ property: "gaze", value: "screen-left" }],
+        preserved: [],
+        notApplied: [],
+        providerCall: true,
+      },
+      candidates: [],
+    },
+  };
+  return visual;
+}
+
 async function flushTicks(count = 8) {
   for (let index = 0; index < count; index += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -2082,7 +2102,7 @@ async function flushTicks(count = 8) {
 
 test("detail dialog shows panel generation states without closing", async () => {
   await ensurePage();
-  page.setResearchVisualState(readyVisual(), 0);
+  page.setResearchVisualState(visualPermittedToRevise(), 0);
   page.openResearchDetail(0);
   const detail = document.querySelector("#detail");
   assert.equal(detail.open, true);
@@ -2095,7 +2115,7 @@ test("detail dialog shows panel generation states without closing", async () => 
     if (/\/panels\/\d+\/revision-candidate$/.test(path)) {
       started = true;
       await new Promise((resolve) => { release = resolve; });
-      return jsonResponse(200, readyVisual());
+      return jsonResponse(200, visualPermittedToRevise());
     }
     return original(url, init);
   };

@@ -6,6 +6,7 @@ import {
   buttonNamed,
   flush,
   harness,
+  jsonResponse,
   loadWorkspacePage,
   mutatingRequests,
   productRequests,
@@ -62,6 +63,50 @@ async function reset(visual = readyVisual()) {
 function openPanelFromInspector() {
   const inspector = $("#frame-inspector");
   buttonNamed(inspector, "Изображение панели 1.1…").click();
+}
+
+function createButton(section = panelSection(0)) {
+  return section.querySelectorAll("button").find((node) => node.textContent === "Создать кандидат");
+}
+
+function revisionField(section = panelSection(0)) {
+  return section.querySelector("textarea");
+}
+
+function providerAttempts() {
+  return productRequests().filter((entry) => /\/revision-candidate$|\/panels\/\d+\/generate$/.test(entry.path));
+}
+
+async function settlePreflight() {
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  await flush(6);
+}
+
+async function openFocusedPanel(visual = readyVisual()) {
+  await reset(visual);
+  cards()[0].dispatchEvent({ type: "click" });
+  openPanelFromInspector();
+  resetRecorder();
+}
+
+function permittedRefineVisual() {
+  const visual = readyVisual();
+  visual.frames[0].panels[0] = {
+    ...visual.frames[0].panels[0],
+    revision: {
+      draftMode: "refine",
+      draftInstruction: "смотрит влево",
+      summary: {
+        basis: { kind: "current-panel" },
+        changes: [{ property: "gaze", value: "screen-left" }],
+        preserved: [],
+        notApplied: [],
+        providerCall: true,
+      },
+      candidates: [],
+    },
+  };
+  return visual;
 }
 
 test("panel shortcut and dock command open focused Panel view without frame dialogue", async () => {
@@ -207,4 +252,155 @@ test("focused Panel view suspends the dock and deterministic controls stay provi
   panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
   assert.equal(dock.classList.contains("research-dock--suspended"), false);
   assert.equal(dock.classList.contains("research-dock--collapsed"), false);
+});
+
+test("empty Refine disables create until a supported preflight, then clearing disables it again", async () => {
+  await openFocusedPanel();
+  const button = createButton();
+  const field = revisionField();
+  assert.equal(button.disabled, true);
+  assert.match(textOf(panelSection(0).querySelector("[data-revision-summary]")), /Уточнение требует непустую правку/);
+  field.value = "смотрит влево";
+  field.dispatchEvent({ type: "input" });
+  assert.equal(button.disabled, true);
+  await settlePreflight();
+  assert.equal(createButton().disabled, false);
+  assert.equal(textOf(panelSection(0).querySelector("[data-revision-summary]")).includes("Уточнение требует непустую правку"), false);
+  revisionField().value = "   ";
+  revisionField().dispatchEvent({ type: "input" });
+  assert.equal(createButton().disabled, true);
+  await settlePreflight();
+  assert.equal(createButton().disabled, true);
+  assert.match(textOf(panelSection(0).querySelector("[data-revision-summary]")), /Уточнение требует непустую правку/);
+  assert.equal(providerAttempts().length, 0);
+});
+
+test("unsupported and deterministic Refine keep create disabled without a provider call", async () => {
+  await openFocusedPanel();
+  const field = revisionField();
+  field.value = "сделай красивее";
+  field.dispatchEvent({ type: "input" });
+  await settlePreflight();
+  assert.equal(createButton().disabled, true);
+  assert.match(textOf(panelSection(0).querySelector("[data-revision-summary]")), /нет поддерживаемого изменения/);
+  field.value = "отразить";
+  field.dispatchEvent({ type: "input" });
+  await settlePreflight();
+  assert.equal(createButton().disabled, true);
+  assert.match(textOf(panelSection(0).querySelector("[data-revision-summary]")), /без генерации изображения/);
+  createButton().click();
+  await flush(8);
+  assert.equal(providerAttempts().length, 0);
+  assert.equal(mutatingRequests().length, 0);
+});
+
+test("empty New variation keeps create enabled without a provider call", async () => {
+  await openFocusedPanel();
+  const variation = panelSection(0).querySelectorAll("input").find((input) => input.value === "new-variation");
+  variation.checked = true;
+  variation.dispatchEvent({ type: "change" });
+  await flush(8);
+  assert.equal(createButton().disabled, false);
+  assert.match(textOf(panelSection(0).querySelector("[data-revision-summary]")), /предыдущее изображение не отправляется/);
+  assert.equal(providerAttempts().length, 0);
+  assert.equal(mutatingRequests().length, 0);
+});
+
+test("a failed create leaves the button disabled when that preflight blocks another provider call", async () => {
+  await openFocusedPanel(permittedRefineVisual());
+  assert.equal(createButton().disabled, false);
+  harness.respond = (entry) => {
+    if (/revision-candidate$/.test(entry.path)) {
+      return jsonResponse(409, {
+        status: "failed",
+        kind: "no-supported-change",
+        summary: {
+          basis: { kind: "current-panel" },
+          changes: [],
+          preserved: [],
+          notApplied: [{ kind: "unsupported", text: "смотрит влево" }],
+          blockReason: "no-supported-change",
+          providerCall: false,
+        },
+      });
+    }
+    return null;
+  };
+  createButton().click();
+  await flush(16);
+  assert.equal(createButton().disabled, true);
+  assert.equal(providerAttempts().length, 1);
+  createButton().click();
+  await flush(8);
+  assert.equal(providerAttempts().length, 1);
+  assert.equal($("#detail").dataset.view, "panel");
+});
+
+test("scrolled Frame view enters Panel view at the top, including direct entry", async () => {
+  await reset();
+  page.openResearchDetail(0);
+  assert.equal($("#detail").dataset.view, "frame");
+  $("#detail-scroll").scrollTop = 480;
+  buttonNamed($("#frame-panel-actions"), "Редактировать изображение панели 1.1 · Путин").click();
+  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#detail-scroll").scrollTop, 0);
+  assert.match(textOf(panelSection(0).querySelector(".panel-view-header")), /Панель 1\.1 · Путин/);
+
+  panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
+  assert.equal($("#detail").dataset.view, "frame");
+  assert.equal($("#detail-scroll").scrollTop, 0);
+  $("#detail-scroll").scrollTop = 360;
+  $("#detail").close();
+  cards()[0].dispatchEvent({ type: "click" });
+  openPanelFromInspector();
+  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#detail-scroll").scrollTop, 0);
+
+  panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
+  $("#detail-scroll").scrollTop = 220;
+  const option = $("#research-commands-target").children.find((node) => String(node.value).startsWith("panel:display-1:0"));
+  $("#research-commands-target").value = option.value;
+  $("#research-commands-target").dispatchEvent({ type: "change" });
+  $("#research-commands-draft").value = "смотрит влево";
+  harness.script = [{
+    path: `${API}/visual/frames/display-1/panels/0/revision`,
+    body: (payload) => {
+      const next = readyVisual();
+      next.frames[0].panels[0].revision = {
+        draftMode: payload.mode,
+        draftInstruction: payload.instruction,
+        candidates: [],
+        summary: {
+          basis: { kind: "current-panel" },
+          changes: [{ property: "gaze", value: "screen-left" }],
+          preserved: [],
+          notApplied: [],
+          providerCall: true,
+        },
+      };
+      return next;
+    },
+  }];
+  $("#research-commands-send").click();
+  await flush(16);
+  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#detail-scroll").scrollTop, 0);
+  assert.equal(providerAttempts().length, 0);
+});
+
+test("candidate generation stays in Panel view without jumping the detail scroll", async () => {
+  await openFocusedPanel(visualWithCandidate());
+  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal(createButton().disabled, false);
+  $("#detail-scroll").scrollTop = 275;
+  harness.script = [{
+    path: `${API}/visual/frames/display-1/panels/0/revision-candidate`,
+    body: visualWithCandidate(),
+  }];
+  createButton().click();
+  await flush(16);
+  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#detail-scroll").scrollTop, 275);
+  assert.match(textOf(panelSection(0)), /Кандидат 2/);
+  assert.equal(providerAttempts().length, 1);
 });
