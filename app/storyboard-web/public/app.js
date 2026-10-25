@@ -410,7 +410,7 @@ async function runProductResearchAction({
     }
     await capture.start();
     try {
-      const result = await operation();
+      const result = await operation({ correlationId: capture.correlationId });
       const classified = normalizeResearchClassification(
         typeof classifyResult === "function" ? classifyResult(result) : null,
       );
@@ -460,13 +460,21 @@ async function runStructureEditProduct(instruction, { clearProductForm = false }
   return next;
 }
 
-async function runPanelGenerateProduct({ frameId, panelIndex, instruction, displayFrameNumber = null }) {
+async function runPanelGenerateProduct({
+  frameId,
+  panelIndex,
+  instruction,
+  displayFrameNumber = null,
+  correlationId = null,
+}) {
+  const payload = { instruction };
+  if (typeof correlationId === "string" && correlationId) payload.correlationId = correlationId;
   const next = await fetchJson(
     `/api/visual/frames/${encodeURIComponent(frameId)}/panels/${panelIndex}/generate`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ instruction }),
+      body: JSON.stringify(payload),
     },
   );
   applyVisual(next);
@@ -475,7 +483,7 @@ async function runPanelGenerateProduct({ frameId, panelIndex, instruction, displ
   return next;
 }
 
-async function executeDockCommand({ instruction, commandTarget }) {
+async function executeDockCommand({ instruction, commandTarget, correlationId = null }) {
   if (busy) return { ok: false, blocked: true };
   if (!commandTarget || (commandTarget.kind !== "storyboard" && commandTarget.kind !== "panel")) {
     return { ok: false, unsupported: true };
@@ -511,6 +519,7 @@ async function executeDockCommand({ instruction, commandTarget }) {
           panelIndex,
           instruction,
           displayFrameNumber: commandTarget.displayFrameNumber,
+          correlationId,
         });
         outcome = { ok: true };
       } catch (error) {
@@ -1957,14 +1966,14 @@ async function generateFrame(frameId, button, index) {
         outcomeFlags: retainedLastGoodImage ? { retainedLastGoodImage: true } : {},
       };
     },
-    async operation() {
+    async operation({ correlationId } = {}) {
       const previous = button?.textContent;
       if (button) button.textContent = panelCount > 1 ? `Создаю ${panelCount} панели…` : "Создаю…";
       try {
         const next = await fetchJson(`/api/visual/frames/${encodeURIComponent(frameId)}/generate`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: "{}",
+          body: JSON.stringify({ correlationId }),
         });
         applyVisual(next);
         const fittedIndex = readyFrames.findIndex((frame) => frame.id === frameId);
@@ -2352,7 +2361,7 @@ function renderPanelControls(frame) {
           commandTarget: panelTarget,
           contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
           busyMessage: busyText,
-          async operation() {
+          async operation({ correlationId } = {}) {
             const file = performance.files?.[0];
             const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
             try {
@@ -2361,7 +2370,7 @@ function renderPanelControls(frame) {
                 {
                   method: "POST",
                   headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ instruction: panelInstruction, performanceImageDataUrl }),
+                  body: JSON.stringify({ instruction: panelInstruction, performanceImageDataUrl, correlationId }),
                 },
               );
               applyVisual(next);

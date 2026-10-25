@@ -6,12 +6,13 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadBuildInfo } from "./build-info.mjs";
 import { createPool } from "./db/pool.mjs";
+import { createImageGenerationTraceRecorder, traceBuildId } from "./image-generation-trace.mjs";
 import { migrate as migrateDatabase } from "./db/migrate.mjs";
 import { loadConfig } from "./config.mjs";
 import { isEmptyDraft } from "./fidelity.mjs";
 import { interpretDraft } from "./interpret.mjs";
 import { draftInputError, createProjectStore } from "./project-store.mjs";
-import { normalizeTitle, requireProjectId, withProject } from "./project-scope.mjs";
+import { normalizeTitle, PROJECT_ID_PATTERN, requireProjectId, withProject } from "./project-scope.mjs";
 import { createRenderController } from "./render-service.mjs";
 import { stageStoryboard } from "./stage.mjs";
 import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
@@ -41,6 +42,10 @@ import {
   assemblePanelReferences,
   compilePanelReadyIntent,
   compilePanelReadyPrompt,
+  HISTORICAL_PANEL_COMPILER_ID,
+  HISTORICAL_PANEL_COMPILER_VERSION,
+  PANEL_READY_COMPILER_ID,
+  PANEL_READY_COMPILER_REVISION,
   panelPrompt,
   usesConstrainedPanelPrompt,
   validateCharacterGeneration,
@@ -1291,6 +1296,29 @@ function referenceGenerationMode(assembled = {}) {
   return "initial";
 }
 
+function nullableCorrelationId(value) {
+  return typeof value === "string" && PROJECT_ID_PATTERN.test(value) ? value : null;
+}
+
+function upstreamPanelOmissions(assembled, refs) {
+  const omissions = [];
+  if (assembled?.previousDropped === true) {
+    omissions.push({
+      role: "previous",
+      assetId: refs?.previous?.id ?? null,
+      reason: "reference-priority",
+    });
+  }
+  if (assembled?.styleDroppedByLimit === true) {
+    omissions.push({
+      role: "style",
+      assetId: refs?.style?.id ?? null,
+      reason: "reference-limit",
+    });
+  }
+  return omissions;
+}
+
 async function deliverPreparedImage({
   slots,
   generationMode,
@@ -1300,6 +1328,8 @@ async function deliverPreparedImage({
   imageGenerator,
   env,
   fetchImpl,
+  traceContext = null,
+  traceRecorder = null,
 }) {
   const sourceEnv = env ?? process.env;
   const config = loadImageReferenceConfig(sourceEnv);
@@ -1323,6 +1353,8 @@ async function deliverPreparedImage({
     imageGenerator,
     env: sourceEnv,
     fetchImpl,
+    traceContext,
+    traceRecorder,
   });
 }
 
@@ -1657,6 +1689,8 @@ async function generateOnePanel({
   logger,
   request,
   authoritiesPrechecked = false,
+  actionKind = null,
+  correlationId = null,
 }) {
   const performanceImage = body?.performanceImageDataUrl
     ? parseImageDataUrl(body.performanceImageDataUrl)
@@ -1723,6 +1757,23 @@ async function generateOnePanel({
     });
     diagnosticFields = panelReadyDiagnosticFields(intent, pending.refs, assembled);
   }
+  const traceContext = actionKind === "panel" || actionKind === "frame-panel"
+    ? {
+      diagnosticId: request == null ? "request" : String(request),
+      projectId: requireProjectId(),
+      generationKind: actionKind,
+      actionKind,
+      correlationId,
+      panelGenerationId: pending.id,
+      storyboardVersionId: pending.storyboardVersionId,
+      frameId: pending.frame?.id ?? null,
+      panelId: pending.panel?.id ?? null,
+      panelIndex,
+      compilerId: constrained ? PANEL_READY_COMPILER_ID : HISTORICAL_PANEL_COMPILER_ID,
+      compilerVersion: constrained ? PANEL_READY_COMPILER_REVISION : HISTORICAL_PANEL_COMPILER_VERSION,
+      upstreamOmissions: upstreamPanelOmissions(assembled, pending.refs),
+    }
+    : null;
   const result = await deliverPreparedImage({
     slots: assembled.slots,
     generationMode: referenceGenerationMode(assembled),
@@ -1744,6 +1795,8 @@ async function generateOnePanel({
     imageGenerator,
     env,
     fetchImpl,
+    traceContext,
+    traceRecorder: runtime.traceRecorder || null,
   });
   logVisual(logger, request, "visual-panel-provider", {
     ...transportLogFields(result?.diagnostics),
@@ -1850,6 +1903,7 @@ async function handleVisualGeneration(req, res, {
     sendJson(res, 400, { status: "failed", kind: "invalid-request" });
     return;
   }
+  const correlationId = nullableCorrelationId(body.payload?.correlationId);
   if (target.kind === "generate") {
     const result = await generateOnePanel({
       runtime,
@@ -1861,6 +1915,8 @@ async function handleVisualGeneration(req, res, {
       fetchImpl,
       logger,
       request,
+      actionKind: "panel",
+      correlationId,
     });
     if (!result.ok) {
       sendVisualFailure(res, result);
@@ -1917,6 +1973,8 @@ async function handleVisualGeneration(req, res, {
       logger,
       request,
       authoritiesPrechecked: true,
+      actionKind: "frame-panel",
+      correlationId,
     });
     if (!result.ok) failures.push({ panelIndex, kind: safeKind(result.kind) || "provider" });
   }
@@ -2644,6 +2702,7 @@ export function createServer({
   visualStore,
   researchStore,
   imageGenerator = generateImage,
+  traceRecorder: suppliedTraceRecorder,
   enableLegacyStoryboardRoute = false,
   renderController,
 } = {}) {
@@ -2653,12 +2712,21 @@ export function createServer({
     visualStore: visualStore ?? null,
     researchStore: researchStore ?? null,
     pool: null,
+    traceRecorder: null,
     renderController: renderController ?? null,
     ensureRender() {
       if (!this.renderController) this.renderController = createRenderController({ logger });
       return this.renderController;
     },
   };
+  runtime.traceRecorder = suppliedTraceRecorder === undefined
+    ? createImageGenerationTraceRecorder({
+      query: (sql, params) => runtime.pool.query(sql, params),
+      available: () => Boolean(runtime.pool),
+      logger,
+      buildId: traceBuildId(env ?? process.env),
+    })
+    : suppliedTraceRecorder;
   let requestSerial = 0;
   const nextRequest = () => {
     requestSerial += 1;

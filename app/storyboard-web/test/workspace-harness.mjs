@@ -549,7 +549,11 @@ export function parityFrames() {
 }
 
 export function requestSignature(entry) {
-  return { method: entry.method, path: entry.path, body: entry.body };
+  const body = entry.body && typeof entry.body === "object" && !Array.isArray(entry.body)
+    ? { ...entry.body }
+    : entry.body;
+  if (body && typeof body === "object") delete body.correlationId;
+  return { method: entry.method, path: entry.path, body };
 }
 
 export function researchSignature(event) {

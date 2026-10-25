@@ -163,13 +163,11 @@ export function anchorSessionProviderTimeoutMs(env = {}) {
   return Math.min(configured, ceiling);
 }
 
-export async function generateImage({
+export function assessImageTransport({
   prompt,
   images,
   aspectRatio,
-  serializedBody,
   env = process.env,
-  fetchImpl = http1Fetch,
   timeoutMs: timeoutOverride,
 }) {
   const baseUrl = String(env.BASE_URL ?? "").trim();
@@ -181,11 +179,43 @@ export async function generateImage({
     ? Math.min(configured, override)
     : configured;
   if (!baseUrl || !token || !model || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return failure("configuration", 500);
+    return { ok: false, failure: failure("configuration", 500) };
   }
   if (!prompt || !Array.isArray(images) || images.length > 3 || !["4:5", "5:4", "16:9", "21:9"].includes(aspectRatio)) {
-    return failure("invalid-request", 400);
+    return { ok: false, failure: failure("invalid-request", 400) };
   }
+  return { ok: true, timeoutMs, model };
+}
+
+export async function generateImage({
+  prompt,
+  images,
+  aspectRatio,
+  serializedBody,
+  env = process.env,
+  fetchImpl = http1Fetch,
+  timeoutMs: timeoutOverride,
+  beforeProviderIo,
+}) {
+  const assessment = assessImageTransport({
+    prompt,
+    images,
+    aspectRatio,
+    env,
+    timeoutMs: timeoutOverride,
+  });
+  if (!assessment.ok) return assessment.failure;
+  if (typeof beforeProviderIo === "function") {
+    try {
+      await beforeProviderIo({ timeoutMs: assessment.timeoutMs, model: assessment.model });
+    } catch {
+      // Trace capture must not change or retry the provider call.
+    }
+  }
+  const baseUrl = String(env.BASE_URL ?? "").trim();
+  const token = String(env.CONTEST_API_TOKEN ?? "").trim();
+  const model = assessment.model;
+  const timeoutMs = assessment.timeoutMs;
   const body = typeof serializedBody === "string"
     ? serializedBody
     : JSON.stringify(buildImageRequest({ prompt, images, aspectRatio, model }));

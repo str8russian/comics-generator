@@ -636,6 +636,11 @@ test("frame_generate and panel_generate capture display/structure identity; pane
   assert.equal(frame.start.context.panelSubject, null);
   assert.equal(frame.start.context.imageAssetId, null);
   assert.equal(frame.start.context.generationId, null);
+  const frameProduct = productPosts.find((entry) => /\/frames\/[^/]+\/generate$/.test(entry.path));
+  assert.ok(frameProduct);
+  assert.equal(frameProduct.body.correlationId, frame.start.correlationId);
+  assert.equal(frameProduct.body.projectId, undefined);
+  assert.equal(frameProduct.body.frameId, undefined);
 
   researchPosts.length = 0;
   productPosts.length = 0;
@@ -686,6 +691,10 @@ test("frame_generate and panel_generate capture display/structure identity; pane
   const product = productPosts.find((entry) => /\/panels\/0\/generate$/.test(entry.path));
   assert.ok(product);
   assert.equal(product.body.instruction, "перерисуй панель");
+  assert.equal(product.body.correlationId, panel.start.correlationId);
+  assert.equal(product.body.projectId, undefined);
+  assert.equal(product.body.frameId, undefined);
+  assert.equal(product.body.panelGenerationId, undefined);
   assert.equal(
     researchPosts.some((event) => JSON.stringify(event).includes("performanceImageDataUrl") || JSON.stringify(event).includes("data:image")),
     false,
@@ -1515,6 +1524,34 @@ test("closed-detail panel send makes zero product and research calls", async () 
   assert.equal(researchPosts.filter((event) => event.eventKind === "action_start" || event.eventKind === "action_terminal").length, 0);
   assert.equal(document.querySelector("#research-commands-draft").value, "после закрытия не вызывать");
   assert.match(document.querySelector("#research-commands-status")?.textContent || "", /Выберите действие|не выполнены/i);
+});
+
+test("dock panel generation forwards only the dock correlation", async () => {
+  const page = await ensurePage();
+  await openReadyDetailViaUi(page, 0);
+  const panel = panelCommandOptions()[0];
+  document.querySelector("#research-commands-target").value = panel.value;
+  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
+  document.querySelector("#research-commands-draft").value = "переделай из дока";
+  researchPosts.length = 0;
+  productPosts.length = 0;
+  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
+  const started = Date.now();
+  let start = null;
+  let product = null;
+  while (Date.now() - started < 1000) {
+    start = researchPosts.find((event) => event.eventKind === "action_start" && event.semanticAction === "panel_generate");
+    product = productPosts.find((entry) => /\/panels\/\d+\/generate$/.test(entry.path));
+    if (start && product) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(start?.correlationId);
+  assert.equal(start.surface, "dock_commands");
+  assert.equal(product.body.correlationId, start.correlationId);
+  assert.equal(product.body.instruction, "переделай из дока");
+  assert.equal(product.body.projectId, undefined);
+  assert.equal(product.body.frameId, undefined);
+  assert.equal(product.body.panelGenerationId, undefined);
 });
 
 test("closed detail stays panel-empty across visual refresh", async () => {

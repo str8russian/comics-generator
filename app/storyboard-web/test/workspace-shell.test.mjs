@@ -80,6 +80,9 @@ async function assertParity(name, run) {
   assert.equal(requests.length, 1, `${name}: one product request`);
   assert.equal(starts.length, 1, `${name}: one research start`);
   assert.deepEqual(requestSignature(requests[0]), expected.request, `${name}: request`);
+  if (/\/generate$/.test(requests[0].path)) {
+    assert.equal(requests[0].body.correlationId, starts[0].correlationId, `${name}: correlation`);
+  }
   assert.deepEqual(researchSignature(starts[0]), expected.research, `${name}: research`);
 }
 
@@ -593,6 +596,8 @@ test("dock Commands scope is always visible and follows explicit panel selection
   await flush(16);
   const viaSelect = productRequests().filter((entry) => entry.method !== "GET");
   assert.deepEqual(viaScope.map(requestSignature), viaSelect.map(requestSignature));
+  assert.notEqual(viaScope[0].body.correlationId, viaSelect[0].body.correlationId);
+  assert.equal(viaSelect[0].body.correlationId, researchStarts().find((event) => event.semanticAction === "panel_generate")?.correlationId);
 
   $("#detail").close();
   await flush(2);

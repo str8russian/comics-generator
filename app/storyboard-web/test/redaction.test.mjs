@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
 import { createServer, DEFAULT_MAX_BODY_BYTES } from "../server.mjs";
+import { createImageGenerationTraceRecorder } from "../image-generation-trace.mjs";
 
 const sentinel = "УНИКАЛЬНАЯ-РЕПЛИКА-7781";
 const token = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -398,5 +399,49 @@ test("research note protected-content rejection never echoes secrets in body or 
     assert.equal(JSON.parse(after.body).events.length, beforeCount);
   } finally {
     await close(server);
+  }
+});
+
+test("image trace failures log only id, stage, and code", async () => {
+  const logs = [];
+  const canary = "УНИКАЛЬНАЯ-РЕПЛИКА-7781";
+  const recorder = createImageGenerationTraceRecorder({
+    buildId: "build-021",
+    logger: { log(line) { logs.push(String(line)); } },
+    query: async () => {
+      const error = new Error(`${canary} Bearer super-secret data:image/png;base64,aaaa`);
+      error.code = "23503";
+      throw error;
+    },
+  });
+  const attemptId = await recorder.insertPrepared({
+    traceContext: {
+      projectId: "02100000-0000-4000-8000-0000000000c1",
+      generationKind: "panel",
+      actionKind: "panel",
+      panelGenerationId: "02100000-0000-4000-8000-0000000000c2",
+      compilerId: "historical-panel-prompt",
+      compilerVersion: "v1",
+    },
+    prepared: {
+      prompt: canary,
+      requestSha256: "a".repeat(64),
+      strategy: "passthrough",
+      references: [],
+      omittedRoles: [],
+      originalBodyBytes: 1,
+      finalBodyBytes: 1,
+    },
+    originalReferences: [],
+    aspectRatio: "4:5",
+    model: "image-test",
+    budgetBytes: 1000,
+    timeoutMs: 1000,
+  });
+  assert.equal(attemptId, null);
+  const captured = logs.join("\n");
+  assert.match(captured, /event=image-generation-trace status=failed stage=prepared code=constraint attempt=/);
+  for (const secret of [canary, "Bearer", "super-secret", "data:image", "aaaa"]) {
+    assert.equal(captured.includes(secret), false, secret);
   }
 });

@@ -11,8 +11,14 @@ Rendering language:
 - minimal fine texture
 - strong readability at small panel size`;
 
-/** Stable compiler identity for eligible panel-ready prompts (diagnostics in a later task). */
-export const PANEL_READY_COMPILER_VERSION = "constrained-panel-intent/v1";
+/** Stable compiler identity for eligible panel-ready prompts. Not interpolated into prompt text. */
+export const PANEL_READY_COMPILER_ID = "constrained-panel-intent";
+export const PANEL_READY_COMPILER_REVISION = "v1";
+export const PANEL_READY_COMPILER_VERSION = `${PANEL_READY_COMPILER_ID}/${PANEL_READY_COMPILER_REVISION}`;
+
+/** Stable compiler identity for the historical panel prompt. Not interpolated into prompt text. */
+export const HISTORICAL_PANEL_COMPILER_ID = "historical-panel-prompt";
+export const HISTORICAL_PANEL_COMPILER_VERSION = "v1";
 
 const CANONICAL_DEFAULTS = Object.freeze({
   framing: "chest-up",
@@ -683,6 +689,7 @@ function assembleHistoricalPanelReferences({
   const styleId = style?.id ?? null;
   const usedIds = new Set(slots.map((slot) => slot.asset?.id).filter(Boolean));
   const styleDistinct = Boolean(styleId) && !usedIds.has(styleId);
+  const styleDroppedByLimit = styleDistinct && slots.length >= 3;
   if (styleDistinct && slots.length < 3) slots.push({ role: "style", asset: style });
   const roles = new Set(slots.map((slot) => slot.role));
   return {
@@ -693,6 +700,7 @@ function assembleHistoricalPanelReferences({
     hasPerformance: roles.has("performance"),
     hasStyle: roles.has("style") || (previous?.id != null && previous.id === styleId),
     previousDropped: false,
+    styleDroppedByLimit,
     identityAlsoStyle: Boolean(styleId) && styleId === (anchor?.id ?? null) && !roles.has("style"),
   };
 }
@@ -722,6 +730,7 @@ function assemblePanelReadyReferences({
     hasPerformance: roles.has("performance"),
     hasStyle: roles.has("style") || (Boolean(styleId) && styleId === anchorId),
     previousDropped,
+    styleDroppedByLimit: false,
     identityAlsoStyle: Boolean(styleId) && styleId === anchorId,
   };
 }

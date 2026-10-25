@@ -185,6 +185,7 @@ test("panel reference assembly never drops identity for style under the three-im
   assert.ok(assembled.roles.has("performance"));
   assert.equal(assembled.roles.has("previous"), false);
   assert.equal(assembled.previousDropped, true);
+  assert.equal(assembled.styleDroppedByLimit, false);
   assert.deepEqual(assembled.images.map((image) => image.id), ["anchor", "style", "perf"]);
   assert.equal(assembled.hasStyle, true);
   assert.equal(assembled.hasPrevious, false);
@@ -203,6 +204,27 @@ test("historical panel reference assembly keeps previous before performance and 
   assert.equal(assembled.hasPerformance, true);
   assert.equal(assembled.hasStyle, false);
   assert.equal(assembled.previousDropped, false);
+  assert.equal(assembled.styleDroppedByLimit, true);
+});
+
+test("historical style limit is explicit and the same asset is not an omitted authority", () => {
+  const shared = assemblePanelReferences({
+    anchor: { id: "same" },
+    previous: { id: "prev" },
+    style: { id: "same" },
+  });
+  assert.equal(shared.identityAlsoStyle, true);
+  assert.equal(shared.styleDroppedByLimit, false);
+  assert.equal(shared.roles.has("style"), false);
+  assert.equal(shared.hasStyle, false);
+  const fulfilledByPrevious = assemblePanelReferences({
+    anchor: { id: "anchor" },
+    previous: { id: "style" },
+    style: { id: "style" },
+  });
+  assert.equal(fulfilledByPrevious.styleDroppedByLimit, false);
+  assert.equal(fulfilledByPrevious.hasStyle, true);
+  assert.equal(fulfilledByPrevious.roles.has("style"), false);
 });
 
 test("isEligiblePanelReadyDialogueFrame accepts ordinary dialogue split2 only", () => {

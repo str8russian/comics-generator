@@ -406,7 +406,10 @@ export async function prepareImageRequest({
 export async function executeImageRequest(input) {
   const prepared = await prepareImageRequest(input);
   if (!prepared.ok) return prepared;
-  const result = await input.imageGenerator({
+  let attemptId = null;
+  const traceContext = input.traceContext || null;
+  const traceRecorder = input.traceRecorder || null;
+  const generatorInput = {
     prompt: prepared.prompt,
     images: prepared.references.map((ref) => ({ mime: ref.mime, bytes: ref.bytes })),
     aspectRatio: input.aspectRatio,
@@ -415,7 +418,24 @@ export async function executeImageRequest(input) {
     fetchImpl: input.fetchImpl,
     timeoutMs: input.timeoutMs,
     transport: prepared.diagnostics,
-  });
+  };
+  if (traceContext && traceRecorder) {
+    generatorInput.beforeProviderIo = async (gate) => {
+      attemptId = await traceRecorder.insertPrepared({
+        traceContext,
+        prepared,
+        originalReferences: input.references,
+        aspectRatio: input.aspectRatio,
+        model: input.model,
+        budgetBytes: input.budgetBytes,
+        timeoutMs: gate?.timeoutMs,
+      });
+    };
+  }
+  const result = await input.imageGenerator(generatorInput);
+  if (attemptId && traceRecorder) {
+    await traceRecorder.updateTerminal({ attemptId, result });
+  }
   const diagnostics = {
     ...prepared.diagnostics,
     ...(result?.diagnostics || {}),
