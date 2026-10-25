@@ -153,16 +153,18 @@ async function onGenerate(request, deps) {
         imageAssetId: character.approvedAssetId ?? null,
       }),
       busyMessage: `Создаю вариант для ${character.name}…`,
-      async operation() {
+      async operation({ correlationId } = {}) {
         try {
           const payload = await new Promise((resolve, reject) => {
             const fail = () => reject(timeoutError());
             if (controller.signal.aborted) fail();
             else controller.signal.addEventListener("abort", fail, { once: true });
+            const body = serverBody(effect, session.state.anchor);
+            if (typeof correlationId === "string" && correlationId) body.correlationId = correlationId;
             Promise.resolve(deps.fetchJson(`/api/visual/characters/${encodeURIComponent(character.name)}/anchor-session`, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify(serverBody(effect, session.state.anchor)),
+              body: JSON.stringify(body),
               signal: controller.signal,
             })).then((value) => {
               if (!current() || controller.signal.aborted) fail();

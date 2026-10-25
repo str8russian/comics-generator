@@ -767,6 +767,13 @@ test("anchor_generate and anchor_approve capture the accepted session without im
   document.body.querySelector("#generate").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 20));
   const anchorGen = researchPair("anchor_generate");
+  const sessionPost = productPosts.find((entry) => /\/anchor-session$/.test(entry.path));
+  assert.ok(sessionPost);
+  assert.equal(sessionPost.body.correlationId, anchorGen.start.correlationId);
+  assert.equal(sessionPost.body.basis, "accepted");
+  assert.equal(Object.hasOwn(sessionPost.body, "projectId"), false);
+  assert.equal(Object.hasOwn(sessionPost.body, "materialStateId"), false);
+  assert.equal(Object.hasOwn(sessionPost.body, "anchorVersionId"), false);
   assert.equal(anchorGen.start.submittedText, "сделай строже");
   assert.equal(anchorGen.start.commandTarget.kind, "character");
   assert.equal(anchorGen.start.commandTarget.characterName, "Путин");

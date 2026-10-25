@@ -115,6 +115,10 @@ function memoryTrace(options = {}) {
           output_byte_length: null,
           output_width: null,
           output_height: null,
+          character_name: params[26] ?? null,
+          material_state_id: params[27] ?? null,
+          anchor_version_id: params[28] ?? null,
+          basis_kind: params[29] ?? null,
         });
         return { rowCount: 1, rows: [{ id: params[0] }] };
       }
@@ -140,6 +144,7 @@ function memoryTrace(options = {}) {
           if (text.includes("WHERE id =")) return row.id === params[0];
           if (text.includes("WHERE panel_generation_id =")) return row.panel_generation_id === params[0];
           if (text.includes("WHERE correlation_id =")) return row.correlation_id === params[0];
+          if (text.includes("WHERE anchor_version_id =")) return row.anchor_version_id === params[0];
           return false;
         });
         matches.sort((left, right) => String(left.prepared_at).localeCompare(String(right.prepared_at)) || String(left.id).localeCompare(String(right.id)));
@@ -284,6 +289,31 @@ test("production image calls converge on executeImageRequest", () => {
   const server = readFileSync(new URL("../server.mjs", import.meta.url), "utf8");
   assert.equal(server.includes("imageGenerator({"), false);
   assert.equal(server.includes("input.imageGenerator("), false);
+  assert.equal(server.includes("base-anchor-ui-prototype"), false);
+  const directCalls = server.match(/executeImageRequest\(\{/g) || [];
+  assert.equal(directCalls.length, 2);
+  const session = server.slice(server.indexOf("async function handleAnchorSession"), server.indexOf("async function handleAnchorAccept"));
+  const persisted = server.slice(server.indexOf("async function handleVisualAnchor"), server.indexOf("async function handleVisualAnchorApproval"));
+  const panel = server.slice(server.indexOf("async function generateOnePanel"), server.indexOf("function failedVisual"));
+  for (const body of [session, persisted, panel]) {
+    assert.equal(body.includes("traceContext"), true);
+    assert.equal(body.includes("traceRecorder"), true);
+  }
+  assert.match(session, /generationKind: "anchor-session"/);
+  assert.match(persisted, /generationKind: "anchor",/);
+  assert.equal(persisted.includes("anchor-session"), false);
+  const productionCallers = files
+    .filter((file) => readFileSync(file, "utf8").includes("executeImageRequest("))
+    .map((file) => file.split("/").at(-1))
+    .sort();
+  assert.deepEqual(productionCallers, ["image-reference-strategy.mjs", "server.mjs"]);
+  const migration018 = readFileSync(new URL("../db/migrations/018_image_generation_attempt.sql", import.meta.url), "utf8");
+  const migration019 = readFileSync(new URL("../db/migrations/019_image_generation_attempt_observed_facts.sql", import.meta.url), "utf8");
+  const migration020 = readFileSync(new URL("../db/migrations/020_image_generation_attempt_anchor.sql", import.meta.url), "utf8");
+  assert.equal(migration018.includes("anchor-session"), false);
+  assert.equal(migration019.includes("anchor-session"), false);
+  assert.match(migration020, /ADD COLUMN character_name/);
+  assert.match(migration020, /'anchor-session', 'anchor'/);
 });
 
 test("tracing on and off keep the same provider request and product result", async () => {
@@ -611,12 +641,14 @@ function panelStore({ frame, generations, refsFor }) {
     async beginAnchor() {
       return {
         ok: true,
-        id: "anchor-gen",
+        id: "02100000-0000-4000-8000-0000000000c1",
+        materialStateId: "02100000-0000-4000-8000-0000000000c2",
+        characterName: "Аня",
         identityComment: "",
         instruction: "",
-        identity: reference("identity", ANCHOR_ASSET),
+        identity: asset(ANCHOR_ASSET),
         previous: null,
-        style: reference("style", STYLE_ASSET),
+        style: asset(STYLE_ASSET),
       };
     },
     async finishAnchor({ result }) {
@@ -769,7 +801,7 @@ test("frame attempts share one correlation and each keeps its own generation", a
   assert.deepEqual(rows[0].sent_references.map((item) => item.role), ["anchor", "style", "performance"]);
 });
 
-test("anchor generation still reaches the provider without an attempt row", async () => {
+test("persisted anchor generation records one server-owned attempt", async () => {
   const traced = memoryTrace();
   let calls = 0;
   const server = createServer({
@@ -793,14 +825,39 @@ test("anchor generation still reaches the provider without an attempt row", asyn
   try {
     const response = await request(port, {
       path: `/api/projects/${PROJECT_ID}/visual/characters/${encodeURIComponent("Аня")}/anchor`,
-      body: { instruction: "" },
+      body: {
+        instruction: "",
+        correlationId: CORRELATION_ID,
+        projectId: "client-project",
+        materialStateId: "02100000-0000-4000-8000-00000000ffff",
+        anchorVersionId: "02100000-0000-4000-8000-00000000eeee",
+        characterName: "client-name",
+      },
     });
     assert.equal(response.status, 200);
   } finally {
     await close(server);
   }
   assert.equal(calls, 1);
-  assert.equal(traced.db.rows.size, 0);
+  assert.equal(traced.db.rows.size, 1);
+  const row = [...traced.db.rows.values()][0];
+  assert.equal(row.generation_kind, "anchor");
+  assert.equal(row.action_kind, "anchor");
+  assert.equal(row.basis_kind, "persisted");
+  assert.equal(row.character_name, "Аня");
+  assert.equal(row.material_state_id, "02100000-0000-4000-8000-0000000000c2");
+  assert.equal(row.anchor_version_id, "02100000-0000-4000-8000-0000000000c1");
+  assert.equal(row.project_id, PROJECT_ID);
+  assert.equal(row.correlation_id, CORRELATION_ID);
+  assert.equal(row.panel_generation_id, null);
+  assert.equal(row.compiler_id, "anchor-prompt");
+  assert.equal(row.compiler_version, "v1");
+  assert.deepEqual(row.sent_references.map((item) => item.assetId), [ANCHOR_ASSET, STYLE_ASSET]);
+  const inspected = await readImageGenerationAttempts(traced.db, {
+    anchorVersionId: "02100000-0000-4000-8000-0000000000c1",
+  });
+  assert.equal(inspected.length, 1);
+  assert.equal(inspected[0].attemptId, row.id);
 });
 
 test("same-asset style authority is not recorded as an omission", async () => {

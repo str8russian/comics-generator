@@ -12,6 +12,7 @@ function selectorFromArgs(argv) {
     ["--attempt", "attemptId"],
     ["--panel-generation", "panelGenerationId"],
     ["--correlation", "correlationId"],
+    ["--anchor-version", "anchorVersionId"],
   ];
   const found = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -47,7 +48,7 @@ async function main() {
   const selector = selectorFromArgs(process.argv.slice(2));
   const connectionString = process.env.DATABASE_URL;
   if (!selector || typeof connectionString !== "string" || connectionString.length === 0) {
-    process.stderr.write("usage: inspect-image-generation-attempt.mjs (--attempt|--panel-generation|--correlation) <uuid>\n");
+    process.stderr.write("usage: inspect-image-generation-attempt.mjs (--attempt|--panel-generation|--correlation|--anchor-version) <uuid>\n");
     process.exitCode = 2;
     return;
   }

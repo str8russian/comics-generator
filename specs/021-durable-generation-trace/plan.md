@@ -1,6 +1,6 @@
-# Durable image-generation trace — Stage 1 plan
+# Durable image-generation trace — plan
 
-Stage 1 only. No `tasks.md`, no Stage 2 implementation, and no claim that Feature 021 is complete.
+Stage 1 is accepted as implemented. Stage 2 adds anchor coverage on the same sink and is awaiting coordinator review. No `tasks.md`. This plan does not claim Feature 021 completion or owner acceptance.
 
 ## Verified call-site inventory
 
@@ -17,9 +17,11 @@ Callers:
 5. direct panel generation invokes `generateOnePanel` once
 6. frame generation invokes `generateOnePanel` once per panel
 
-Stage 1 passes trace context only on paths 4–6. Paths 2 and 3 stay behavior-identical and write no attempt row.
+Stage 1 passes trace context on paths 4–6. Stage 2 passes the same opaque `traceContext` on paths 2 and 3. Every production caller of `executeImageRequest` now supplies that context: `deliverPreparedImage` forwards the caller's context, `handleAnchorSession` builds it for the session route, and `handleVisualAnchor` builds it for the persisted route before calling `deliverPreparedImage`. `generateOnePanel` is unchanged and still builds the panel and frame-panel context.
 
-`spikes/base-anchor-ui-prototype/` is not a production route. It is recorded here and left unchanged.
+There is no second production image-provider route. `spikes/base-anchor-ui-prototype/` is not mounted by the storyboard server. It remains deferred and unchanged.
+
+Non-generative upload, accept, approve, retire, restore, assignment, placement, reuse, and duplication actions do not call `executeImageRequest` and write no attempt row.
 
 ## One-table schema
 
@@ -27,7 +29,9 @@ Migration `018_image_generation_attempt.sql` adds `image_generation_attempt`.
 
 The table holds the identity, request, and outcome fields in `spec.md`. `sent_references` and `omissions` are JSON arrays. `correlation_id` has no foreign key. `panel_generation_id` is stored without turning `panel_generation` into the trace store. `project_id` references `project` so a row cannot be written for an unknown project.
 
-`generation_kind` and `action_kind` are constrained to `panel` and `frame-panel`. Stage 2 must widen those checks when anchor kinds are added. That widening is remaining Stage 2 work, not a silent Stage 1 stand-in.
+Migration `018` constrains `generation_kind` and `action_kind` to `panel` and `frame-panel`. Migration `019` is unchanged. Migration `020_image_generation_attempt_anchor.sql` is the only widening. It adds nullable `character_name`, `material_state_id`, `anchor_version_id`, and `basis_kind`, then replaces the kind checks with the vocabulary in `spec.md`. A fresh database applies `018`, then `019`, then `020`. An already-migrated `comics_test` database applies only `020`. Neither `018` nor `019` is rewritten.
+
+The anchor identity check keeps panel rows free of anchor columns and anchor rows free of panel, frame, and panel-generation columns. An `anchor-session` row has a character name, a session basis, and a null anchor-version id. Its material-state id is null when the server has no active material state. An `anchor` row requires the character name, material-state id, pending anchor-version id, and basis `persisted`. There is still no foreign key from correlation, material state, or anchor version. `project_id` remains the only foreign key.
 
 There is no bytea column, no raw response column, and no saved-description or instruction column.
 
@@ -59,7 +63,7 @@ Order:
 
 A payload rejection from `prepareImageRequest` returns before `imageGenerator`. No row is created. A prepared row stores `provider_io_started` as NULL. Inspection returns `providerIoStarted: null` until the terminal update sets it true. `http_status` stores only `diagnostics.providerStatus` or `metadata.providerStatus` from an actual provider response. Inspection exposes that value as `providerHttpStatus`. Timeout and network failure before a response leave it null and keep the outcome kind. Migration `019_image_generation_attempt_observed_facts.sql` makes the I/O column nullable, drops its false default, and converts existing prepared false values to NULL. A fresh database applies `018` and then `019`. An already-migrated `comics_test` database applies only `019`. No sweeper is added.
 
-Anchor calls do not pass `traceContext`, so the hook is not installed and the generator argument list stays the pre-feature shape.
+Anchor calls pass `traceContext` only after assembly and configuration succeed, so a zero-provider failure still creates no row. The hook stays inside the existing `beforeProviderIo` path.
 
 ## Opaque context
 
@@ -103,18 +107,26 @@ The offline suite is `node --test test/**/*.test.mjs` from `app/storyboard-web`.
 
 ## Inspection checkpoint
 
-`app/storyboard-web/inspect-image-generation-attempt.mjs` opens a read-only transaction and loads one attempt by `--attempt`, every attempt for a `--panel-generation`, or every attempt for a `--correlation`. Output is the bounded evidence chain, including the exact prompt for the selected row. It does not print reference bytes, output bytes, data URLs, credentials, authorization data, or raw provider responses. It is not an API.
+`app/storyboard-web/inspect-image-generation-attempt.mjs` opens a read-only transaction and loads one attempt by `--attempt`, every attempt for a `--panel-generation`, every attempt for a `--correlation`, or every attempt for an `--anchor-version`. Output is the bounded evidence chain, including the exact prompt for the selected row. It does not print reference bytes, output bytes, data URLs, credentials, authorization data, or raw provider responses. It is not an API.
 
 The Stage 1 checkpoint uses a synthetic `comics_test` project, a non-production port, and a loopback fake provider. It shows one successful panel regeneration, one known provider failure, a prepared row visible before the fake provider is released, and read-only lookups by attempt, panel generation, and correlation. It does not start, stop, migrate, or reconfigure the production app, and it does not use port `4173` or the `comics` database.
 
-## Remaining Stage 2 coverage
+## Stage 2 anchor context
 
-- pass trace context from every current reachable anchor-generation action;
-- preserve upstream asset ids through anchor session resolution;
-- record truthful anchor action and basis kind, compiler identity, target identity, nullable correlation, and compact omissions;
-- reuse this table, recorder, lifecycle, privacy rules, and inspection script;
-- widen the kind checks in a later migration;
-- prove request equivalence and failure isolation for each distinct anchor request shape;
-- stop at one synthetic anchor checkpoint and a final coverage audit.
+`handleAnchorSession` and `handleVisualAnchor` each build one `traceContext` and pass it through. Intermediate code only forwards it. The client forwards the correlation already created by `runProductResearchAction` on the Characters-stage anchor-session request. The server accepts that value with the existing nullable UUID check. Project, character, material, anchor version, and asset ownership come from the server route, `beginAnchor`, `readAsset`, or `readActiveMaterialStateId`.
 
-Until that audit, Feature 021 is not complete.
+`readActiveMaterialStateId` is a read of `project.active_material_state_id`. It does not call `ensureVersion` and does not insert a product row. If it is absent or fails, the session material-state id is null and generation continues.
+
+`resolveSessionImage` returns the loaded `visual_asset.id` with the bytes. `assembleAnchorSession` copies that id onto the reference and does not copy a client id from a data URL. `readAnchorStyle` keeps its id on the style reference. `toReference` already reads `id` or `assetId`, so the sink hashes the same bytes and stores the server asset id.
+
+The request-budget omission path is the existing sink. It copies the asset id from the original reference. Current production anchor modes do not both include a style reference and use `revision`: `selected` is `revision` but does not send style, while `accepted` and persisted `/anchor` send style under `initial` and `anchor`, which do not omit style. The seam test still proves that a style reference produced by anchor assembly keeps its asset id when the shared strategy omits that role.
+
+Compiler constants live beside the prompt functions and are not read by those functions.
+
+## Stage 2 inspection and checkpoint
+
+`inspect-image-generation-attempt.mjs` adds `--anchor-version`. The output includes basis, character, material state, anchor version, compiler identity, ordered sent assets, omissions, the exact prompt and request evidence, and the provider outcome.
+
+The Stage 2 checkpoint uses the Characters-stage anchor-session surface on `comics_test`, a non-production port, and a loopback fake provider. It shows one successful generation and one known provider failure, then reads the rows by attempt and correlation. The persisted `/anchor` route is covered by focused HTTP tests, not by a new browser control.
+
+Stage 2 does not implement R2, a viewer, recovery, or historical backfill. Feature 021 still awaits coordinator review and final owner acceptance.

@@ -1931,6 +1931,20 @@ export async function carryCharacterAnchors(client, { fromMaterialStateId, toMat
   }
 }
 
+export async function readActiveMaterialStateId(pool) {
+  try {
+    return await withClient(pool, async (client) => {
+      const result = await client.query(
+        `SELECT active_material_state_id FROM project WHERE id = $1`,
+        [requireProjectId()],
+      );
+      return result.rows[0]?.active_material_state_id ?? null;
+    });
+  } catch {
+    return null;
+  }
+}
+
 export async function readAnchorStyle(pool) {
   try {
     return await withClient(pool, async (client) => {
@@ -1962,6 +1976,7 @@ export function createVisualStore(pool) {
     retireCurrentAnchor: contentWrite(pool, (input) => retireCurrentAnchor(pool, input)),
     restoreRetiredAnchor: contentWrite(pool, (input) => restoreRetiredAnchor(pool, input)),
     readAnchorStyle: () => readAnchorStyle(pool),
+    readActiveMaterialStateId: () => readActiveMaterialStateId(pool),
     beginPanelGeneration: contentWrite(pool, (input) => beginPanelGeneration(pool, input)),
     finishPanelGeneration: contentWrite(pool, (input) => finishPanelGeneration(pool, input)),
     updatePlacement: contentWrite(pool, (input) => updatePlacement(pool, input)),

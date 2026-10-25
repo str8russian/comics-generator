@@ -2,7 +2,7 @@
 
 ## Status
 
-Stage 1 contract for Feature 021. Stage 1 acceptance is not Feature 021 completion and does not claim owner acceptance. The feature is complete only after Stage 1 and Stage 2 checkpoints are both accepted.
+Stage 1 is accepted as implemented. Stage 2 connects the remaining production anchor routes to that same sink. This stage is awaiting coordinator review. It does not claim owner acceptance, and Feature 021 is not complete.
 
 Accepted decisions: `DEC-075`, `DEC-076`, `DEC-077`. The feature gate is explicitly invoked.
 
@@ -36,13 +36,13 @@ Also demonstrate one known provider failure or timeout with truthful terminal ev
 
 | Accepted claim | Stage 1 proof | Still open after Stage 1 |
 | --- | --- | --- |
-| Exact effective request | Final prompt and SHA-256, serialized-request SHA-256 and sizes, model, aspect ratio, strategy, and budget for panel and frame-panel attempts | Anchor request shapes |
-| Attributable attempt | Server-derived project, generation, and target ids; generation kind `panel` or `frame-panel`; nullable action correlation; compiler and build identity | Anchor action and target identity |
-| Sent and omitted references | Ordered final sent references, plus compact upstream and request-strategy omissions | Anchor omissions and preserved anchor asset ids |
+| Exact effective request | Final prompt and SHA-256, serialized-request SHA-256 and sizes, model, aspect ratio, strategy, and budget for panel and frame-panel attempts | Same proof for each current anchor shape below |
+| Attributable attempt | Server-derived project, generation, and target ids; generation kind `panel` or `frame-panel`; nullable action correlation; compiler and build identity | Anchor action, basis, character, and source identity below |
+| Sent and omitted references | Ordered final sent references, plus compact upstream and request-strategy omissions | Anchor asset ids and omissions below |
 | Durable attempt | Prepared row before provider I/O and terminal update after the known outcome | Same lifecycle on anchor attempts |
 | Behavior-neutral | Identical serialized request and provider call count with tracing on or off; trace failure does not change or retry the product operation | Same proof per anchor request shape |
-| Inspectable evidence | One read-only inspection script over synthetic test data | Same script, anchor rows |
-| Complete accepted coverage | Direct panel generation and each frame-panel provider attempt | Every current reachable anchor generation path |
+| Inspectable evidence | One read-only inspection script over synthetic test data | Same script, including anchor-version lookup |
+| Complete accepted coverage | Direct panel generation and each frame-panel provider attempt | Both production anchor routes below |
 
 ## Durable evidence contract
 
@@ -52,9 +52,10 @@ Identity and lineage:
 
 - attempt UUID and request-local diagnostic id;
 - project id;
-- generation kind `panel` or `frame-panel`;
-- server-derived action kind `panel` or `frame-panel`;
-- panel-generation / source-record id;
+- generation kind `panel`, `frame-panel`, `anchor-session`, or `anchor`;
+- server-derived action kind, using the same four values;
+- panel-generation / source-record id for panel and frame attempts;
+- anchor character, material state, pending anchor version, and basis for anchor attempts;
 - storyboard version, frame, panel, and panel index where available;
 - nullable research correlation UUID, with no requirement that a research row exist;
 - compiler id and version;
@@ -97,13 +98,72 @@ The nullable correlation UUID does not foreign-key to research storage. Research
 
 Stage 1 plumbs trace context only through `generateOnePanel` and the initiating direct-panel and frame actions. Each direct panel generation records `panel`. Each provider attempt inside frame generation records `frame-panel`. Every frame-panel attempt shares the frame action correlation and keeps its own panel-generation id.
 
-Anchor calls may still reach `executeImageRequest`. They do not receive Stage 1 trace context and therefore write no attempt row.
+Stage 2 passes one opaque `traceContext` from both remaining production anchor routes into the same recorder. No second recorder is added.
 
-Stage 2, after a separate owner checkpoint, connects every current reachable anchor-generation path to the same table, recorder, lifecycle, privacy rules, and inspection script. Stage 2 is not implemented here and remains an open ledger item.
+## Anchor vocabulary
+
+These values are allowlisted. Compiler ids and versions are not interpolated into prompt text.
+
+Generation kind and action kind are the same value on each attempt:
+
+| Value | Route |
+| --- | --- |
+| `panel` | Direct panel generation |
+| `frame-panel` | One provider attempt inside frame generation |
+| `anchor-session` | `POST /api/visual/characters/:name/anchor-session` |
+| `anchor` | `POST /api/visual/characters/:name/anchor` |
+
+Basis kind is null on panel and frame-panel rows. Anchor rows use exactly one of:
+
+| Value | Meaning |
+| --- | --- |
+| `from-source` | Session assembly. The source image is the only identity reference. |
+| `selected` | Session assembly. The selected previous candidate is the draft. |
+| `accepted` | Session assembly. The accepted anchor is the authority, with optional source and style. |
+| `persisted` | Stored `/anchor` assembly from the server identity, optional previous candidate, and optional style. |
+
+Compiler identity:
+
+| Attempt | Compiler id | Version | Prompt function |
+| --- | --- | --- | --- |
+| `anchor-session` | `anchor-session-prompt` | `v1` | `compilePrototypePrompt` |
+| `anchor` | `anchor-prompt` | `v1` | `anchorPrompt` |
+
+Panel compilers stay `constrained-panel-intent` / `v1` and `historical-panel-prompt` / `v1`.
+
+## Anchor identity
+
+The server owns project, character, material, anchor-version, and asset identity. A client-supplied copy is not authoritative. The nullable correlation id remains opaque attribution and has no foreign key.
+
+`anchor-session` records:
+
+- project id from the request scope;
+- character name from the route;
+- active material-state id when the server can read it, otherwise null;
+- null anchor-version id, because a session attempt has no durable anchor version;
+- the session basis the server assembled;
+- the existing research correlation when the Characters-stage request forwards a valid UUID, otherwise null.
+
+`anchor` records:
+
+- project id from the request scope;
+- character name and material-state id from the pending row `beginAnchor` created;
+- that pending `character_anchor_version` id;
+- basis `persisted`;
+- a valid client correlation UUID when the request includes one, otherwise null.
+
+Panel and frame columns stay null on anchor rows. Anchor columns stay null on panel and frame rows. No durable anchor-session id is invented.
+
+Persisted asset ids reach the ordered sent-reference evidence through `resolveSessionImage` and the existing reference object. An asset loaded by id keeps the server asset id. A data URL or ephemeral selected candidate has a null asset id. The persisted style asset keeps its id. A request-budget omission keeps that known asset id when the shared strategy omits the role. This passthrough does not change reference order, bytes, prompt text, serialization, provider selection, timeout, or the product result.
+
+Upstream omissions stay compact: role, asset id when known, and `reference-priority`, `reference-limit`, or `request-budget`. A reference excluded by the basis itself is not an omission. The same asset fulfilling two roles is not an omission. Current session and persisted assembly admit at most three references, so the three-reference cap does not drop an applicable reference today; the row still records a `reference-limit` omission if that guard drops one.
+
+## Anchor inspection
+
+The same read-only script loads one attempt, every attempt for a panel generation, every attempt for a correlation, or every attempt for a pending anchor-version id. Session attempts are found by attempt or correlation. They have no anchor-version id.
 
 ## Explicit non-goals
 
-- Stage 2 anchor context plumbing;
 - R2 revision behavior or Accept/Cancel;
 - R1 speaking or listening states;
 - video-render or text-model tracing;
@@ -115,6 +175,6 @@ Stage 2, after a separate owner checkpoint, connects every current reachable anc
 - cancellation, resume, overlap handling, recovery workers, or stale-attempt cleanup;
 - real provider calls.
 
-## Stage 1 is not feature completion
+## Feature 021 is not complete
 
-Passing Stage 1 tests and the Stage 1 checkpoint does not complete Feature 021. Anchor coverage stays visible in the acceptance-claim ledger until Stage 2 is accepted or the owner explicitly removes it. This contract does not claim owner acceptance.
+Passing Stage 1 and Stage 2 tests does not complete Feature 021. Stage 2 awaits coordinator review and final owner acceptance. This contract does not claim either.

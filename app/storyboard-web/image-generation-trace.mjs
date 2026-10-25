@@ -2,7 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { loadBuildInfo } from "./build-info.mjs";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const KINDS = new Set(["panel", "frame-panel"]);
+const KINDS = new Set(["panel", "frame-panel", "anchor-session", "anchor"]);
+const SESSION_BASIS = new Set(["from-source", "selected", "accepted"]);
 const ROLES = new Set(["anchor", "identity", "style", "previous", "current", "performance"]);
 const REASONS = new Set(["reference-priority", "reference-limit", "request-budget"]);
 const USAGE_FIELDS = ["prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens"];
@@ -12,6 +13,7 @@ const LOOKUP_COLUMNS = Object.freeze({
   attemptId: "id",
   panelGenerationId: "panel_generation_id",
   correlationId: "correlation_id",
+  anchorVersionId: "anchor_version_id",
 });
 
 let processBuildId = null;
@@ -175,14 +177,39 @@ export function createImageGenerationTraceRecorder({
       const projectId = uuidOrNull(context.projectId);
       const generationKind = KINDS.has(context.generationKind) ? context.generationKind : null;
       const actionKind = KINDS.has(context.actionKind) ? context.actionKind : null;
-      const panelGenerationId = uuidOrNull(context.panelGenerationId);
+      const anchorAttempt = generationKind === "anchor-session" || generationKind === "anchor";
+      const panelGenerationId = anchorAttempt ? null : uuidOrNull(context.panelGenerationId);
+      const storyboardVersionId = anchorAttempt ? null : uuidOrNull(context.storyboardVersionId);
+      const frameId = anchorAttempt ? null : safeIdentity(context.frameId);
+      const panelId = anchorAttempt ? null : safeIdentity(context.panelId);
+      const panelIndex = anchorAttempt ? null : safeInteger(context.panelIndex);
+      const characterName = anchorAttempt ? safeIdentity(context.characterName) : null;
+      const materialStateId = anchorAttempt ? uuidOrNull(context.materialStateId) : null;
+      const anchorVersionId = generationKind === "anchor" ? uuidOrNull(context.anchorVersionId) : null;
+      const basisKind = anchorAttempt && (SESSION_BASIS.has(context.basisKind) || context.basisKind === "persisted")
+        ? context.basisKind
+        : null;
       const safeModel = sanitizeToken(model, 128);
       const safeAspect = sanitizeToken(aspectRatio, 16);
       const safeBudget = safeInteger(budgetBytes, { min: 1 });
       const safeStrategy = sanitizeToken(prepared?.strategy, 32);
       const compilerId = sanitizeToken(context.compilerId, 64);
       const compilerVersion = sanitizeToken(context.compilerVersion, 64);
-      if (!projectId || !generationKind || !actionKind || !panelGenerationId || !prepared?.prompt
+      const panelIdentity = (generationKind === "panel" || generationKind === "frame-panel")
+        && (actionKind === "panel" || actionKind === "frame-panel")
+        && Boolean(panelGenerationId);
+      const sessionIdentity = generationKind === "anchor-session"
+        && actionKind === "anchor-session"
+        && Boolean(characterName)
+        && SESSION_BASIS.has(basisKind);
+      const persistedIdentity = generationKind === "anchor"
+        && actionKind === "anchor"
+        && Boolean(characterName)
+        && Boolean(materialStateId)
+        && Boolean(anchorVersionId)
+        && basisKind === "persisted";
+      if (!projectId || !generationKind || !actionKind || !(panelIdentity || sessionIdentity || persistedIdentity)
+        || !prepared?.prompt
         || !/^[0-9a-f]{64}$/.test(prepared?.requestSha256 || "")
         || !safeModel || !safeAspect || !safeBudget || !safeStrategy || !compilerId || !compilerVersion) {
         logTraceFailure(logger, { attemptId, stage: "prepared", code: "invalid-context" });
@@ -205,14 +232,16 @@ export function createImageGenerationTraceRecorder({
           correlation_id, compiler_id, compiler_version, build_id, state,
           prompt, prompt_sha256, model, aspect_ratio, reference_strategy, budget_bytes,
           original_body_bytes, final_body_bytes, request_sha256,
-          sent_references, omissions, provider_io_started, timeout_ms
+          sent_references, omissions, provider_io_started, timeout_ms,
+          character_name, material_state_id, anchor_version_id, basis_kind
         ) VALUES (
           $1, $2, $3, $4, $5,
           $6, $7, $8, $9, $10,
           $11, $12, $13, $14, 'prepared',
           $15, $16, $17, $18, $19, $20,
           $21, $22, $23,
-          $24::jsonb, $25::jsonb, NULL, $26
+          $24::jsonb, $25::jsonb, NULL, $26,
+          $27, $28, $29, $30
         )
       `, [
         attemptId,
@@ -221,10 +250,10 @@ export function createImageGenerationTraceRecorder({
         generationKind,
         actionKind,
         panelGenerationId,
-        uuidOrNull(context.storyboardVersionId),
-        safeIdentity(context.frameId),
-        safeIdentity(context.panelId),
-        safeInteger(context.panelIndex),
+        storyboardVersionId,
+        frameId,
+        panelId,
+        panelIndex,
         uuidOrNull(context.correlationId),
         compilerId,
         compilerVersion,
@@ -241,6 +270,10 @@ export function createImageGenerationTraceRecorder({
         JSON.stringify(sent.slice(0, 8)),
         JSON.stringify(omissions),
         safeInteger(timeoutMs, { min: 1 }),
+        characterName,
+        materialStateId,
+        anchorVersionId,
+        basisKind,
       ]);
       return attemptId;
     } catch (error) {
@@ -312,6 +345,7 @@ export function createImageGenerationTraceRecorder({
 
 const ATTEMPT_COLUMNS = `
   id, diagnostic_id, project_id, generation_kind, action_kind,
+  character_name, material_state_id, anchor_version_id, basis_kind,
   panel_generation_id, storyboard_version_id, frame_id, panel_id, panel_index,
   correlation_id, compiler_id, compiler_version, build_id,
   prepared_at, terminal_at, state,
@@ -349,6 +383,10 @@ export function presentImageGenerationAttempt(row) {
     projectId: row.project_id,
     generationKind: row.generation_kind,
     actionKind: row.action_kind,
+    characterName: row.character_name ?? null,
+    materialStateId: row.material_state_id ?? null,
+    anchorVersionId: row.anchor_version_id ?? null,
+    basisKind: row.basis_kind ?? null,
     panelGenerationId: row.panel_generation_id,
     storyboardVersionId: row.storyboard_version_id,
     frameId: row.frame_id,

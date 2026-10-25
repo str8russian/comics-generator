@@ -17,7 +17,11 @@ import { createRenderController } from "./render-service.mjs";
 import { stageStoryboard } from "./stage.mjs";
 import { IDENTITY_MAX_BODY_BYTES, parseIdentityImage, parseImageDataUrl } from "./image-info.mjs";
 import { assembleAnchorSession } from "./anchor-session-request.mjs";
-import { compilePrototypePrompt } from "./anchor-prompt.mjs";
+import {
+  ANCHOR_SESSION_COMPILER_ID,
+  ANCHOR_SESSION_COMPILER_VERSION,
+  compilePrototypePrompt,
+} from "./anchor-prompt.mjs";
 import { anchorSessionProviderTimeoutMs, generateImage, resolveImageModel } from "./image-provider.mjs";
 import {
   executeImageRequest,
@@ -36,6 +40,8 @@ import {
 import { createEmptyContext, createEmptyCommandTarget } from "./public/research-dock.mjs";
 import { normalizeExportTransition } from "./public/export-timing.mjs";
 import {
+  ANCHOR_COMPILER_ID,
+  ANCHOR_COMPILER_VERSION,
   anchorPrompt,
   aspectRatioForFrame,
   assembleAnchorReferences,
@@ -1300,6 +1306,25 @@ function nullableCorrelationId(value) {
   return typeof value === "string" && PROJECT_ID_PATTERN.test(value) ? value : null;
 }
 
+async function readSessionMaterialStateId(runtime) {
+  if (typeof runtime.visualStore?.readActiveMaterialStateId !== "function") return null;
+  try {
+    const value = await runtime.visualStore.readActiveMaterialStateId();
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistedAnchorOmissions(assembled, pending) {
+  if (assembled?.styleDropped !== true) return [];
+  return [{
+    role: "style",
+    assetId: pending?.style?.id ?? null,
+    reason: "reference-limit",
+  }];
+}
+
 function upstreamPanelOmissions(assembled, refs) {
   const omissions = [];
   if (assembled?.previousDropped === true) {
@@ -1366,7 +1391,15 @@ async function resolveSessionImage(runtime, dataUrl, assetId) {
   if (assetId) {
     const asset = await runtime.visualStore.readAsset(assetId);
     if (!asset?.bytes) return { error: "invalid-image" };
-    return { image: { bytes: asset.bytes, mime: asset.mime, width: asset.width, height: asset.height } };
+    return {
+      image: {
+        id: asset.id,
+        bytes: asset.bytes,
+        mime: asset.mime,
+        width: asset.width,
+        height: asset.height,
+      },
+    };
   }
   return { image: null };
 }
@@ -1412,7 +1445,7 @@ async function handleAnchorSession(req, res, {
     source: source.image,
     anchor: anchor.image,
     previous: previous.image,
-    style: styleAsset?.bytes ? { bytes: styleAsset.bytes, mime: styleAsset.mime } : null,
+    style: styleAsset?.bytes ? { id: styleAsset.id, bytes: styleAsset.bytes, mime: styleAsset.mime } : null,
   });
   if (!assembled.ok) {
     sendJson(res, 400, { status: "failed", kind: assembled.kind || "invalid-request" });
@@ -1424,6 +1457,20 @@ async function handleAnchorSession(req, res, {
     return;
   }
   const started = Date.now();
+  const materialStateId = await readSessionMaterialStateId(runtime);
+  const traceContext = {
+    diagnosticId: request == null ? "request" : String(request),
+    projectId: requireProjectId(),
+    generationKind: "anchor-session",
+    actionKind: "anchor-session",
+    basisKind: basis,
+    characterName,
+    materialStateId,
+    correlationId: nullableCorrelationId(body.payload?.correlationId),
+    compilerId: ANCHOR_SESSION_COMPILER_ID,
+    compilerVersion: ANCHOR_SESSION_COMPILER_VERSION,
+    upstreamOmissions: assembled.omissions || [],
+  };
   const result = await executeImageRequest({
     strategy: config.strategy,
     budgetBytes: config.budgetBytes,
@@ -1436,6 +1483,8 @@ async function handleAnchorSession(req, res, {
     env: env ?? process.env,
     fetchImpl,
     timeoutMs: anchorSessionProviderTimeoutMs(env ?? process.env),
+    traceContext,
+    traceRecorder: runtime.traceRecorder || null,
   });
   logVisual(logger, request, "anchor-session", {
     characterName,
@@ -1605,6 +1654,20 @@ async function handleVisualAnchor(req, res, {
     style: pending.style,
   });
   const providerStarted = Date.now();
+  const traceContext = {
+    diagnosticId: request == null ? "request" : String(request),
+    projectId: requireProjectId(),
+    generationKind: "anchor",
+    actionKind: "anchor",
+    basisKind: "persisted",
+    characterName: pending.characterName || characterName,
+    materialStateId: pending.materialStateId,
+    anchorVersionId: pending.id,
+    correlationId: nullableCorrelationId(body.payload?.correlationId),
+    compilerId: ANCHOR_COMPILER_ID,
+    compilerVersion: ANCHOR_COMPILER_VERSION,
+    upstreamOmissions: persistedAnchorOmissions(assembled, pending),
+  };
   const result = await deliverPreparedImage({
     slots: assembled.slots,
     generationMode: "anchor",
@@ -1620,6 +1683,8 @@ async function handleVisualAnchor(req, res, {
     imageGenerator,
     env,
     fetchImpl,
+    traceContext,
+    traceRecorder: runtime.traceRecorder || null,
   });
   logVisual(logger, request, "visual-anchor-provider", {
     ...transportLogFields(result?.diagnostics),

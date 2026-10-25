@@ -1,3 +1,7 @@
+/** Stable compiler identity for the Characters-stage anchor session prompt. Not interpolated into prompt text. */
+export const ANCHOR_SESSION_COMPILER_ID = "anchor-session-prompt";
+export const ANCHOR_SESSION_COMPILER_VERSION = "v1";
+
 const RENDERING = [
   "Rendering language:",
   "- Use thick, solid, clean near-black contour lines around the character silhouette, facial features, hair, and clothing shapes.",

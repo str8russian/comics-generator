@@ -4,7 +4,19 @@ const BASES = new Set(["from-source", "selected", "accepted"]);
 
 function withRole(image, role) {
   if (!image?.bytes) return null;
-  return { role, mime: image.mime, bytes: image.bytes };
+  const reference = { role, mime: image.mime, bytes: image.bytes };
+  if (typeof image.id === "string" && image.id.trim()) reference.assetId = image.id.trim();
+  return reference;
+}
+
+function pushWithinLimit(references, omissions, image, role) {
+  const reference = withRole(image, role);
+  if (!reference) return;
+  if (references.length < 3) {
+    references.push(reference);
+    return;
+  }
+  omissions.push({ role, assetId: reference.assetId ?? null, reason: "reference-limit" });
 }
 
 export function assembleAnchorSession({
@@ -19,6 +31,7 @@ export function assembleAnchorSession({
     return { ok: false, kind: "invalid-request" };
   }
   const references = [];
+  const omissions = [];
   if (basis === "from-source") {
     const identity = withRole(source, "identity");
     if (!identity) return { ok: false, kind: "invalid-request" };
@@ -27,23 +40,21 @@ export function assembleAnchorSession({
     const draft = withRole(previous, "previous");
     if (!draft) return { ok: false, kind: "invalid-request" };
     references.push(draft);
-    const identity = withRole(source, "identity");
-    if (identity) references.push(identity);
-    const accepted = withRole(anchor, "anchor");
-    if (accepted && references.length < 3) references.push(accepted);
+    pushWithinLimit(references, omissions, source, "identity");
+    pushWithinLimit(references, omissions, anchor, "anchor");
   } else {
     const accepted = withRole(anchor, "anchor");
     if (!accepted) return { ok: false, kind: "invalid-request" };
     references.push(accepted);
-    const identity = withRole(source, "identity");
-    if (identity) references.push(identity);
-    const styleRef = withRole(style, "style");
-    if (styleRef && references.length < 3) references.push(styleRef);
+    pushWithinLimit(references, omissions, source, "identity");
+    pushWithinLimit(references, omissions, style, "style");
   }
+  const sent = references.slice(0, 3);
   return {
     ok: true,
-    references: references.slice(0, 3),
-    prompt: compilePrototypePrompt(references.slice(0, 3), instruction, { basis }),
+    references: sent,
+    omissions,
+    prompt: compilePrototypePrompt(sent, instruction, { basis }),
     aspectRatio: "4:5",
   };
 }

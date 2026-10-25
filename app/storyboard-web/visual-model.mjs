@@ -20,6 +20,10 @@ export const PANEL_READY_COMPILER_VERSION = `${PANEL_READY_COMPILER_ID}/${PANEL_
 export const HISTORICAL_PANEL_COMPILER_ID = "historical-panel-prompt";
 export const HISTORICAL_PANEL_COMPILER_VERSION = "v1";
 
+/** Stable compiler identity for the persisted anchor prompt. Not interpolated into prompt text. */
+export const ANCHOR_COMPILER_ID = "anchor-prompt";
+export const ANCHOR_COMPILER_VERSION = "v1";
+
 const CANONICAL_DEFAULTS = Object.freeze({
   framing: "chest-up",
   upperBody: "visible shoulders and upper torso",
