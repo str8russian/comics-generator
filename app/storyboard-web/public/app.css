@@ -249,7 +249,6 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
 }
 
 #detail {
-  position: relative;
   box-sizing: border-box;
   width: min(1080px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
@@ -1565,9 +1564,13 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
 
 .revision-compare {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+}
+
+.revision-compare:has(.revision-candidate) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .revision-current,
@@ -1586,15 +1589,16 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
   font-weight: 700;
 }
 
-.revision-current img,
+.revision-current-image,
 .revision-candidate-preview {
   display: block;
   width: 100%;
   max-width: 100%;
-  max-height: 320px;
+  aspect-ratio: 5 / 4;
   height: auto;
+  max-height: 280px;
   object-fit: contain;
-  background: #5d6e86;
+  background: #d7d4cc;
   box-sizing: border-box;
 }
 
@@ -1626,8 +1630,8 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
   gap: 8px;
 }
 
-.revision-generate,
-.revision-review .primary {
+.panel-controls button.revision-generate,
+.panel-controls .revision-review button.primary {
   padding: 10px 14px;
   border: 1px solid #1d2428;
   background: #1d2428;
@@ -1767,7 +1771,7 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
 }
 
 .revision-confirm {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 6;
   display: grid;
@@ -1797,14 +1801,15 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
 }
 
 @media (max-width: 720px) {
-  .revision-compare {
+  .revision-compare,
+  .revision-compare:has(.revision-candidate) {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .frame-panel-edit,
-  .revision-generate,
-  .revision-review .primary,
-  .revision-review .secondary,
+  .panel-controls button.revision-generate,
+  .panel-controls .revision-review button.primary,
+  .panel-controls .revision-review button.secondary,
   .panel-view-header button {
     width: 100%;
   }

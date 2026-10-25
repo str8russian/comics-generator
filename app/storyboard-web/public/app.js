@@ -1967,7 +1967,9 @@ export function applyVisual(next) {
       const segment = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
       return segment === detailSegmentIndex;
     });
-    if (nextIndex >= 0) openDetail(nextIndex);
+    if (nextIndex >= 0) {
+      openDetail(nextIndex, detailView === "panel" ? { panelIndex: detailPanelIndex } : {});
+    }
     else detail.close();
   }
 }
@@ -2241,7 +2243,9 @@ function bindDetailPan(frame) {
     const panelIndex = Number(column.dataset?.panelIndex);
     const panel = frame.panels?.[panelIndex];
     if (!panel?.assetId) continue;
-    const image = typeof column.querySelector === "function" ? column.querySelector(".panel-asset") : null;
+    const image = typeof column.querySelector === "function"
+      ? (column.querySelector(".panel-asset") || column.querySelector("img"))
+      : null;
     if (!image) continue;
     if (!String(column.className || "").split(/\s+/).includes("panel-pannable")) {
       column.className = `${column.className || ""} panel-pannable`.trim();
@@ -2586,7 +2590,7 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
   currentFigure.className = "revision-current";
   currentFigure.dataset.panelIndex = String(panelIndex);
   const currentImage = document.createElement("img");
-  currentImage.className = "panel-asset";
+  currentImage.className = "revision-current-image";
   currentImage.alt = "Текущее изображение";
   if (panel.asset) currentImage.src = panel.asset;
   currentFigure.append(textElement("figcaption", "", "Текущее изображение"), currentImage);
