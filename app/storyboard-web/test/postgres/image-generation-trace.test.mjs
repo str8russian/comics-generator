@@ -77,6 +77,13 @@ test("image generation attempts persist in comics_test and inspect read-only", {
     assert.equal(foreignKeys.rows.length, 1);
     assert.match(foreignKeys.rows[0].definition, /project/);
     assert.equal(foreignKeys.rows[0].definition.includes("research"), false);
+    const ioColumn = await pool.query(`
+      SELECT is_nullable, column_default
+      FROM information_schema.columns
+      WHERE table_name = 'image_generation_attempt' AND column_name = 'provider_io_started'
+    `);
+    assert.equal(ioColumn.rows[0].is_nullable, "YES");
+    assert.equal(ioColumn.rows[0].column_default, null);
 
     await pool.query("DELETE FROM image_generation_attempt WHERE project_id = ANY($1::uuid[])", [owned]);
     await pool.query("DELETE FROM working_draft WHERE project_id = ANY($1::uuid[])", [owned]);
@@ -147,7 +154,7 @@ test("image generation attempts persist in comics_test and inspect read-only", {
       [attemptId],
     );
     assert.equal(prepared.rows[0].state, "prepared");
-    assert.equal(prepared.rows[0].provider_io_started, false);
+    assert.equal(prepared.rows[0].provider_io_started, null);
     assert.equal(prepared.rows[0].prompt, prompt);
 
     const reader = await pool.connect();
@@ -156,6 +163,9 @@ test("image generation attempts persist in comics_test and inspect read-only", {
       const visible = await readImageGenerationAttempts(reader, { attemptId });
       assert.equal(visible.length, 1);
       assert.equal(visible[0].state, "prepared");
+      assert.equal(visible[0].providerIoStarted, null);
+      assert.equal(visible[0].providerHttpStatus, null);
+      assert.equal(Object.hasOwn(visible[0], "httpStatus"), false);
       await assert.rejects(
         reader.query("INSERT INTO image_generation_attempt (id) VALUES ($1)", [randomUUID()]),
         (error) => error.code === "25006",
@@ -184,6 +194,7 @@ test("image generation attempts persist in comics_test and inspect read-only", {
     assert.equal(rendered.includes("super-secret-token"), false);
     assert.equal(stored.rows[0].state, "succeeded");
     assert.equal(stored.rows[0].provider_io_started, true);
+    assert.equal(stored.rows[0].http_status, 200);
     assert.equal(stored.rows[0].output_byte_length, png.length);
     assert.deepEqual(stored.rows[0].usage, { prompt_tokens: 2, total_tokens: 2 });
 
@@ -199,6 +210,9 @@ test("image generation attempts persist in comics_test and inspect read-only", {
       assert.equal(payload.attempts.length, 1);
       assert.equal(payload.attempts[0].attemptId, attemptId);
       assert.equal(payload.attempts[0].prompt, prompt);
+      assert.equal(payload.attempts[0].providerIoStarted, true);
+      assert.equal(payload.attempts[0].providerHttpStatus, 200);
+      assert.equal(Object.hasOwn(payload.attempts[0], "httpStatus"), false);
       assert.equal(inspected.stdout.includes(png.toString("base64")), false);
       assert.equal(inspected.stdout.includes("data:image"), false);
     }

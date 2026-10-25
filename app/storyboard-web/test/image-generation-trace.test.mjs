@@ -104,7 +104,7 @@ function memoryTrace(options = {}) {
           request_sha256: params[22],
           sent_references: JSON.parse(params[23]),
           omissions: JSON.parse(params[24]),
-          provider_io_started: false,
+          provider_io_started: null,
           timeout_ms: params[25],
           latency_ms: null,
           http_status: null,
@@ -344,6 +344,7 @@ test("success, provider failure, and timeout record truthful terminal evidence",
       state: "succeeded",
       outcome: "stop",
       http: 200,
+      productHttp: 200,
     },
     {
       name: "provider",
@@ -351,6 +352,15 @@ test("success, provider failure, and timeout record truthful terminal evidence",
       state: "failed",
       outcome: "provider",
       http: 500,
+      productHttp: 502,
+    },
+    {
+      name: "payload",
+      fetchImpl: async () => new Response("payload", { status: 413 }),
+      state: "failed",
+      outcome: "provider-payload-too-large",
+      http: 413,
+      productHttp: 502,
     },
     {
       name: "timeout",
@@ -366,7 +376,18 @@ test("success, provider failure, and timeout record truthful terminal evidence",
       }),
       state: "failed",
       outcome: "timeout",
-      http: 504,
+      http: null,
+      productHttp: 504,
+    },
+    {
+      name: "network",
+      fetchImpl: async () => {
+        throw new Error(`${CANARY} network down`);
+      },
+      state: "failed",
+      outcome: "provider",
+      http: null,
+      productHttp: 502,
     },
   ];
   for (const item of cases) {
@@ -376,7 +397,8 @@ test("success, provider failure, and timeout record truthful terminal evidence",
       const prepared = [...traced.db.rows.values()];
       assert.equal(prepared.length, 1);
       assert.equal(prepared[0].state, "prepared");
-      assert.equal(prepared[0].provider_io_started, false);
+      assert.equal(prepared[0].provider_io_started, null);
+      assert.equal(prepared[0].terminal_at, null);
       sawPrepared = true;
       return item.fetchImpl(...args);
     };
@@ -392,8 +414,16 @@ test("success, provider failure, and timeout record truthful terminal evidence",
     assert.equal(row.outcome_kind, item.outcome, item.name);
     assert.equal(row.http_status, item.http, item.name);
     assert.equal(row.provider_io_started, true, item.name);
+    if (!result.ok) assert.equal(result.httpStatus, item.productHttp, item.name);
     assert.equal(result.ok, item.state === "succeeded", item.name);
+    const presented = await readImageGenerationAttempts(traced.db, { attemptId: row.id });
+    assert.equal(presented[0].providerIoStarted, true, item.name);
+    assert.equal(presented[0].providerHttpStatus, item.http, item.name);
+    assert.equal(Object.hasOwn(presented[0], "httpStatus"), false, item.name);
     if (item.name !== "success") assert.equal(row.output_sha256, null);
+    const log = traced.db.logs.join("\n");
+    assert.equal(log.includes(CANARY), false, item.name);
+    assert.equal(log.includes("network down"), false, item.name);
   }
 });
 
@@ -417,7 +447,8 @@ test("a blocked provider leaves the prepared row readable before release", async
   }
   assert.equal(during.length, 1);
   assert.equal(during[0].state, "prepared");
-  assert.equal(during[0].providerIoStarted, false);
+  assert.equal(during[0].providerIoStarted, null);
+  assert.equal(during[0].providerHttpStatus, null);
   assert.equal(during[0].terminalAt, null);
   release();
   const result = await pending;
@@ -442,6 +473,17 @@ test("trace write failures preserve the product result and do not retry the prov
     assert.equal(calls, 1, fail);
     assert.equal(result.ok, true, fail);
     assert.equal(result.image.bytes.equals(png), true, fail);
+    if (fail === "terminal") {
+      const row = [...traced.db.rows.values()][0];
+      assert.equal(row.state, "prepared");
+      assert.equal(row.provider_io_started, null);
+      assert.equal(row.terminal_at, null);
+      const presented = await readImageGenerationAttempts(traced.db, { attemptId: row.id });
+      assert.equal(presented[0].providerIoStarted, null);
+      assert.equal(presented[0].providerHttpStatus, null);
+    } else {
+      assert.equal(traced.db.rows.size, 0);
+    }
     const log = traced.db.logs.join("\n");
     assert.match(log, /event=image-generation-trace/);
     assert.match(log, new RegExp(`stage=${fail === "prepared" ? "prepared" : "terminal"}`));

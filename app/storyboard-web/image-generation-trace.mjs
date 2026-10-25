@@ -212,7 +212,7 @@ export function createImageGenerationTraceRecorder({
           $11, $12, $13, $14, 'prepared',
           $15, $16, $17, $18, $19, $20,
           $21, $22, $23,
-          $24::jsonb, $25::jsonb, false, $26
+          $24::jsonb, $25::jsonb, NULL, $26
         )
       `, [
         attemptId,
@@ -254,8 +254,9 @@ export function createImageGenerationTraceRecorder({
     try {
       if (!available() || typeof query !== "function") return;
       const ok = result?.ok === true && Buffer.isBuffer(result?.image?.bytes);
-      const providerStatus = safeHttpStatus(result?.diagnostics?.providerStatus ?? result?.metadata?.providerStatus);
-      const httpStatus = providerStatus ?? safeHttpStatus(result?.httpStatus);
+      const providerHttpStatus = safeHttpStatus(
+        result?.diagnostics?.providerStatus ?? result?.metadata?.providerStatus,
+      );
       const latency = safeInteger(result?.metadata?.latencyMs ?? result?.diagnostics?.latencyMs);
       const outcomeKind = ok
         ? (safeFinish(result?.metadata?.finishReason) || "succeeded")
@@ -292,7 +293,7 @@ export function createImageGenerationTraceRecorder({
         attemptId,
         ok ? "succeeded" : "failed",
         latency,
-        httpStatus,
+        providerHttpStatus,
         outcomeKind,
         usage ? JSON.stringify(usage) : null,
         outputSha,
@@ -371,10 +372,10 @@ export function presentImageGenerationAttempt(row) {
     requestSha256: row.request_sha256,
     sentReferences: jsonArray(row.sent_references),
     omissions: jsonArray(row.omissions),
-    providerIoStarted: row.provider_io_started === true,
+    providerIoStarted: row.provider_io_started === true ? true : null,
     timeoutMs: row.timeout_ms,
     latencyMs: row.latency_ms,
-    httpStatus: row.http_status,
+    providerHttpStatus: Number.isInteger(row.http_status) ? row.http_status : null,
     outcomeKind: row.outcome_kind,
     usage: row.usage && typeof row.usage === "object" ? row.usage : null,
     output: row.output_sha256 ? {

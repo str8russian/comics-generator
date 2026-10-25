@@ -74,13 +74,14 @@ Request evidence:
 
 Outcome evidence:
 
-- whether provider I/O began;
-- applied timeout, latency, and safe HTTP status;
-- safe outcome or finish kind;
+- `providerIoStarted`: `null` on a non-terminal prepared row, meaning provider I/O is not durably confirmed; `true` after a terminal update, because the production hook runs only after transport validation and immediately before the single provider attempt;
+- applied timeout and latency;
+- `providerHttpStatus`: the HTTP status from an observed provider response, or `null` when no response was observed. The database column remains `http_status`. A timeout or a network failure before any response does not store the application's mapped `504` or `502`;
+- safe outcome or finish kind, including `timeout` and `provider`, so the product classification remains inspectable;
 - only explicitly allowlisted scalar usage fields already returned by the provider adapter;
 - output SHA-256, MIME, byte length, width, and height when output bytes exist.
 
-No output asset id is required. Product asset persistence happens later. A non-terminal `prepared` row means interruption or unknown terminal state. It is not an inferred provider failure.
+No output asset id is required. Product asset persistence happens later. A non-terminal `prepared` row means interruption or unknown terminal state. `providerIoStarted` null does not mean provider I/O did not start, and the row is not an inferred provider failure. A failed terminal trace update leaves that prepared row unchanged.
 
 Bounded JSON is used only for the ordered reference list and the omission list.
 

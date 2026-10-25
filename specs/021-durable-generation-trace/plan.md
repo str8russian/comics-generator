@@ -57,7 +57,7 @@ Order:
 6. `updateTerminal` records success, provider failure, or timeout.
 7. Product persistence continues unchanged.
 
-A payload rejection from `prepareImageRequest` returns before `imageGenerator`. No row is created. A prepared row that never receives a terminal update stays `prepared` with `provider_io_started = false`. No sweeper is added.
+A payload rejection from `prepareImageRequest` returns before `imageGenerator`. No row is created. A prepared row stores `provider_io_started` as NULL. Inspection returns `providerIoStarted: null` until the terminal update sets it true. `http_status` stores only `diagnostics.providerStatus` or `metadata.providerStatus` from an actual provider response. Inspection exposes that value as `providerHttpStatus`. Timeout and network failure before a response leave it null and keep the outcome kind. Migration `019_image_generation_attempt_observed_facts.sql` makes the I/O column nullable, drops its false default, and converts existing prepared false values to NULL. A fresh database applies `018` and then `019`. An already-migrated `comics_test` database applies only `019`. No sweeper is added.
 
 Anchor calls do not pass `traceContext`, so the hook is not installed and the generator argument list stays the pre-feature shape.
 
