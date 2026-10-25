@@ -255,7 +255,7 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   max-width: calc(100vw - 24px);
   max-height: calc(100dvh - 24px);
   margin: auto;
-  overflow: hidden;
+  overflow: visible;
   border: 0;
   border-radius: 16px;
   padding: 12px;
@@ -267,8 +267,8 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   min-width: 0;
   max-width: 100%;
   max-height: calc(100dvh - 48px);
+  overflow: auto;
   overflow-x: hidden;
-  overflow-y: auto;
   display: grid;
   gap: 12px;
 }
