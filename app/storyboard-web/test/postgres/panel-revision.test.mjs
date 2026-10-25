@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import http from "node:http";
 import test from "node:test";
+import { CHECKPOINT_PROJECT_ID, resetCheckpointFixture } from "../../checkpoint-panel-revision.mjs";
 import { createPool } from "../../db/pool.mjs";
 import { migrate } from "../../db/migrate.mjs";
 import { generateImage } from "../../image-provider.mjs";
@@ -726,6 +727,35 @@ test("revision failures leave the accepted panel image unchanged", {
     }
   } finally {
     await cleanup(pool);
+    await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
+    guard.release();
+    await pool.end();
+  }
+});
+
+test("checkpoint fixture replaces an existing Feature 022 project on the first restart", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+  timeout: 120000,
+}, async () => {
+  assert.equal(new URL(databaseUrl).pathname, "/comics_test");
+  const pool = createPool(databaseUrl);
+  const guard = await pool.connect();
+  try {
+    await guard.query("SELECT pg_advisory_lock($1::bigint)", [TEST_LOCK]);
+    await resetCheckpointFixture(pool);
+    const reading = await pool.query("SELECT id FROM reading WHERE project_id = $1", [CHECKPOINT_PROJECT_ID]);
+    await pool.query("UPDATE project SET current_reading_id = $2 WHERE id = $1", [CHECKPOINT_PROJECT_ID, reading.rows[0].id]);
+    await resetCheckpointFixture(pool);
+    const projects = await pool.query("SELECT count(*)::int AS count FROM project WHERE id = $1", [CHECKPOINT_PROJECT_ID]);
+    const readings = await pool.query("SELECT count(*)::int AS count FROM reading WHERE project_id = $1", [CHECKPOINT_PROJECT_ID]);
+    assert.equal(projects.rows[0].count, 1);
+    assert.equal(readings.rows[0].count, 1);
+    const active = await pool.query(
+      "SELECT current_reading_id IS NOT NULL AS linked FROM project WHERE id = $1",
+      [CHECKPOINT_PROJECT_ID],
+    );
+    assert.equal(active.rows[0].linked, false);
+  } finally {
     await guard.query("SELECT pg_advisory_unlock($1::bigint)", [TEST_LOCK]).catch(() => {});
     guard.release();
     await pool.end();

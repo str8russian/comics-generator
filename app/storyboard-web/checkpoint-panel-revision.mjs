@@ -6,23 +6,23 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { createServer as createHttpServer } from "node:http";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createPool } from "./db/pool.mjs";
 import { migrate } from "./db/migrate.mjs";
 import { generateImage } from "./image-provider.mjs";
 import { createServer } from "./server.mjs";
 
 const databaseUrl = process.env.STORYBOARD_TEST_DATABASE_URL;
-if (!databaseUrl) {
-  console.error("STORYBOARD_TEST_DATABASE_URL is required and must name comics_test");
-  process.exit(1);
-}
-const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
-if (databaseName !== "comics_test") {
-  console.error("refusing non-test database");
-  process.exit(1);
+
+function runningAsEntry() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(path.resolve(entry)).href;
 }
 
-const PROJECT_ID = "02200000-0000-4000-8000-0000000000c1";
+export const CHECKPOINT_PROJECT_ID = "02200000-0000-4000-8000-0000000000c1";
+const PROJECT_ID = CHECKPOINT_PROJECT_ID;
 const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=",
   "base64",
@@ -54,13 +54,40 @@ function listen(server) {
   });
 }
 
+const FIXTURE_MATERIAL = `
+  SELECT material_state.id FROM material_state
+  JOIN source_revision ON source_revision.id = material_state.source_revision_id
+  WHERE source_revision.project_id = $1
+`;
+const FIXTURE_RESULT = `
+  SELECT storyboard_result.id FROM storyboard_result
+  WHERE storyboard_result.material_state_id IN (${FIXTURE_MATERIAL})
+`;
+const FIXTURE_INTERPRETATION = `
+  SELECT interpretation.id FROM interpretation
+  JOIN source_revision ON source_revision.id = interpretation.source_revision_id
+  WHERE source_revision.project_id = $1
+`;
+
 async function cleanup(pool) {
+  const readingColumn = await pool.query(`
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'project'
+      AND column_name = 'current_reading_id'
+  `);
+  const clearReading = readingColumn.rowCount > 0 ? ", current_reading_id = NULL" : "";
   const statements = [
+    `UPDATE project
+       SET active_source_revision_id = NULL,
+           active_material_state_id = NULL${clearReading}
+     WHERE id = $1`,
     "UPDATE panel_revision_session SET selected_candidate_id = NULL, accepted_candidate_id = NULL WHERE project_id = $1",
     "DELETE FROM panel_revision_candidate WHERE session_id IN (SELECT id FROM panel_revision_session WHERE project_id = $1)",
     "DELETE FROM panel_revision_session WHERE project_id = $1",
     "DELETE FROM image_generation_attempt WHERE project_id = $1",
     "DELETE FROM research_event WHERE project_id = $1",
+    "DELETE FROM character_exclusion WHERE project_id = $1",
     `UPDATE panel_visual_state SET current_generation_id = NULL
        WHERE storyboard_version_id IN (
          SELECT storyboard_version.id FROM storyboard_version
@@ -88,36 +115,52 @@ async function cleanup(pool) {
        JOIN material_state ON material_state.id = storyboard_result.material_state_id
        JOIN source_revision ON source_revision.id = material_state.source_revision_id
        WHERE source_revision.project_id = $1)`,
-    `DELETE FROM storyboard_head WHERE storyboard_result_id IN (
-       SELECT storyboard_result.id FROM storyboard_result
-       JOIN material_state ON material_state.id = storyboard_result.material_state_id
-       JOIN source_revision ON source_revision.id = material_state.source_revision_id
-       WHERE source_revision.project_id = $1)`,
-    `DELETE FROM storyboard_version WHERE storyboard_result_id IN (
-       SELECT storyboard_result.id FROM storyboard_result
-       JOIN material_state ON material_state.id = storyboard_result.material_state_id
-       JOIN source_revision ON source_revision.id = material_state.source_revision_id
-       WHERE source_revision.project_id = $1)`,
-    `DELETE FROM storyboard_result WHERE material_state_id IN (
-       SELECT material_state.id FROM material_state
-       JOIN source_revision ON source_revision.id = material_state.source_revision_id
-       WHERE source_revision.project_id = $1)`,
-    `DELETE FROM project_style_seed WHERE material_state_id = '${ids.material}'`,
-    `DELETE FROM character_anchor_head WHERE material_state_id = '${ids.material}'`,
-    `DELETE FROM character_anchor_version WHERE material_state_id = '${ids.material}'`,
-    `DELETE FROM canonical_character WHERE material_state_id = '${ids.material}'`,
+    `DELETE FROM storyboard_reusable_asset WHERE storyboard_result_id IN (${FIXTURE_RESULT})`,
+    `DELETE FROM storyboard_head WHERE storyboard_result_id IN (${FIXTURE_RESULT})`,
+    `DELETE FROM storyboard_version WHERE storyboard_result_id IN (${FIXTURE_RESULT})`,
+    `DELETE FROM storyboard_result WHERE material_state_id IN (${FIXTURE_MATERIAL})`,
+    `DELETE FROM character_identity WHERE material_state_id IN (${FIXTURE_MATERIAL})`,
+    `DELETE FROM project_style_seed WHERE material_state_id IN (${FIXTURE_MATERIAL})`,
+    `DELETE FROM character_anchor_head WHERE material_state_id IN (${FIXTURE_MATERIAL})`,
+    `DELETE FROM character_anchor_version WHERE material_state_id IN (${FIXTURE_MATERIAL})`,
+    `DELETE FROM alias WHERE material_state_id IN (${FIXTURE_MATERIAL})`,
+    `DELETE FROM speaker_assignment WHERE material_state_id IN (${FIXTURE_MATERIAL})`,
+    `DELETE FROM canonical_character WHERE material_state_id IN (${FIXTURE_MATERIAL})`,
     "DELETE FROM visual_asset WHERE project_id = $1",
+    "DELETE FROM pending_speaker WHERE reading_id IN (SELECT id FROM reading WHERE project_id = $1)",
+    "DELETE FROM pending_alias WHERE reading_id IN (SELECT id FROM reading WHERE project_id = $1)",
+    "DELETE FROM pending_character WHERE reading_id IN (SELECT id FROM reading WHERE project_id = $1)",
+    `DELETE FROM surface_form WHERE interpretation_id IN (${FIXTURE_INTERPRETATION})`,
+    `DELETE FROM provisional_character WHERE interpretation_id IN (${FIXTURE_INTERPRETATION})`,
+    `DELETE FROM source_item WHERE interpretation_id IN (${FIXTURE_INTERPRETATION})`,
     "DELETE FROM material_state WHERE source_revision_id IN (SELECT id FROM source_revision WHERE project_id = $1)",
     "DELETE FROM interpretation WHERE source_revision_id IN (SELECT id FROM source_revision WHERE project_id = $1)",
     "DELETE FROM reading WHERE project_id = $1",
-    "UPDATE project SET active_source_revision_id = NULL, active_material_state_id = NULL WHERE id = $1",
     "DELETE FROM source_revision WHERE project_id = $1",
     "DELETE FROM working_draft WHERE project_id = $1",
     "DELETE FROM project WHERE id = $1",
   ];
   for (const statement of statements) {
-    const params = statement.includes("$1") ? [PROJECT_ID] : [];
-    await pool.query(statement, params).catch(() => {});
+    try {
+      await pool.query(statement, [PROJECT_ID]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Feature 022 checkpoint cleanup failed: ${message}`);
+    }
+  }
+}
+
+export async function resetCheckpointFixture(pool) {
+  if (!databaseUrl || new URL(databaseUrl).pathname.replace(/^\//, "") !== "comics_test") {
+    throw new Error("Feature 022 checkpoint reset requires comics_test");
+  }
+  await migrate({ connectionString: databaseUrl, logger: { log() {} } });
+  await cleanup(pool);
+  const client = await pool.connect();
+  try {
+    await seed(client);
+  } finally {
+    client.release();
   }
 }
 
@@ -224,62 +267,74 @@ async function seed(client) {
   await client.query("UPDATE panel_visual_state SET current_generation_id = $2 WHERE id = $1", [ids.state, ids.generation]);
 }
 
-const fake = createHttpServer((req, res) => {
-  if (req.url === "/counts") {
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ count: calls.length }));
-    return;
+async function startCheckpoint() {
+  if (!databaseUrl) {
+    console.error("STORYBOARD_TEST_DATABASE_URL is required and must name comics_test");
+    process.exit(1);
   }
-  const chunks = [];
-  req.on("data", (chunk) => chunks.push(chunk));
-  req.on("end", () => {
-    calls.push(1);
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({
-      choices: [{
-        message: {
-          content: [
-            { type: "text", text: "ok" },
-            { type: "image_url", image_url: { url: dataUrl } },
-          ],
-        },
-      }],
-    }));
+  const databaseName = new URL(databaseUrl).pathname.replace(/^\//, "");
+  if (databaseName !== "comics_test") {
+    console.error("refusing non-test database");
+    process.exit(1);
+  }
+  const fake = createHttpServer((req, res) => {
+    if (req.url === "/counts") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ count: calls.length }));
+      return;
+    }
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      calls.push(1);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        choices: [{
+          message: {
+            content: [
+              { type: "text", text: "ok" },
+              { type: "image_url", image_url: { url: dataUrl } },
+            ],
+          },
+        }],
+      }));
+    });
   });
-});
-
-const fakePort = await listen(fake);
-const pool = createPool(databaseUrl);
-await migrate({ connectionString: databaseUrl, logger: { log() {} } });
-await cleanup(pool);
-const client = await pool.connect();
-try {
-  await seed(client);
-} finally {
-  client.release();
+  const fakePort = await listen(fake);
+  const pool = createPool(databaseUrl);
+  try {
+    await resetCheckpointFixture(pool);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  } finally {
+    await pool.end();
+  }
+  const env = {
+    BASE_URL: `http://127.0.0.1:${fakePort}/v1`,
+    CONTEST_API_TOKEN: "checkpoint-fake-token",
+    IMAGE_MODEL: "fake-image",
+    IMAGE_TIMEOUT_MS: "5000",
+    IMAGE_REFERENCE_STRATEGY: "passthrough",
+    DATABASE_URL: databaseUrl,
+  };
+  process.env.DATABASE_URL = databaseUrl;
+  const app = createServer({
+    env,
+    imageGenerator: generateImage,
+    logger: { log() {} },
+    migrate: async () => {},
+  });
+  const appPort = await listen(app);
+  console.log(JSON.stringify({
+    projectId: PROJECT_ID,
+    url: `http://127.0.0.1:${appPort}/projects/${PROJECT_ID}`,
+    appPort,
+    fakePort,
+    fakeCounts: `http://127.0.0.1:${fakePort}/counts`,
+  }));
 }
-await pool.end();
 
-const env = {
-  BASE_URL: `http://127.0.0.1:${fakePort}/v1`,
-  CONTEST_API_TOKEN: "checkpoint-fake-token",
-  IMAGE_MODEL: "fake-image",
-  IMAGE_TIMEOUT_MS: "5000",
-  IMAGE_REFERENCE_STRATEGY: "passthrough",
-  DATABASE_URL: databaseUrl,
-};
-process.env.DATABASE_URL = databaseUrl;
-const app = createServer({
-  env,
-  imageGenerator: generateImage,
-  logger: { log() {} },
-  migrate: async () => {},
-});
-const appPort = await listen(app);
-console.log(JSON.stringify({
-  projectId: PROJECT_ID,
-  url: `http://127.0.0.1:${appPort}/projects/${PROJECT_ID}`,
-  appPort,
-  fakePort,
-  fakeCounts: `http://127.0.0.1:${fakePort}/counts`,
-}));
+if (runningAsEntry()) {
+  await startCheckpoint();
+}
