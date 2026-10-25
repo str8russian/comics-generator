@@ -63,7 +63,7 @@ The detail dialog remains the Frame Editor with its canvas, frame dialogue secti
 
 Its per-panel controls are grouped under **Редактор панели** with one tab per panel (**Панель 2.1 · Путин**). Opening a frame shows its first panel; selecting a tab or clicking a panel in the canvas switches the visible panel. Each panel has:
 
-- **Изображение:** the basis label, its lineage and failure text, the instruction field, and the existing **Переделать эту панель / Создать эту панель** action.
+- **Изображение:** the basis label, its lineage and failure text, the instruction field, and either **Создать эту панель** when the panel has no image or Feature 022's **Уточнить текущее** / **Новая вариация** draft when it already has one. The immediate **Переделать эту панель** action is no longer the owner path for a panel that already has an image.
 - **Кадрирование:** zoom, a visible drag-to-pan hint, mirror, and reset with Feature 010 semantics.
 - **Референсы:** the approved base anchor shown read-only as the identity reference, and the existing pose or expression photo input, labelled as affecting only this panel's pose, expression, and gaze (`DEC-032`). The photo is sent with the next generation of that panel, as before.
 
@@ -110,7 +110,7 @@ On a disposable copy of a real project, served from the Feature 019 worktree wit
 2. Find a frame in Раскадровка or Визуал; select it and see its actions in the inspector, with no button rows on cards.
 3. Duplicate it from the inspector and see the copy selected and opened.
 4. Change dialogue mode and speaker from the inspector.
-5. In the Frame Editor, pick a panel and find zoom, drag-to-pan, mirror, and reset, the basis label, **Переделать эту панель**, and the pose photo input.
+5. In the Frame Editor, pick a panel and find zoom, drag-to-pan, mirror, and reset, the basis label, and the pose photo input. A panel that already has an image offers **Уточнить текущее** and **Новая вариация** instead of an immediate regenerate.
 6. See the dock scope follow the panel selection; reach Notes and История операций.
 7. Undo the last change with the global Undo.
 8. Reach the Visual approval gate and the Video stage with render controls.

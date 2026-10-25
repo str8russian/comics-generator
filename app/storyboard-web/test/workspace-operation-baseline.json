@@ -1313,13 +1313,14 @@
     "panelGenerate": {
       "request": {
         "method": "POST",
-        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/display-1/panels/0/generate",
+        "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/frames/display-1/panels/0/revision",
         "body": {
+          "mode": "refine",
           "instruction": "сделай крупнее"
         }
       },
       "research": {
-        "semanticAction": "panel_generate",
+        "semanticAction": "panel_revision_open",
         "surface": "product_control",
         "submittedText": "сделай крупнее",
         "commandTarget": {

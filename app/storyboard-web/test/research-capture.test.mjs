@@ -688,7 +688,7 @@ test("frame_generate and panel_generate capture display/structure identity; pane
   assert.equal(panel.start.context.panelSubject, "Путин");
   assert.equal(panel.start.context.imageAssetId, "asset-1");
   assert.equal(panel.start.context.generationId, "gen-panel-1");
-  const product = productPosts.find((entry) => /\/panels\/0\/generate$/.test(entry.path));
+  const product = productPosts.find((entry) => /\/panels\/0\/revision-candidate$/.test(entry.path));
   assert.ok(product);
   assert.equal(product.body.instruction, "перерисуй панель");
   assert.equal(product.body.correlationId, panel.start.correlationId);
@@ -1117,7 +1117,7 @@ test("T028 panel regenerate failure sets retainedLastGoodImage only when prior a
   try {
     fetchImpl = async (url, init = {}) => {
       const path = new URL(url, "http://127.0.0.1").pathname;
-      if (/\/panels\/0\/generate$/.test(path)) {
+      if (/\/panels\/0\/(?:generate|revision-candidate)$/.test(path)) {
         return jsonResponse(502, { status: "failed", kind: "provider" });
       }
       return original(url, init);
@@ -1547,8 +1547,8 @@ test("dock panel generation forwards only the dock correlation", async () => {
   let start = null;
   let product = null;
   while (Date.now() - started < 1000) {
-    start = researchPosts.find((event) => event.eventKind === "action_start" && event.semanticAction === "panel_generate");
-    product = productPosts.find((entry) => /\/panels\/\d+\/generate$/.test(entry.path));
+    start = researchPosts.find((event) => event.eventKind === "action_start" && event.semanticAction === "panel_revision_open");
+    product = productPosts.find((entry) => /\/panels\/\d+\/revision$/.test(entry.path));
     if (start && product) break;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -2092,7 +2092,7 @@ test("detail dialog shows panel generation states without closing", async () => 
   let started = false;
   fetchImpl = async (url, init = {}) => {
     const path = new URL(url, "http://127.0.0.1").pathname;
-    if (/\/panels\/\d+\/generate$/.test(path)) {
+    if (/\/panels\/\d+\/revision-candidate$/.test(path)) {
       started = true;
       await new Promise((resolve) => { release = resolve; });
       return jsonResponse(200, readyVisual());
@@ -2107,7 +2107,7 @@ test("detail dialog shows panel generation states without closing", async () => 
     assert.equal(detail.open, true);
     assert.equal(running.hidden, false);
     assert.equal(running.dataset.kind, "running");
-    assert.match(running.textContent, /Создаю панель 1 кадра 1/);
+    assert.match(running.textContent, /Создаю кандидат/);
     assert.equal(running.getAttribute("aria-live"), "polite");
     assert.equal(button.disabled, true);
     assert.equal(document.querySelector("#action-status").dataset.kind, "running");
@@ -2118,7 +2118,7 @@ test("detail dialog shows panel generation states without closing", async () => 
     assert.equal(document.querySelector("#detail-frame-number").textContent, "Кадр 1");
     assert.equal(success.hidden, false);
     assert.equal(success.dataset.kind, "success");
-    assert.match(success.textContent, /Панель 1 кадра 1 готова/);
+    assert.match(success.textContent, /Кандидат готов/);
     assert.equal(panelRegenerateButton().disabled, false);
     assert.equal(document.body.dataset.busy, undefined);
     assert.equal(document.querySelector("#action-status").dataset.kind, "success");
@@ -2134,7 +2134,7 @@ test("detail dialog shows panel generation states without closing", async () => 
   ]) {
     fetchImpl = async (url, init = {}) => {
       const path = new URL(url, "http://127.0.0.1").pathname;
-      if (/\/panels\/\d+\/generate$/.test(path)) return jsonResponse(422, { status: "failed", kind });
+      if (/\/panels\/\d+\/revision-candidate$/.test(path)) return jsonResponse(422, { status: "failed", kind });
       return original(url, init);
     };
     page.openResearchDetail(0);

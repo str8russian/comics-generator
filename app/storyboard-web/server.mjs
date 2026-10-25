@@ -57,6 +57,12 @@ import {
   validateCharacterGeneration,
   validatePanelReadyAuthorities,
 } from "./visual-model.mjs";
+import {
+  assembleRevisionReferences,
+  compileRevisionPrompt,
+  PANEL_REVISION_COMPILER_ID,
+  PANEL_REVISION_COMPILER_VERSION,
+} from "./panel-revision.mjs";
 import { createResearchStore } from "./research-store.mjs";
 import { MATTE_CONTRACT_SHA256, MATTE_CONTRACT_VERSION } from "./foreground/contract.mjs";
 import { createVisualStore } from "./visual-store.mjs";
@@ -86,6 +92,7 @@ export const routes = [
   { method: "GET", path: "/workspace-stages.mjs", file: "app/storyboard-web/public/workspace-stages.mjs" },
   { method: "GET", path: "/frame-inspector.mjs", file: "app/storyboard-web/public/frame-inspector.mjs" },
   { method: "GET", path: "/panel-basis.mjs", file: "app/storyboard-web/public/panel-basis.mjs" },
+  { method: "GET", path: "/panel-revision-view.mjs", file: "app/storyboard-web/public/panel-revision-view.mjs" },
   { method: "GET", path: "/character-anchors/putin.png", file: "app/storyboard-web/public/character-anchors/putin.png" },
   { method: "GET", path: "/character-anchors/durov.png", file: "app/storyboard-web/public/character-anchors/durov.png" },
   { method: "GET", path: "/character-anchors/peskov.png", file: "app/storyboard-web/public/character-anchors/peskov.png" },
@@ -878,7 +885,7 @@ function visualAnchorApprovalPath(pathname) {
 function visualFramePath(pathname) {
   const frame = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/generate$/);
   if (frame) return { frameId: decodeURIComponent(frame[1]), kind: "frame" };
-  const panel = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/panels\/(\d+)\/(generate|placement)$/);
+  const panel = pathname.match(/^\/api\/visual\/frames\/([^/]+)\/panels\/(\d+)\/(generate|placement|revision|revision-preview|revision-candidate|revision-navigate|revision-accept|revision-cancel)$/);
   if (!panel) return null;
   return {
     frameId: decodeURIComponent(panel[1]),
@@ -1908,6 +1915,252 @@ async function generateOnePanel({
   return finished;
 }
 
+function revisionReferenceIdentity(plan, assembled) {
+  const sent = new Map((assembled.slots || []).map((slot) => [slot.role, slot.asset?.id || null]));
+  return {
+    anchorVersionId: plan.anchorVersionId || null,
+    identityAssetId: sent.get("anchor") || plan.identityAssetId || null,
+    previousAssetId: sent.get("previous") || null,
+    performanceAssetId: sent.get("performance") || null,
+    styleAssetId: sent.get("style") || (assembled.identityAlsoStyle ? sent.get("anchor") : null),
+  };
+}
+
+async function handlePanelRevision(req, res, {
+  runtime,
+  target,
+  imageGenerator,
+  env,
+  fetchImpl,
+  logger,
+  nextRequest,
+}) {
+  if (req.method !== "POST") {
+    sendEmpty(res, 405, { Allow: "POST" });
+    req.resume();
+    return;
+  }
+  const request = nextRequest ? nextRequest() : undefined;
+  const body = await readVisualBody(req, res, IMAGE_MAX_BODY_BYTES);
+  if (body.done) return;
+  if (body.invalid) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-request" });
+    return;
+  }
+  const payload = body.payload && typeof body.payload === "object" ? body.payload : {};
+  const mode = payload.mode === "new-variation" ? "new-variation" : "refine";
+  const instruction = typeof payload.instruction === "string" ? payload.instruction : "";
+  const addressed = {
+    frameId: target.frameId,
+    panelIndex: target.panelIndex,
+    mode,
+    instruction,
+  };
+  if (target.kind === "revision-preview") {
+    const preview = await runtime.visualStore.previewPanelRevision(addressed);
+    if (!preview.ok) {
+      sendVisualFailure(res, preview);
+      return;
+    }
+    sendJson(res, 200, { summary: preview.summary });
+    return;
+  }
+  if (target.kind === "revision") {
+    const opened = await runtime.visualStore.openPanelRevision(addressed);
+    logVisual(logger, request, "panel-revision-open", {
+      status: opened.ok ? "ok" : "failed",
+      kind: opened.ok ? undefined : safeKind(opened.kind),
+      frameId: target.frameId,
+      panelIndex: target.panelIndex,
+      mode,
+    });
+    if (!opened.ok) {
+      sendVisualFailure(res, opened);
+      return;
+    }
+    await sendVisualState(res, runtime, { logger, request });
+    return;
+  }
+  if (target.kind === "revision-navigate") {
+    const moved = await runtime.visualStore.navigatePanelRevision({
+      frameId: target.frameId,
+      panelIndex: target.panelIndex,
+      direction: payload.direction,
+    });
+    if (!moved.ok) {
+      sendVisualFailure(res, moved);
+      return;
+    }
+    await sendVisualState(res, runtime, { logger, request });
+    return;
+  }
+  if (target.kind === "revision-accept") {
+    const accepted = await runtime.visualStore.acceptPanelRevision({
+      frameId: target.frameId,
+      panelIndex: target.panelIndex,
+      candidateId: typeof payload.candidateId === "string" ? payload.candidateId : null,
+    });
+    logVisual(logger, request, "panel-revision-accept", {
+      status: accepted.ok ? "ok" : "failed",
+      kind: accepted.ok ? undefined : safeKind(accepted.kind),
+      frameId: target.frameId,
+      panelIndex: target.panelIndex,
+    });
+    if (!accepted.ok) {
+      sendVisualFailure(res, accepted);
+      return;
+    }
+    await sendVisualState(res, runtime, { logger, request });
+    return;
+  }
+  if (target.kind === "revision-cancel") {
+    const cancelled = await runtime.visualStore.cancelPanelRevision({
+      frameId: target.frameId,
+      panelIndex: target.panelIndex,
+    });
+    logVisual(logger, request, "panel-revision-cancel", {
+      status: cancelled.ok ? "ok" : "failed",
+      kind: cancelled.ok ? undefined : safeKind(cancelled.kind),
+      frameId: target.frameId,
+      panelIndex: target.panelIndex,
+    });
+    if (!cancelled.ok) {
+      sendVisualFailure(res, cancelled);
+      return;
+    }
+    await sendVisualState(res, runtime, { logger, request });
+    return;
+  }
+  const plan = await runtime.visualStore.previewPanelRevision(addressed);
+  if (!plan.ok) {
+    sendVisualFailure(res, plan);
+    return;
+  }
+  if (!plan.summary?.providerCall) {
+    sendJson(res, 409, { status: "failed", kind: plan.summary?.blockReason || "no-supported-change", summary: plan.summary });
+    return;
+  }
+  const opened = await runtime.visualStore.openPanelRevision(addressed);
+  if (!opened.ok) {
+    sendVisualFailure(res, opened);
+    return;
+  }
+  const performanceImage = payload.performanceImageDataUrl
+    ? parseImageDataUrl(payload.performanceImageDataUrl)
+    : null;
+  if (payload.performanceImageDataUrl && !performanceImage) {
+    sendJson(res, 400, { status: "failed", kind: "invalid-image" });
+    return;
+  }
+  const pending = await runtime.visualStore.beginPanelGeneration({
+    frameId: target.frameId,
+    panelIndex: target.panelIndex,
+    instruction,
+    performanceImage,
+    revisionBasis: plan.basisKind === "none"
+      ? { omitPrevious: true }
+      : { assetId: plan.basisAssetId },
+  });
+  if (!pending.ok) {
+    sendVisualFailure(res, pending);
+    return;
+  }
+  const assembled = assembleRevisionReferences({
+    mode,
+    anchor: pending.refs.anchor,
+    previous: plan.basisKind === "none" ? null : pending.refs.previous,
+    performance: pending.refs.performance,
+    style: pending.refs.style,
+  });
+  if (!assembled.ok) {
+    const failedFinish = await runtime.visualStore.finishPanelGeneration({
+      id: pending.id,
+      result: { ok: false, kind: assembled.kind, httpStatus: 409 },
+    });
+    sendVisualFailure(res, failedFinish.ok ? assembled : failedFinish);
+    return;
+  }
+  const traceContext = {
+    diagnosticId: request == null ? "request" : String(request),
+    projectId: requireProjectId(),
+    generationKind: "panel",
+    actionKind: "panel",
+    correlationId: nullableCorrelationId(payload.correlationId),
+    panelGenerationId: pending.id,
+    storyboardVersionId: pending.storyboardVersionId,
+    frameId: pending.frame?.id ?? null,
+    panelId: pending.panel?.id ?? null,
+    panelIndex: target.panelIndex,
+    compilerId: PANEL_REVISION_COMPILER_ID,
+    compilerVersion: PANEL_REVISION_COMPILER_VERSION,
+    upstreamOmissions: assembled.omissions,
+  };
+  const result = await deliverPreparedImage({
+    slots: assembled.slots,
+    generationMode: assembled.generationMode,
+    assembled,
+    compile: (flags) => compileRevisionPrompt(plan.effectiveIntent, {
+      aspectRatio: aspectRatioForFrame(pending.frame),
+      hasPrevious: flags.hasPrevious,
+      hasPerformance: flags.hasPerformance,
+      hasStyle: flags.hasStyle,
+      identityAlsoStyle: flags.identityAlsoStyle,
+    }),
+    aspectRatio: aspectRatioForFrame(pending.frame),
+    imageGenerator,
+    env,
+    fetchImpl,
+    traceContext,
+    traceRecorder: runtime.traceRecorder || null,
+  });
+  logVisual(logger, request, "panel-revision-provider", {
+    ...transportLogFields(result?.diagnostics),
+    status: result?.ok ? "ok" : "failed",
+    kind: result?.ok ? undefined : safeKind(result?.kind),
+    frameId: target.frameId,
+    panelIndex: target.panelIndex,
+    generationId: pending.id,
+    mode,
+  });
+  const revision = result?.ok ? {
+    sessionId: opened.sessionId,
+    mode,
+    basisKind: plan.basisKind,
+    basisAssetId: plan.basisKind === "none" ? null : plan.basisAssetId,
+    basisOrdinal: plan.basisOrdinal,
+    effectiveIntent: plan.effectiveIntent,
+    performanceAssetId: pending.refs.performance?.id || null,
+    referenceIdentity: revisionReferenceIdentity(plan, assembled),
+    instruction,
+  } : null;
+  const finished = await runtime.visualStore.finishPanelGeneration({
+    id: pending.id,
+    result,
+    provenance: {
+      origin: "generation",
+      subject: pending.subject || null,
+      description: pending.panel?.description || "",
+      submittedText: instruction || null,
+      effectiveIntent: plan.effectiveIntent,
+      intent: plan.effectiveIntent,
+      structureFrameId: pending.frame?.structureFrameId || pending.frame?.id || null,
+      panelId: pending.panel?.id || null,
+      panelIndex: target.panelIndex,
+      styleAssetId: pending.refs?.style?.id || pending.refs?.anchor?.id || null,
+      sourceAssetId: plan.basisKind === "none" ? null : plan.basisAssetId,
+      matteContractVersion: MATTE_CONTRACT_VERSION,
+      matteContractSha256: MATTE_CONTRACT_SHA256,
+    },
+    revision,
+    runExtraction: runtime.foregroundExtract,
+  });
+  if (!finished.ok) {
+    sendVisualFailure(res, finished);
+    return;
+  }
+  await sendVisualState(res, runtime, { logger, request });
+}
+
 function failedVisual(kind, httpStatus) {
   return { ok: false, status: "failed", kind, httpStatus };
 }
@@ -1922,6 +2175,18 @@ async function handleVisualGeneration(req, res, {
   nextRequest,
 }) {
   const request = nextRequest ? nextRequest() : undefined;
+  if (String(target.kind).startsWith("revision")) {
+    await handlePanelRevision(req, res, {
+      runtime,
+      target,
+      imageGenerator,
+      env,
+      fetchImpl,
+      logger,
+      nextRequest: () => request,
+    });
+    return;
+  }
   if (target.kind === "placement") {
     if (req.method !== "PATCH") {
       sendEmpty(res, 405, { Allow: "PATCH" });
@@ -2768,6 +3033,7 @@ export function createServer({
   researchStore,
   imageGenerator = generateImage,
   traceRecorder: suppliedTraceRecorder,
+  foregroundExtract = undefined,
   enableLegacyStoryboardRoute = false,
   renderController,
 } = {}) {
@@ -2779,6 +3045,7 @@ export function createServer({
     pool: null,
     traceRecorder: null,
     renderController: renderController ?? null,
+    foregroundExtract,
     ensureRender() {
       if (!this.renderController) this.renderController = createRenderController({ logger });
       return this.renderController;

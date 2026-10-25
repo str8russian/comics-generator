@@ -19,6 +19,7 @@ const SEMANTIC_ACTIONS = new Set([
   "anchor_restore",
   "frame_generate",
   "panel_generate",
+  "panel_revision_open",
   "placement_commit",
   "visual_approve",
   "frame_insert",

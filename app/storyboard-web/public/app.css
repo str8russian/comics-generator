@@ -1593,6 +1593,34 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
   font-weight: 700;
 }
 
+.revision-actions,
+.revision-review,
+.revision-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.revision-summary p,
+.revision-count {
+  margin: 0;
+}
+
+.revision-candidate-preview {
+  width: 160px;
+  height: auto;
+  background: #5d6e86;
+}
+
+.revision-confirm {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #1d2428;
+  background: #fffdf8;
+}
+
 .editor-canvas .panel-selected::after,
 #detail-frame .panel-selected::after {
   content: "";

@@ -14,6 +14,15 @@ import { attachPanelForeground } from "./foreground/persist.mjs";
 import { SYSTEM_PANEL_BACKGROUND } from "./panel-background.mjs";
 import { requireProjectId, touchProjectContent } from "./project-scope.mjs";
 import {
+  initializeEffectiveIntent,
+  moveCandidateSelection,
+  normalizeRevisionSnapshot,
+  PANEL_REVISION_COMPILER_ID,
+  PANEL_REVISION_COMPILER_VERSION,
+  revisionBasisFor,
+  summarizeRevision,
+} from "./panel-revision.mjs";
+import {
   expandStoryboardFrames,
   isManualCharacterTarget,
   placement,
@@ -231,6 +240,7 @@ const UNDO_LABELS = {
   batch: "несколько изменений",
   placement: "кадрирование",
   "panel-generation": "генерацию панели",
+  "panel-revision-accept": "принятие кандидата панели",
 };
 
 function undoLabelFor(instruction) {
@@ -403,6 +413,9 @@ export function sanitizeProvenance(value) {
       if (typeof value.intent[key] === "string" && value.intent[key]) intent[key] = value.intent[key];
     }
     if (Object.keys(intent).length) out.intent = intent;
+  }
+  if (value.effectiveIntent && typeof value.effectiveIntent === "object" && !Array.isArray(value.effectiveIntent)) {
+    out.effectiveIntent = normalizeRevisionSnapshot(value.effectiveIntent);
   }
   return Object.keys(out).length ? out : null;
 }
@@ -665,6 +678,7 @@ async function loadVisualWithClient(client) {
         approvedAssetUrl: assetUrl(approved?.output_asset_id),
       });
     }
+    const openRevisions = await loadOpenRevisions(client, anchors, states.rows);
 
     const frames = expandStoryboardFrames(context.version.frames).map((frame) => {
       const panels = frame.panels.map((panel, panelIndex) => {
@@ -714,6 +728,7 @@ async function loadVisualWithClient(client) {
           generationStatus: latestGeneration?.status ?? null,
           generationError: latestGeneration?.error_kind ?? null,
           instruction: state?.generation_instruction ?? "",
+          revision: openRevisions.get(panel.id) || openRevisions.get(state?.panel_id) || null,
           ...placed,
         };
       });
@@ -769,6 +784,420 @@ async function loadVisualWithClient(client) {
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
+  }
+}
+
+function revisionMode(value) {
+  return value === "new-variation" ? "new-variation" : "refine";
+}
+
+async function loadOpenRevisions(client, anchors, states) {
+  const sessions = await client.query(`
+    SELECT *
+    FROM panel_revision_session
+    WHERE project_id = $1 AND status = 'open'
+    ORDER BY created_at, id
+  `, [requireProjectId()]);
+  if (sessions.rowCount === 0) return new Map();
+  const candidates = await client.query(`
+    SELECT candidate.*, panel_generation.output_asset_id
+    FROM panel_revision_candidate candidate
+    JOIN panel_generation ON panel_generation.id = candidate.panel_generation_id
+    WHERE candidate.session_id = ANY($1::uuid[])
+    ORDER BY candidate.ordinal, candidate.id
+  `, [sessions.rows.map((row) => row.id)]);
+  const bySession = new Map();
+  for (const row of candidates.rows) {
+    const list = bySession.get(row.session_id) || [];
+    list.push(row);
+    bySession.set(row.session_id, list);
+  }
+  const stateByPanel = new Map((states || []).filter((row) => row.panel_id).map((row) => [row.panel_id, row]));
+  const anchorByName = new Map((anchors || []).map((anchor) => [anchor.name, anchor.approvedAnchorId]));
+  const presented = new Map();
+  for (const session of sessions.rows) {
+    const rows = bySession.get(session.id) || [];
+    const selected = rows.find((row) => row.id === session.selected_candidate_id) || null;
+    const state = stateByPanel.get(session.panel_id);
+    const provenance = state?.current_asset_provenance && typeof state.current_asset_provenance === "object"
+      ? state.current_asset_provenance
+      : null;
+    const baseline = selected
+      ? normalizeRevisionSnapshot(selected.effective_intent)
+      : initializeEffectiveIntent({
+        snapshot: provenance?.effectiveIntent || null,
+        provenanceIntent: provenance?.intent || null,
+        characterName: state?.subject || null,
+        identityAuthorityId: anchorByName.get(state?.subject) || null,
+        performanceAssetId: state?.performance_asset_id || null,
+      });
+    const mode = revisionMode(session.draft_mode);
+    const summary = summarizeRevision({
+      mode,
+      instruction: session.draft_instruction || "",
+      baseline,
+      basis: revisionBasisFor({ mode, selected }),
+    });
+    presented.set(session.panel_id, {
+      id: session.id,
+      draftMode: mode,
+      draftInstruction: session.draft_instruction || "",
+      reconstruction: baseline.reconstruction,
+      selectedCandidateId: selected?.id || null,
+      summary: summary.ok ? publicSummary(summary) : null,
+      candidates: rows.map((row) => ({
+        id: row.id,
+        ordinal: row.ordinal,
+        mode: row.mode,
+        assetId: row.output_asset_id,
+        assetUrl: assetUrl(row.output_asset_id),
+        basisKind: row.visual_basis_kind,
+        basisOrdinal: row.visual_basis_ordinal,
+        panelGenerationId: row.panel_generation_id,
+      })),
+    });
+  }
+  return presented;
+}
+
+function publicSummary(summary) {
+  return {
+    mode: summary.mode,
+    basis: summary.basis,
+    changes: summary.changes,
+    preserved: summary.preserved,
+    notApplied: summary.notApplied,
+    reconstruction: summary.reconstruction,
+    deterministicControl: summary.deterministicControl,
+    blockReason: summary.blockReason,
+    providerCall: summary.providerCall,
+  };
+}
+
+async function sessionForPanel(client, panelId, { openOnly = true } = {}) {
+  const result = await client.query(`
+    SELECT *
+    FROM panel_revision_session
+    WHERE project_id = $1 AND panel_id = $2
+      AND ($3::boolean = false OR status = 'open')
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `, [requireProjectId(), panelId, openOnly]);
+  return result.rows[0] ?? null;
+}
+
+async function revisionCandidates(client, sessionId) {
+  const result = await client.query(`
+    SELECT candidate.*, panel_generation.output_asset_id, panel_generation.performance_intent,
+           panel_generation.performance_asset_id AS generation_performance_asset_id
+    FROM panel_revision_candidate candidate
+    JOIN panel_generation ON panel_generation.id = candidate.panel_generation_id
+    WHERE candidate.session_id = $1
+    ORDER BY candidate.ordinal, candidate.id
+  `, [sessionId]);
+  return result.rows;
+}
+
+async function revisionAuthorities(client, target) {
+  const subject = target.state.subject;
+  const anchor = subject ? await approvedAnchor(client, target.context.result.material_state_id, subject) : null;
+  const style = await projectStyleAsset(client, target.context.result.material_state_id);
+  const provenance = target.state.current_asset_id
+    ? (await client.query(
+      `SELECT provenance FROM visual_asset WHERE id = $1 AND project_id = $2`,
+      [target.state.current_asset_id, requireProjectId()],
+    )).rows[0]?.provenance
+    : null;
+  return { subject, anchor, style, provenance: provenance && typeof provenance === "object" ? provenance : null };
+}
+
+async function buildRevisionPlan(client, { frameId, panelIndex, mode, instruction }) {
+  const target = await panelContext(client, frameId, panelIndex);
+  if (!target?.state?.panel_id) return failed(target ? "invalid-request" : "not-found", target ? 400 : 404);
+  if (!target.state.current_asset_id) return failed("image-required", 409);
+  const chosenMode = revisionMode(mode);
+  const authorities = await revisionAuthorities(client, target);
+  if (authorities.subject && !authorities.anchor) return failed("anchor-required", 409);
+  const session = await sessionForPanel(client, target.state.panel_id);
+  const candidates = session ? await revisionCandidates(client, session.id) : [];
+  const selected = candidates.find((row) => row.id === session?.selected_candidate_id) || null;
+  const baseline = selected
+    ? normalizeRevisionSnapshot(selected.effective_intent)
+    : initializeEffectiveIntent({
+      snapshot: authorities.provenance?.effectiveIntent || null,
+      provenanceIntent: authorities.provenance?.intent || null,
+      characterName: authorities.subject,
+      identityAuthorityId: authorities.anchor?.id || null,
+      performanceAssetId: target.state.performance_asset_id || null,
+      styleAssetId: authorities.style?.id || null,
+    });
+  const summary = summarizeRevision({
+    mode: chosenMode,
+    instruction,
+    baseline,
+    basis: revisionBasisFor({ mode: chosenMode, selected }),
+  });
+  const basisAssetId = summary.basis.kind === "candidate"
+    ? selected?.output_asset_id || null
+    : (summary.basis.kind === "current-panel" ? target.state.current_asset_id : null);
+  return {
+    ok: true,
+    target,
+    authorities,
+    session,
+    candidates,
+    selected,
+    baseline,
+    summary,
+    basisAssetId,
+    mode: chosenMode,
+  };
+}
+
+async function attachRevisionCandidate(client, { generation, assetId, revision }) {
+  const state = await client.query(
+    `SELECT panel_id FROM panel_visual_state WHERE id = $1`,
+    [generation.panel_visual_state_id],
+  );
+  const session = await client.query(`
+    SELECT * FROM panel_revision_session
+    WHERE id = $1 AND project_id = $2
+    FOR UPDATE
+  `, [revision.sessionId, requireProjectId()]);
+  if (session.rowCount !== 1 || session.rows[0].status !== "open") return failed("not-found", 404);
+  if (session.rows[0].panel_id !== state.rows[0]?.panel_id) return failed("not-found", 404);
+  const ordinalResult = await client.query(
+    `SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal FROM panel_revision_candidate WHERE session_id = $1`,
+    [session.rows[0].id],
+  );
+  const candidateId = randomUUID();
+  const ordinal = Number(ordinalResult.rows[0].ordinal);
+  await client.query(`
+    INSERT INTO panel_revision_candidate (
+      id, session_id, ordinal, mode, visual_basis_kind, visual_basis_asset_id, visual_basis_ordinal,
+      effective_intent, panel_generation_id, performance_asset_id, reference_identity
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb)
+  `, [
+    candidateId,
+    session.rows[0].id,
+    ordinal,
+    revision.mode,
+    revision.basisKind,
+    revision.basisAssetId,
+    revision.basisOrdinal,
+    JSON.stringify(normalizeRevisionSnapshot(revision.effectiveIntent)),
+    generation.id,
+    revision.performanceAssetId || null,
+    JSON.stringify(revision.referenceIdentity || {}),
+  ]);
+  await client.query(`
+    UPDATE panel_revision_session
+    SET selected_candidate_id = $2,
+        draft_mode = $3,
+        draft_instruction = $4,
+        updated_at = clock_timestamp()
+    WHERE id = $1
+  `, [session.rows[0].id, candidateId, revision.mode, revision.instruction || ""]);
+  return { ok: true, candidateId, assetId };
+}
+
+async function ensureRevisionSession(client, plan, instruction) {
+  if (plan.session) {
+    await client.query(`
+      UPDATE panel_revision_session
+      SET draft_mode = $2, draft_instruction = $3, updated_at = clock_timestamp()
+      WHERE id = $1 AND status = 'open'
+    `, [plan.session.id, plan.mode, String(instruction ?? "").trim()]);
+    return plan.session.id;
+  }
+  const id = randomUUID();
+  await client.query(`
+    INSERT INTO panel_revision_session (
+      id, project_id, panel_id, storyboard_version_id, baseline_asset_id, baseline_generation_id,
+      baseline_performance_asset_id, compiler_id, compiler_version, draft_mode, draft_instruction, status
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'open')
+  `, [
+    id,
+    requireProjectId(),
+    plan.target.state.panel_id,
+    plan.target.context.version.id,
+    plan.target.state.current_asset_id,
+    plan.target.state.current_generation_id,
+    plan.target.state.performance_asset_id,
+    PANEL_REVISION_COMPILER_ID,
+    PANEL_REVISION_COMPILER_VERSION,
+    plan.mode,
+    String(instruction ?? "").trim(),
+  ]);
+  return id;
+}
+
+function revisionWrite(pool, fn) {
+  return withClient(pool, async (client) => {
+    try {
+      await client.query("BEGIN");
+      const result = await fn(client);
+      if (!result?.ok) {
+        await client.query("ROLLBACK");
+        return result;
+      }
+      await client.query("COMMIT");
+      return result;
+    } catch {
+      await client.query("ROLLBACK").catch(() => {});
+      return failed("database", 503);
+    }
+  });
+}
+
+export async function previewPanelRevision(pool, input = {}) {
+  try {
+    return await withClient(pool, async (client) => {
+      await client.query("BEGIN");
+      const plan = await buildRevisionPlan(client, input);
+      await client.query(plan.ok ? "COMMIT" : "ROLLBACK");
+      if (!plan.ok) return plan;
+      return {
+        ok: true,
+        summary: publicSummary(plan.summary),
+        effectiveIntent: plan.summary.snapshot,
+        basisAssetId: plan.basisAssetId,
+        basisKind: plan.summary.basis.kind,
+        basisOrdinal: plan.summary.basis.ordinal,
+        anchorVersionId: plan.authorities.anchor?.id || null,
+        identityAssetId: plan.authorities.anchor?.output_asset_id || null,
+        styleAssetId: plan.authorities.style?.id || null,
+      };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+export async function openPanelRevision(pool, input = {}) {
+  try {
+    return await revisionWrite(pool, async (client) => {
+      const plan = await buildRevisionPlan(client, input);
+      if (!plan.ok) return plan;
+      const sessionId = await ensureRevisionSession(client, plan, input.instruction);
+      return { ok: true, sessionId };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+export async function navigatePanelRevision(pool, { frameId, panelIndex, direction } = {}) {
+  if (direction !== "undo" && direction !== "redo") return failed("invalid-request");
+  try {
+    return await revisionWrite(pool, async (client) => {
+      const target = await panelContext(client, frameId, panelIndex);
+      if (!target?.state?.panel_id) return failed("not-found", 404);
+      const session = await sessionForPanel(client, target.state.panel_id);
+      if (!session) return failed("not-found", 404);
+      const candidates = await revisionCandidates(client, session.id);
+      if (!candidates.length) return { ok: true, changed: false };
+      const selectedId = moveCandidateSelection(candidates, session.selected_candidate_id, direction);
+      await client.query(`
+        UPDATE panel_revision_session
+        SET selected_candidate_id = $2, updated_at = clock_timestamp()
+        WHERE id = $1 AND status = 'open'
+      `, [session.id, selectedId]);
+      return { ok: true, changed: selectedId !== session.selected_candidate_id };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+export async function acceptPanelRevision(pool, { frameId, panelIndex, candidateId = null } = {}) {
+  try {
+    return await revisionWrite(pool, async (client) => {
+      let current = await ensureVersion(client);
+      if (!current) return failed("not-found", 404);
+      await lockHead(client, current.result.id);
+      current = await ensureVersion(client);
+      const target = await panelContext(client, frameId, panelIndex);
+      if (!target?.state?.panel_id) return failed("not-found", 404);
+      const session = await client.query(`
+        SELECT * FROM panel_revision_session
+        WHERE project_id = $1 AND panel_id = $2 AND status = 'open'
+        FOR UPDATE
+      `, [requireProjectId(), target.state.panel_id]);
+      if (session.rowCount !== 1) return failed("not-found", 404);
+      const candidates = await revisionCandidates(client, session.rows[0].id);
+      const chosenId = candidateId || session.rows[0].selected_candidate_id;
+      if (candidateId && candidateId !== session.rows[0].selected_candidate_id) return failed("not-found", 409);
+      const chosen = candidates.find((row) => row.id === chosenId);
+      if (!chosen?.output_asset_id) return failed("not-found", 404);
+      const asset = await assetRow(client, chosen.output_asset_id);
+      if (!asset) return failed("not-found", 404);
+      const forked = await forkVisibleState(client, current, {
+        instruction: "panel-revision-accept",
+        operationContext: {
+          op: "panel-revision-accept",
+          panelId: target.state.panel_id,
+          candidateId: chosen.id,
+        },
+        customize: async (forkClient, next) => {
+          await forkClient.query(`
+            UPDATE panel_visual_state
+            SET current_generation_id = $3,
+                current_asset_id = $4,
+                current_asset_origin = 'generation',
+                performance_asset_id = CASE
+                  WHEN $5::text IN ('set', 'clear') THEN $6::uuid
+                  ELSE performance_asset_id
+                END,
+                updated_at = clock_timestamp()
+            WHERE storyboard_version_id = $1 AND panel_id = $2
+          `, [
+            next.version.id,
+            target.state.panel_id,
+            chosen.panel_generation_id,
+            chosen.output_asset_id,
+            chosen.performance_intent,
+            chosen.generation_performance_asset_id,
+          ]);
+        },
+      });
+      const closed = await client.query(`
+        UPDATE panel_revision_session
+        SET status = 'accepted',
+            review_outcome = 'accepted',
+            reviewed_at = clock_timestamp(),
+            accepted_candidate_id = $2,
+            accepted_storyboard_version_id = $3,
+            selected_candidate_id = $2,
+            updated_at = clock_timestamp()
+        WHERE id = $1 AND status = 'open'
+      `, [session.rows[0].id, chosen.id, forked.version.id]);
+      if (closed.rowCount !== 1) return failed("not-found", 404);
+      return { ok: true, storyboardVersionId: forked.version.id, candidateId: chosen.id };
+    });
+  } catch {
+    return failed("database", 503);
+  }
+}
+
+export async function cancelPanelRevision(pool, { frameId, panelIndex } = {}) {
+  try {
+    return await revisionWrite(pool, async (client) => {
+      const target = await panelContext(client, frameId, panelIndex);
+      if (!target?.state?.panel_id) return failed("not-found", 404);
+      const closed = await client.query(`
+        UPDATE panel_revision_session
+        SET status = 'cancelled',
+            review_outcome = 'cancelled',
+            reviewed_at = clock_timestamp(),
+            updated_at = clock_timestamp()
+        WHERE project_id = $1 AND panel_id = $2 AND status = 'open'
+      `, [requireProjectId(), target.state.panel_id]);
+      if (closed.rowCount !== 1) return failed("not-found", 404);
+      return { ok: true };
+    });
+  } catch {
+    return failed("database", 503);
   }
 }
 
@@ -951,6 +1380,7 @@ export async function beginPanelGeneration(pool, {
   instruction = "",
   performanceImage = null,
   clearPerformance = false,
+  revisionBasis = null,
 }) {
   if (!frameId || !Number.isInteger(panelIndex) || panelIndex < 0 || String(instruction).length > 4000) {
     return failed("invalid-request");
@@ -992,9 +1422,20 @@ export async function beginPanelGeneration(pool, {
         ? (await client.query("SELECT * FROM panel_generation WHERE id = $1", [target.state.current_generation_id])).rows[0]
         : null;
       const currentAssetId = target.state.current_asset_id ?? null;
-      const previous = currentAssetId
-        ? await assetRow(client, currentAssetId)
-        : (parent?.output_asset_id ? await assetRow(client, parent.output_asset_id) : null);
+      let previous = null;
+      if (revisionBasis?.omitPrevious === true) {
+        previous = null;
+      } else if (typeof revisionBasis?.assetId === "string" && revisionBasis.assetId) {
+        previous = await assetRow(client, revisionBasis.assetId);
+        if (!previous) {
+          await client.query("ROLLBACK");
+          return failed("not-found", 404);
+        }
+      } else {
+        previous = currentAssetId
+          ? await assetRow(client, currentAssetId)
+          : (parent?.output_asset_id ? await assetRow(client, parent.output_asset_id) : null);
+      }
       const id = randomUUID();
       await client.query(`
         INSERT INTO panel_generation (
@@ -1036,7 +1477,13 @@ export async function beginPanelGeneration(pool, {
   }
 }
 
-export async function finishPanelGeneration(pool, { id, result, provenance = null, runExtraction = undefined } = {}) {
+export async function finishPanelGeneration(pool, {
+  id,
+  result,
+  provenance = null,
+  runExtraction = undefined,
+  revision = null,
+} = {}) {
   try {
     return await withClient(pool, async (client) => {
       await client.query("BEGIN");
@@ -1071,6 +1518,25 @@ export async function finishPanelGeneration(pool, { id, result, provenance = nul
          WHERE id = $1`,
         [id, asset.id, JSON.stringify(result.metadata || {})],
       );
+      if (revision) {
+        const attached = await attachRevisionCandidate(client, {
+          generation: generation.rows[0],
+          assetId: asset.id,
+          revision,
+        });
+        if (!attached.ok) {
+          await client.query("ROLLBACK");
+          return attached;
+        }
+        await client.query("COMMIT");
+        return {
+          ok: true,
+          generationId: id,
+          assetId: asset.id,
+          applied: false,
+          candidateId: attached.candidateId,
+        };
+      }
       const state = await client.query(
         `SELECT panel_id, frame_id, panel_index FROM panel_visual_state WHERE id = $1`,
         [generation.rows[0].panel_visual_state_id],
@@ -1315,6 +1781,10 @@ export async function listReusableAssetRows(client, storyboardResultId, projectI
           WHERE sv.storyboard_result_id = $1
             AND pg.status = 'ready'
             AND pg.output_asset_id = a.id
+            AND NOT EXISTS (
+              SELECT 1 FROM panel_revision_candidate candidate
+              WHERE candidate.panel_generation_id = pg.id
+            )
         )
         OR EXISTS (
           SELECT 1
@@ -1982,6 +2452,11 @@ export function createVisualStore(pool) {
     updatePlacement: contentWrite(pool, (input) => updatePlacement(pool, input)),
     saveStoryboardEdit: contentWrite(pool, (input) => saveStoryboardEdit(pool, input)),
     undoStoryboardEdit: contentWrite(pool, () => undoStoryboardEdit(pool)),
+    previewPanelRevision: (input) => previewPanelRevision(pool, input),
+    openPanelRevision: contentWrite(pool, (input) => openPanelRevision(pool, input)),
+    navigatePanelRevision: contentWrite(pool, (input) => navigatePanelRevision(pool, input)),
+    acceptPanelRevision: contentWrite(pool, (input) => acceptPanelRevision(pool, input)),
+    cancelPanelRevision: contentWrite(pool, (input) => cancelPanelRevision(pool, input)),
     approveVisual: contentWrite(pool, () => approveVisual(pool)),
     applyOperation: contentWrite(pool, (input) => applyProductOperation(pool, input)),
     readAsset: (id) => readAsset(pool, id),

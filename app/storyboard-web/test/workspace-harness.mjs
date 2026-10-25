@@ -415,6 +415,7 @@ async function fakeFetch(url, init = {}) {
   if (harness.visual && (
     path.endsWith("/visual/operations")
     || /\/generate$/.test(path)
+    || /\/revision(?:-preview|-candidate|-navigate|-accept|-cancel)?$/.test(path)
     || /\/placement$/.test(path)
     || path.endsWith("/visual/storyboard/undo")
     || path.endsWith("/visual/approve")

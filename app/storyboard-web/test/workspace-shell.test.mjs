@@ -395,7 +395,7 @@ for (const [name, run] of Object.entries({
     resetRecorder();
     const section = panelSection(0);
     section.querySelector("textarea").value = "сделай крупнее";
-    section.querySelectorAll("button").find((node) => /Переделать|Создать/.test(node.textContent)).click();
+    section.querySelectorAll("button").find((node) => node.textContent === "Уточнить текущее").click();
   },
 })) {
   test(`parity · Frame Editor · ${name}`, async () => {
@@ -411,7 +411,7 @@ test("parity · inspector panel shortcut opens the Panel Editor on that panel fo
     assert.equal(panelSection(0).hidden, false);
     resetRecorder();
     panelSection(0).querySelector("textarea").value = "сделай крупнее";
-    panelSection(0).querySelectorAll("button").find((node) => /Переделать|Создать/.test(node.textContent)).click();
+    panelSection(0).querySelectorAll("button").find((node) => node.textContent === "Уточнить текущее").click();
   });
 });
 
@@ -523,7 +523,9 @@ test("Frame Editor shows a titled Panel Editor with panel selection, basis, fram
   assert.deepEqual(Object.keys(first), ["image", "framing", "references"]);
   assert.equal(first.image.querySelector(".panel-basis").dataset.basis, "generation");
   assert.match(textOf(first.image), /Генерация/);
-  assert.ok(first.image.querySelectorAll("button").find((node) => node.textContent === "Переделать эту панель"));
+  assert.ok(first.image.querySelectorAll("button").find((node) => node.textContent === "Уточнить текущее"));
+  assert.ok(first.image.querySelectorAll("button").find((node) => node.textContent === "Новая вариация"));
+  assert.equal(first.image.querySelectorAll("button").some((node) => node.textContent === "Переделать эту панель"), false);
   assert.ok(first.image.querySelector("textarea"));
   assert.ok(first.framing.querySelectorAll("input").find((node) => node.type === "range"));
   assert.ok(first.framing.querySelectorAll("button").find((node) => node.dataset.placementAction === "reset"));
@@ -534,7 +536,7 @@ test("Frame Editor shows a titled Panel Editor with panel selection, basis, fram
   assert.match(textOf(first.references), /Базовый образ/);
   assert.match(textOf(first.references), /фото позы или выражения/i);
   assert.ok(first.references.querySelectorAll("input").find((node) => node.type === "file"));
-  assert.doesNotMatch(textOf(editor), /Refine|New variation|Уточнить текущее|Новая вариация|Новый вариант/);
+  assert.match(textOf(first.references), /фото позы или выражения/i);
 
   tabs[1].click();
   assert.equal(panelSection(0).hidden, true);
@@ -597,7 +599,7 @@ test("dock Commands scope is always visible and follows explicit panel selection
   const viaSelect = productRequests().filter((entry) => entry.method !== "GET");
   assert.deepEqual(viaScope.map(requestSignature), viaSelect.map(requestSignature));
   assert.notEqual(viaScope[0].body.correlationId, viaSelect[0].body.correlationId);
-  assert.equal(viaSelect[0].body.correlationId, researchStarts().find((event) => event.semanticAction === "panel_generate")?.correlationId);
+  assert.equal(viaSelect[0].body.correlationId, researchStarts().find((event) => event.semanticAction === "panel_revision_open")?.correlationId);
 
   $("#detail").close();
   await flush(2);

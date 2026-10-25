@@ -185,7 +185,7 @@ function extractFraming(text) {
   return matchFirst(text, FRAMING_PATTERNS) || CANONICAL_DEFAULTS.framing;
 }
 
-function extractUpperBody(text) {
+function matchUpperBody(text) {
   const value = String(text ?? "");
   const forward = /корпус\s+наклон[её]н\p{L}*\s+впер[её]д|forward[-\s]?lean(?:ing)?(?:\s+upper\s+body|\s+torso)?/iu.test(value);
   const upright = /выпрямленн\p{L}*\s+корпус|прямая\s+осанка(?:\s+торса)?|upright\s+torso/iu.test(value);
@@ -208,7 +208,31 @@ function extractUpperBody(text) {
   if (/upright\s+torso\s+(?:with|and)\s+visible\s+shoulders/iu.test(value)) {
     return "upright torso with visible shoulders";
   }
-  return CANONICAL_DEFAULTS.upperBody;
+  return null;
+}
+
+function extractUpperBody(text) {
+  return matchUpperBody(text) || CANONICAL_DEFAULTS.upperBody;
+}
+
+export function unsupportedFramingFragment(text) {
+  const match = String(text ?? "").match(WIDER_FRAMING_RE);
+  return match ? match[0] : null;
+}
+
+/** Supported facts explicitly addressed by text. Unmatched properties stay null; defaults are not invented. */
+export function matchSupportedPanelFacts(text) {
+  const value = String(text ?? "");
+  return {
+    framing: WIDER_FRAMING_RE.test(value) ? null : matchFirst(value, FRAMING_PATTERNS),
+    upperBody: matchUpperBody(value),
+    gesture: matchFirst(value, GESTURE_PATTERNS),
+    headPose: matchFirst(value, HEAD_POSE_PATTERNS),
+    gaze: extractExplicitGaze(value),
+    expression: matchFirst(value, EXPRESSION_PATTERNS),
+    eyes: matchFirst(value, EYES_PATTERNS),
+    eyebrows: matchFirst(value, EYEBROW_PATTERNS),
+  };
 }
 
 function resolveCanonicalGaze({
@@ -232,7 +256,7 @@ function resolveCanonicalGaze({
   return panelIndex === 0 ? "screen-right" : "screen-left";
 }
 
-function gazeInstruction(gaze) {
+export function gazeInstruction(gaze) {
   if (gaze === "to-camera") {
     return "Gaze: toward the camera / straight ahead.";
   }

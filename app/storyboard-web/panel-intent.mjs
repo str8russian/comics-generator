@@ -204,6 +204,31 @@ function hasUnsupportedPhrase(text) {
   return UNSUPPORTED_BOUNDED.some((token) => hasBoundedOccurrence(lower, token.toLocaleLowerCase("ru")));
 }
 
+export function unsupportedPanelFragments(text) {
+  const raw = String(text ?? "");
+  const lower = raw.toLocaleLowerCase("ru");
+  const found = [];
+  const push = (fragment) => {
+    const value = String(fragment ?? "").trim();
+    if (value && !found.includes(value)) found.push(value);
+  };
+  for (const stem of UNSUPPORTED_STEMS) {
+    const needle = stem.toLocaleLowerCase("ru");
+    const index = lower.indexOf(needle);
+    if (index >= 0) push(raw.slice(index, index + stem.length));
+  }
+  for (const phrase of UNSUPPORTED_BOUNDED_PHRASES) {
+    const needle = phrase.toLocaleLowerCase("ru");
+    const index = lower.indexOf(needle);
+    if (index >= 0) push(raw.slice(index, index + phrase.length));
+  }
+  for (const token of UNSUPPORTED_BOUNDED) {
+    const needle = token.toLocaleLowerCase("ru");
+    if (hasBoundedOccurrence(lower, needle)) push(token);
+  }
+  return found;
+}
+
 function assessDescription(description, cast, frameId, panelIndex) {
   const text = String(description ?? "");
   const subjects = distinctPanelSubjects(text, cast);

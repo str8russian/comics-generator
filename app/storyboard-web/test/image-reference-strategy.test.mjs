@@ -444,7 +444,8 @@ function transportServer({ env, calls, logs, mode = "storyboard" }) {
 
 test("storyboard and manually assigned panels share one strategy boundary", async () => {
   const source = readFileSync(new URL("../server.mjs", import.meta.url), "utf8");
-  assert.equal(source.match(/deliverPreparedImage\(/g).length, 3);
+  assert.equal(source.match(/deliverPreparedImage\(/g).length, 4);
+  assert.equal(source.includes("handlePanelRevision"), true);
   assert.equal(source.includes("imageGenerator({"), false);
   const calls = [];
   const logs = [];

@@ -459,6 +459,7 @@ export function bindResearchDock({
   fetchImpl = defaultFetch,
   executeDockCommand = null,
   isProductBusy = null,
+  panelCommandAction = null,
 } = {}) {
   const notesDraft = document.querySelector("#research-notes-draft");
   const notesSend = document.querySelector("#research-notes-send");
@@ -1015,7 +1016,9 @@ export function bindResearchDock({
     }
 
     const commandTarget = createEmptyCommandTarget(stickyTarget.kind, stickyTarget);
-    const semanticAction = commandTarget.kind === "panel" ? "panel_generate" : "structure_edit";
+    const semanticAction = commandTarget.kind === "panel"
+      ? (typeof panelCommandAction === "function" ? panelCommandAction(commandTarget) : "panel_generate")
+      : "structure_edit";
     const correlationId = newCorrelationId();
     const context = snapshotContext();
     const startSnapshot = {

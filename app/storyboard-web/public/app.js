@@ -16,6 +16,7 @@ import { presentFrameForMount } from "/visual-anchors.mjs";
 import { bindWorkspaceStages, STAGES } from "./workspace-stages.mjs";
 import { renderFrameInspector } from "./frame-inspector.mjs";
 import { basisChip, foregroundChip, panelBasis } from "./panel-basis.mjs";
+import { REVISION_COPY, deterministicRevisionControl, renderRevisionSummary } from "./panel-revision-view.mjs";
 export { presentFrameForMount };
 
 const form = document.querySelector("#draft-form");
@@ -508,6 +509,35 @@ async function executeDockCommand({ instruction, commandTarget, correlationId = 
   if (typeof frameId !== "string" || !Number.isInteger(panelIndex)) {
     return { ok: false, unsupported: true };
   }
+  const frame = readyFrames.find((entry) => entry.id === frameId);
+  const panel = frame?.panels?.[panelIndex];
+  if (panel?.assetId) {
+    const control = deterministicRevisionControl(instruction);
+    const framePosition = readyFrames.findIndex((entry) => entry.id === frameId);
+    if (control) {
+      if (framePosition >= 0) openDetail(framePosition, { panelIndex });
+      if (control === "reuse") openPanelAssetPicker(frame, panel, panelIndex);
+      else focusDeterministicControl(panelIndex, control);
+      showActionNotice("Это действие без генерации. Используйте кадрирование или выбор изображения.");
+      return { ok: true, deterministic: true };
+    }
+    await runBusy("Открываю черновик правки…", async () => {
+      const next = await fetchJson(
+        `/api/visual/frames/${encodeURIComponent(frameId)}/panels/${panelIndex}/revision`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mode: "refine", instruction, correlationId }),
+        },
+      );
+      applyVisual(next);
+      const position = readyFrames.findIndex((entry) => entry.id === frameId);
+      if (position >= 0) openDetail(position, { panelIndex });
+      showActionNotice("Черновик открыт. Генерация начнётся только после явного действия.");
+      outcome = { ok: true };
+    });
+    return outcome;
+  }
   await runBusy(
     `Создаю панель ${panelIndex + 1}${
       commandTarget.displayFrameNumber == null ? "" : ` кадра ${commandTarget.displayFrameNumber}`
@@ -531,7 +561,7 @@ async function executeDockCommand({ instruction, commandTarget, correlationId = 
   return outcome;
 }
 
-const researchDock = researchDockRoot
+  const researchDock = researchDockRoot
   ? bindResearchDock({
     root: researchDockRoot,
     host: researchDockHost,
@@ -539,6 +569,11 @@ const researchDock = researchDockRoot
     getContext: captureResearchContext,
     isProductBusy: () => busy,
     executeDockCommand,
+    panelCommandAction(commandTarget) {
+      const frame = readyFrames.find((entry) => entry.id === commandTarget?.displayFrameId);
+      const panel = frame?.panels?.[commandTarget?.panelIndex];
+      return panel?.assetId ? "panel_revision_open" : "panel_generate";
+    },
   })
   : null;
 
@@ -1716,6 +1751,10 @@ export function actionMessage(kind) {
     provider: "Провайдер не завершил генерацию. Уже готовые результаты сохранены.",
     "invalid-output": "Провайдер не вернул пригодное изображение.",
     database: "Не удалось сохранить результат. Попробуйте ещё раз.",
+    "empty-refine": "Уточнение требует непустую правку.",
+    "no-supported-change": "В правке нет поддерживаемого изменения изображения. Генерация не запускалась.",
+    "deterministic-only": "Это действие выполняется без генерации изображения.",
+    "image-required": "Сначала создайте изображение панели.",
     "stale-version": "Раскадровка уже изменилась. Обновите страницу и повторите действие.",
     "asset-load-failed": "Изображение не удалось показать. Обновите страницу или создайте панель заново.",
     "nothing-to-undo": "Нечего отменять.",
@@ -2291,6 +2330,305 @@ function renderPanelTabs(frame) {
   });
 }
 
+function focusDeterministicControl(panelIndex, control) {
+  const section = [...(detailPanelControls?.children || [])].find((node) => Number(node.dataset?.panelIndex) === panelIndex);
+  if (!section) return;
+  if (control === "zoom" || control === "pan") section.querySelector('input[type="range"]')?.focus?.();
+  else section.querySelector(`[data-placement-action="${control}"]`)?.focus?.();
+}
+
+function panelRevisionAddress(frame, panel, panelIndex) {
+  const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
+  return {
+    displayFrameNumber,
+    target: createEmptyCommandTarget("panel", {
+      displayFrameNumber,
+      displayFrameId: typeof frame.id === "string" ? frame.id : null,
+      structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
+      structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
+      panelIndex,
+      panelId: panel.id,
+    }),
+  };
+}
+
+async function postPanelRevision(frame, panelIndex, suffix, body) {
+  return fetchJson(`/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/revision${suffix}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function revisionButton(label, action) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  button.dataset.revisionAction = action;
+  return button;
+}
+
+function bindInitialPanelCreate({ frame, panel, panelIndex, instruction, performance, imagePart }) {
+  const regenerate = revisionButton("Создать эту панель", "create");
+  regenerate.addEventListener("click", async () => {
+    const panelInstruction = instruction.value;
+    const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
+    const busyText = `Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`;
+    const successText = `Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`;
+    const addressed = panelRevisionAddress(frame, panel, panelIndex);
+    const priorAssetId = typeof panel.assetId === "string" ? panel.assetId : null;
+    regenerate.disabled = true;
+    presentDetailGeneration(busyText, "running");
+    try {
+      await runProductResearchAction({
+        semanticAction: "panel_generate",
+        submittedText: panelInstruction,
+        commandTarget: addressed.target,
+        contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
+        busyMessage: busyText,
+        async operation({ correlationId } = {}) {
+          const file = performance.files?.[0];
+          const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
+          try {
+            const next = await fetchJson(
+              `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ instruction: panelInstruction, performanceImageDataUrl, correlationId }),
+              },
+            );
+            applyVisual(next);
+            showActionNotice(successText);
+            presentDetailGeneration(successText, "success");
+            return next;
+          } catch (error) {
+            console.error("[visual] panel generation failed", {
+              kind: error?.kind || "request-failed",
+              frameId: frame.id,
+              panelIndex,
+            });
+            presentDetailGeneration(actionMessage(error?.kind || "provider"), "error");
+            if (priorAssetId) error.outcomeFlags = { retainedLastGoodImage: true };
+            throw error;
+          }
+        },
+      });
+    } finally {
+      regenerate.disabled = false;
+    }
+  });
+  imagePart.append(instruction, regenerate);
+  imagePart.append(textElement("p", "helper", "Фото позы из «Референсов» отправляется вместе с этой генерацией."));
+}
+
+function bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart }) {
+  const revision = panel.revision || null;
+  instruction.value = revision?.draftInstruction || "";
+  const summaryHost = document.createElement("div");
+  summaryHost.className = "revision-summary-host";
+  const paintSummary = (summary) => {
+    summaryHost.replaceChildren();
+    if (summary) summaryHost.append(renderRevisionSummary(document, summary));
+    const generate = imagePart.querySelector('[data-revision-action="generate"]');
+    if (generate) generate.disabled = summary?.providerCall === false;
+  };
+  paintSummary(revision?.summary || null);
+  const actions = document.createElement("div");
+  actions.className = "revision-actions";
+  const refine = revisionButton(REVISION_COPY.refine, "refine");
+  const variation = revisionButton(REVISION_COPY.variation, "variation");
+  const generate = revisionButton(REVISION_COPY.generate, "generate");
+  actions.append(refine, variation, generate);
+  paintSummary(revision?.summary || null);
+  const history = document.createElement("div");
+  history.className = "revision-history";
+  const candidates = revision?.candidates || [];
+  const selected = candidates.find((candidate) => candidate.id === revision?.selectedCandidateId) || null;
+  if (selected) {
+    history.append(textElement("p", "revision-count", `Кандидат ${selected.ordinal} из ${candidates.length}`));
+    const preview = document.createElement("img");
+    preview.className = "revision-candidate-preview";
+    preview.alt = `Кандидат ${selected.ordinal}`;
+    preview.src = selected.assetUrl;
+    history.append(preview);
+    const undo = revisionButton(REVISION_COPY.undo, "undo");
+    const redo = revisionButton(REVISION_COPY.redo, "redo");
+    undo.disabled = selected.ordinal <= 1;
+    redo.disabled = selected.ordinal >= candidates.length;
+    history.append(undo, redo);
+    undo.addEventListener("click", () => navigateRevision("undo"));
+    redo.addEventListener("click", () => navigateRevision("redo"));
+  }
+  const review = document.createElement("div");
+  review.className = "revision-review";
+  const accept = revisionButton(REVISION_COPY.accept, "accept");
+  const cancel = revisionButton(REVISION_COPY.cancel, "cancel");
+  accept.disabled = !selected;
+  cancel.disabled = !revision;
+  review.append(accept, cancel);
+  const confirm = document.createElement("div");
+  confirm.className = "revision-confirm";
+  confirm.hidden = true;
+  const confirmCancel = revisionButton(REVISION_COPY.confirmCancel, "confirm-cancel");
+  const keepDraft = revisionButton(REVISION_COPY.keepDraft, "keep-draft");
+  confirm.append(
+    textElement("p", "helper", "Отменить черновик? Текущее изображение панели не изменится."),
+    confirmCancel,
+    keepDraft,
+  );
+  const setLocked = (locked) => {
+    for (const button of imagePart.querySelectorAll("[data-revision-action]")) button.disabled = locked;
+    if (locked) return;
+    accept.disabled = !selected;
+    cancel.disabled = !revision;
+    const undo = history.querySelector('[data-revision-action="undo"]');
+    const redo = history.querySelector('[data-revision-action="redo"]');
+    if (undo) undo.disabled = !selected || selected.ordinal <= 1;
+    if (redo) redo.disabled = !selected || selected.ordinal >= candidates.length;
+    generate.disabled = revision?.summary?.providerCall === false && !summaryHost.querySelector("[data-revision-summary]");
+    const current = summaryHost.querySelector("[data-revision-summary]");
+    if (current && revision?.summary?.providerCall === false && instruction.value === (revision?.draftInstruction || "")) {
+      generate.disabled = true;
+    }
+  };
+  const runRevision = async (suffix, body, { semanticAction, busy, success }) => {
+    const addressed = panelRevisionAddress(frame, panel, panelIndex);
+    setLocked(true);
+    presentDetailGeneration(busy, "running");
+    try {
+      await runProductResearchAction({
+        semanticAction,
+        submittedText: instruction.value,
+        commandTarget: addressed.target,
+        contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, addressed.displayFrameNumber),
+        busyMessage: busy,
+        async operation({ correlationId } = {}) {
+          const file = performance.files?.[0];
+          const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
+          try {
+            const next = await postPanelRevision(frame, panelIndex, suffix, {
+              ...body,
+              instruction: instruction.value,
+              correlationId,
+              ...(performanceImageDataUrl ? { performanceImageDataUrl } : {}),
+            });
+            applyVisual(next);
+            showActionNotice(success);
+            presentDetailGeneration(success, "success");
+            return next;
+          } catch (error) {
+            if (error?.payload?.summary) paintSummary(error.payload.summary);
+            presentDetailGeneration(actionMessage(error?.kind || "provider"), "error");
+            error.outcomeFlags = { retainedLastGoodImage: true };
+            throw error;
+          }
+        },
+      });
+    } catch (error) {
+      if (error?.payload?.summary) paintSummary(error.payload.summary);
+      presentDetailGeneration(actionMessage(error?.kind || "provider"), "error");
+      error.outcomeFlags = { retainedLastGoodImage: true };
+      throw error;
+    } finally {
+      setLocked(false);
+    }
+  };
+  async function navigateRevision(direction) {
+    const addressed = panelRevisionAddress(frame, panel, panelIndex);
+    setLocked(true);
+    try {
+      const next = await postPanelRevision(frame, panelIndex, "-navigate", { direction });
+      applyVisual(next);
+    } catch (error) {
+      presentDetailGeneration(actionMessage(error?.kind || "request-failed"), "error");
+    } finally {
+      setLocked(false);
+    }
+    addressed;
+  }
+  refine.addEventListener("click", () => runRevision("", { mode: "refine" }, {
+    semanticAction: "panel_revision_open",
+    busy: "Открываю уточнение…",
+    success: "Черновик уточнения открыт. Генерация ещё не запускалась.",
+  }));
+  variation.addEventListener("click", () => runRevision("", { mode: "new-variation" }, {
+    semanticAction: "panel_revision_open",
+    busy: "Открываю новую вариацию…",
+    success: "Черновик вариации открыт. Предыдущее изображение не будет отправлено.",
+  }));
+  generate.addEventListener("click", () => runRevision("-candidate", { mode: activeMode }, {
+    semanticAction: "panel_generate",
+    busy: "Создаю кандидат…",
+    success: "Кандидат готов. Текущее изображение панели не изменилось.",
+  }));
+  let activeMode = revision?.draftMode || "refine";
+  const markMode = (mode) => {
+    activeMode = mode;
+    refine.dataset.pressed = mode === "refine" ? "true" : "false";
+    variation.dataset.pressed = mode === "new-variation" ? "true" : "false";
+    refine.setAttribute("aria-pressed", mode === "refine" ? "true" : "false");
+    variation.setAttribute("aria-pressed", mode === "new-variation" ? "true" : "false");
+  };
+  markMode(activeMode);
+  refine.addEventListener("click", () => markMode("refine"), { capture: true });
+  variation.addEventListener("click", () => markMode("new-variation"), { capture: true });
+  accept.addEventListener("click", () => runRevision("-accept", { candidateId: selected?.id || null }, {
+    semanticAction: "panel_revision_open",
+    busy: "Принимаю кандидат…",
+    success: "Кандидат стал текущим изображением панели.",
+  }));
+  cancel.addEventListener("click", () => {
+    if (candidates.length) {
+      confirm.hidden = false;
+      return;
+    }
+    return runRevision("-cancel", {}, {
+      semanticAction: "panel_revision_open",
+      busy: "Отменяю черновик…",
+      success: "Черновик отменён. Текущее изображение не изменилось.",
+    });
+  });
+  confirmCancel.addEventListener("click", () => {
+    confirm.hidden = true;
+    return runRevision("-cancel", {}, {
+      semanticAction: "panel_revision_open",
+      busy: "Отменяю черновик…",
+      success: "Черновик отменён. Текущее изображение не изменилось.",
+    });
+  });
+  keepDraft.addEventListener("click", () => {
+    confirm.hidden = true;
+  });
+  confirm.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    event.stopPropagation();
+    confirm.hidden = true;
+  });
+  instruction.addEventListener("input", () => {
+    const mode = activeMode;
+    window.clearTimeout(instruction.revisionTimer);
+    instruction.revisionTimer = window.setTimeout(async () => {
+      try {
+        const preview = await postPanelRevision(frame, panelIndex, "-preview", { mode, instruction: instruction.value });
+        paintSummary(preview.summary);
+      } catch {
+        // The explicit generate action remains the confirmation.
+      }
+    }, 200);
+  });
+  imagePart.append(
+    textElement("p", "helper", "Текущее изображение панели остаётся на месте, пока кандидат не принят."),
+    instruction,
+    summaryHost,
+    actions,
+    history,
+    review,
+    confirm,
+  );
+  imagePart.append(textElement("p", "helper", "Фото позы из «Референсов» отправляется только с созданием кандидата и применяется после принятия."));
+}
+
 function renderPanelControls(frame) {
   detailPanelControls.replaceChildren();
   const panelCount = (frame.panels || []).length;
@@ -2335,66 +2673,6 @@ function renderPanelControls(frame) {
     performance.type = "file";
     performance.accept = "image/png,image/jpeg,image/webp";
     performanceLabel.append(performance);
-    const regenerate = document.createElement("button");
-    regenerate.type = "button";
-    regenerate.textContent = panel.assetId ? "Переделать эту панель" : "Создать эту панель";
-    regenerate.addEventListener("click", async () => {
-      const panelInstruction = instruction.value;
-      const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
-      const busyText = `Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`;
-      const successText = `Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`;
-      const panelTarget = createEmptyCommandTarget("panel", {
-        displayFrameNumber,
-        displayFrameId: typeof frame.id === "string" ? frame.id : null,
-        structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
-        structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null,
-        panelIndex,
-        panelId: panel.id,
-      });
-      const priorAssetId = typeof panel.assetId === "string" ? panel.assetId : null;
-      regenerate.disabled = true;
-      presentDetailGeneration(busyText, "running");
-      try {
-        await runProductResearchAction({
-          semanticAction: "panel_generate",
-          submittedText: panelInstruction,
-          commandTarget: panelTarget,
-          contextOverrides: panelActionContextOverrides(frame, panel, panelIndex, displayFrameNumber),
-          busyMessage: busyText,
-          async operation({ correlationId } = {}) {
-            const file = performance.files?.[0];
-            const performanceImageDataUrl = file ? await fileAsDataUrl(file) : undefined;
-            try {
-              const next = await fetchJson(
-                `/api/visual/frames/${encodeURIComponent(frame.id)}/panels/${panelIndex}/generate`,
-                {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ instruction: panelInstruction, performanceImageDataUrl, correlationId }),
-                },
-              );
-              applyVisual(next);
-              showActionNotice(successText);
-              presentDetailGeneration(successText, "success");
-              return next;
-            } catch (error) {
-              console.error("[visual] panel generation failed", {
-                kind: error?.kind || "request-failed",
-                frameId: frame.id,
-                panelIndex,
-              });
-              presentDetailGeneration(actionMessage(error?.kind || "provider"), "error");
-              if (priorAssetId) {
-                error.outcomeFlags = { retainedLastGoodImage: true };
-              }
-              throw error;
-            }
-          },
-        });
-      } finally {
-        regenerate.disabled = false;
-      }
-    });
     section.append(title, description);
     const imagePart = panelSubsection("image", "Изображение");
     const basis = panelBasis(frame, panelIndex);
@@ -2409,8 +2687,8 @@ function renderPanelControls(frame) {
     }
     if (lineageCopy) imagePart.append(lineageCopy);
     if (failure) imagePart.append(failure);
-    imagePart.append(instruction, regenerate);
-    imagePart.append(textElement("p", "helper", "Фото позы из «Референсов» отправляется вместе с этой генерацией."));
+    if (panel.assetId) bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart });
+    else bindInitialPanelCreate({ frame, panel, panelIndex, instruction, performance, imagePart });
     const framingPart = panelSubsection("framing", "Кадрирование");
     const referencesPart = panelSubsection("references", "Референсы");
     const performanceBox = document.createElement("div");
