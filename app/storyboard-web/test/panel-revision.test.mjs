@@ -9,7 +9,7 @@ import {
   moveCandidateSelection,
   summarizeRevision,
 } from "../panel-revision.mjs";
-import { revisionBasisText, revisionSummaryLines } from "../public/panel-revision-view.mjs";
+import { revisionBasisText, revisionPreservedDisclosure, revisionSummaryLines } from "../public/panel-revision-view.mjs";
 import { deliverPreparedImage } from "../server.mjs";
 
 const knownIntent = {
@@ -175,9 +175,15 @@ test("summary names basis, changes, preserved state, and text that is not applie
   });
   const lines = revisionSummaryLines(summary);
   assert.match(lines[0], /Основа: кандидат 1/);
-  assert.match(lines[1], /взгляд/);
-  assert.match(lines[2], /выражение/);
-  assert.match(lines[3], /стул/);
+  assert.match(lines[1], /Что изменится:[\s\S]*взгляд/);
+  assert.equal(lines.some((line) => line.startsWith("Что сохранится")), false);
+  assert.equal(lines.some((line) => line.startsWith("Не применяется: нет")), false);
+  assert.match(lines.join(" "), /Не применяется:[\s\S]*стул/);
+  const preserved = revisionPreservedDisclosure(summary);
+  assert.equal(preserved.label, `Что сохранится · ${summary.preserved.length} свойств`);
+  assert.match(preserved.text, /выражение/);
+  const emptyNotApplied = revisionSummaryLines({ ...summary, notApplied: [] });
+  assert.equal(emptyNotApplied.some((line) => line.startsWith("Не применяется")), false);
   assert.equal(revisionBasisText({ basis: { kind: "none" } }).includes("не отправляется"), true);
   assert.match(revisionSummaryLines({
     ...summary,

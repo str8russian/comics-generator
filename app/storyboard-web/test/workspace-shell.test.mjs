@@ -393,9 +393,10 @@ for (const [name, run] of Object.entries({
   "panelGenerate": async () => {
     openCard(0);
     resetRecorder();
+    buttonNamed($("#frame-panel-actions"), "Редактировать изображение панели 1.1 · Путин").click();
     const section = panelSection(0);
     section.querySelector("textarea").value = "сделай крупнее";
-    section.querySelectorAll("button").find((node) => node.textContent === "Уточнить текущее").click();
+    section.querySelectorAll("button").find((node) => node.textContent === "Создать кандидат").click();
   },
 })) {
   test(`parity · Frame Editor · ${name}`, async () => {
@@ -411,7 +412,7 @@ test("parity · inspector panel shortcut opens the Panel Editor on that panel fo
     assert.equal(panelSection(0).hidden, false);
     resetRecorder();
     panelSection(0).querySelector("textarea").value = "сделай крупнее";
-    panelSection(0).querySelectorAll("button").find((node) => node.textContent === "Уточнить текущее").click();
+    panelSection(0).querySelectorAll("button").find((node) => node.textContent === "Создать кандидат").click();
   });
 });
 
@@ -507,24 +508,35 @@ test("delete selects a neighbour or nothing, never the deleted frame", async () 
   }
 });
 
-test("Frame Editor shows a titled Panel Editor with panel selection, basis, framing and references", async () => {
+test("Frame Editor keeps dialogue separate and opens one focused panel image view", async () => {
   await reset();
   openCard(0);
-  const editor = $("#panel-editor");
-  assert.equal(editor.hidden, false);
-  assert.ok(html.includes("Редактор панели"));
-  const tabs = $("#panel-editor-tabs").querySelectorAll("button");
-  assert.deepEqual(tabs.map((node) => node.textContent), ["Панель 1.1 · Путин", "Панель 1.2 · Дуров"]);
-  assert.equal(tabs[0].getAttribute("aria-pressed"), "true");
+  assert.equal($("#detail").dataset.view, "frame");
+  assert.equal($("#panel-editor").hidden, true);
+  assert.equal($("#frame-dialogue").hidden, false);
+  const edits = $("#frame-panel-actions").querySelectorAll("button");
+  assert.deepEqual(edits.map((node) => node.textContent), [
+    "Редактировать изображение панели 1.1 · Путин",
+    "Редактировать изображение панели 1.2 · Дуров",
+  ]);
+  edits[0].click();
+  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#panel-editor").hidden, false);
+  assert.equal($("#frame-dialogue").hidden, true);
+  assert.equal($("#detail-frame").hidden, true);
   assert.equal(panelSection(0).hidden, false);
   assert.equal(panelSection(1).hidden, true);
   const parts = (index) => Object.fromEntries(panelSection(index).querySelectorAll("[data-panel-section]").map((node) => [node.dataset.panelSection, node]));
   const first = parts(0);
   assert.deepEqual(Object.keys(first), ["image", "framing", "references"]);
   assert.equal(first.image.querySelector(".panel-basis").dataset.basis, "generation");
-  assert.match(textOf(first.image), /Генерация/);
-  assert.ok(first.image.querySelectorAll("button").find((node) => node.textContent === "Уточнить текущее"));
-  assert.ok(first.image.querySelectorAll("button").find((node) => node.textContent === "Новая вариация"));
+  assert.match(textOf(first.image), /Текущее изображение/);
+  assert.match(textOf(first.image), /Уточнить текущее/);
+  assert.match(textOf(first.image), /Новая вариация/);
+  assert.match(textOf(first.image), /Что изменить/);
+  assert.ok(first.image.querySelectorAll("button").find((node) => node.textContent === "Создать кандидат"));
+  assert.equal(first.image.querySelectorAll("button").some((node) => node.textContent === "Принять кандидат"), false);
+  assert.equal(first.image.querySelectorAll("button").some((node) => node.textContent === "Отменить черновик"), false);
   assert.equal(first.image.querySelectorAll("button").some((node) => node.textContent === "Переделать эту панель"), false);
   assert.ok(first.image.querySelector("textarea"));
   assert.ok(first.framing.querySelectorAll("input").find((node) => node.type === "range"));
@@ -534,14 +546,14 @@ test("Frame Editor shows a titled Panel Editor with panel selection, basis, fram
   const identity = first.references.querySelector("img");
   assert.equal(identity.src, "/anchor-p.png");
   assert.match(textOf(first.references), /Базовый образ/);
-  assert.match(textOf(first.references), /фото позы или выражения/i);
   assert.ok(first.references.querySelectorAll("input").find((node) => node.type === "file"));
-  assert.match(textOf(first.references), /фото позы или выражения/i);
+  assert.ok(panelSection(0).querySelector(".panel-view-header"));
+  assert.match(textOf(panelSection(0).querySelector(".panel-view-header")), /Панель 1\.1 · Путин/);
 
-  tabs[1].click();
+  panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
+  edits[1].click();
   assert.equal(panelSection(0).hidden, true);
   assert.equal(panelSection(1).hidden, false);
-  assert.equal($("#panel-editor-tabs").querySelectorAll("button")[1].getAttribute("aria-pressed"), "true");
   assert.equal(parts(1).image.querySelector(".panel-basis").dataset.basis, "upload");
 });
 
@@ -573,7 +585,7 @@ test("dock Commands scope is always visible and follows explicit panel selection
 
   openCard(0);
   assert.equal(dock.getCommandTarget()?.kind, "storyboard");
-  $("#panel-editor-tabs").querySelectorAll("button")[1].click();
+  $("#frame-panel-actions").querySelectorAll("button")[1].click();
   assert.equal(dock.getCommandTarget()?.kind, "panel");
   assert.equal(dock.getCommandTarget()?.panelIndex, 1);
   assert.equal(dock.getCommandTarget()?.displayFrameId, "display-1");
@@ -624,7 +636,7 @@ test("navigation, selection, inspector and editors make no mutation or provider 
   if (more) more.open = true;
   selectCard(0);
   inspectorButton("Открыть редактор кадра").click();
-  for (const tab of $("#panel-editor-tabs").querySelectorAll("button")) tab.click();
+  for (const button of $("#frame-panel-actions").querySelectorAll("button")) button.click();
   $("#detail").close();
   selectCard(0);
   inspectorButton("Изображение панели 1.2…").click();

@@ -211,7 +211,7 @@
   <dialog id="detail">
     <div id="detail-scroll" class="detail-scroll">
       <div class="detail-layout">
-        <h2 class="detail-title">Редактор кадра</h2>
+        <h2 id="detail-title" class="detail-title">Редактор кадра</h2>
         <p id="detail-frame-number" class="detail-frame-number"></p>
         <p id="detail-generation-status" class="detail-generation-status" role="status" aria-live="polite" hidden></p>
         <div id="detail-frame" class="frame-host"></div>
@@ -250,15 +250,25 @@
           <button id="frame-dialogue-add" type="button">Добавить реплику</button>
           <button id="frame-dialogue-remove" type="button">Удалить реплику</button>
         </section>
-        <section id="panel-editor" class="panel-editor" aria-labelledby="panel-editor-title" hidden>
-          <h3 id="panel-editor-title" class="panel-editor-title">Редактор панели</h3>
-          <div id="panel-editor-tabs" class="panel-editor-tabs" role="group" aria-label="Панели кадра"></div>
+        <div id="frame-panel-actions" class="frame-panel-actions"></div>
+        <section id="panel-editor" class="panel-editor" hidden>
           <div id="detail-panel-controls" class="panel-controls"></div>
         </section>
       </div>
       <div class="dialog-actions">
         <button id="next-frame" type="button" hidden>Продолжить к следующему кадру</button>
         <button id="close-detail" type="button" class="secondary">Закрыть</button>
+      </div>
+    </div>
+    <div id="revision-confirm" class="revision-confirm" hidden>
+      <div class="revision-confirm-scrim" aria-hidden="true"></div>
+      <div class="revision-confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="revision-confirm-title" aria-describedby="revision-confirm-text">
+        <h3 id="revision-confirm-title">Отменить черновик?</h3>
+        <p id="revision-confirm-text">Текущее изображение панели не изменится.</p>
+        <div class="dialog-actions">
+          <button id="revision-confirm-keep" type="button" class="secondary">Вернуться к черновику</button>
+          <button id="revision-confirm-do" type="button">Отменить черновик</button>
+        </div>
       </div>
     </div>
   </dialog>

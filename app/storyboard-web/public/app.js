@@ -97,11 +97,21 @@ const framesArea = document.querySelector("#frames-area");
 const frameInspector = document.querySelector("#frame-inspector");
 const panelEditor = document.querySelector("#panel-editor");
 const panelEditorTabs = document.querySelector("#panel-editor-tabs");
+const framePanelActions = document.querySelector("#frame-panel-actions");
+const detailTitle = document.querySelector("#detail-title");
+const detailScroll = document.querySelector("#detail-scroll");
+const revisionConfirm = document.querySelector("#revision-confirm");
+const revisionConfirmKeep = document.querySelector("#revision-confirm-keep");
+const revisionConfirmDo = document.querySelector("#revision-confirm-do");
 
 let workspaceStages = null;
 let selection = null;
 let inspectorDialogueError = null;
 let detailPanelIndex = 0;
+let detailView = "frame";
+let dockSuspended = false;
+let dockRestoreCollapsed = null;
+let revisionCancelHandler = null;
 let lastRenderStatus = null;
 let readyFrames = [];
 let draftSync = { state: "boot", savedText: null };
@@ -1486,8 +1496,13 @@ function openDetail(index, { panelIndex = null } = {}) {
   const structureId = frame.structureFrameId || frame.id;
   const segmentIndex = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
   const sameFrame = Boolean(detail?.open) && detailStructureId === structureId && detailSegmentIndex === segmentIndex;
-  if (Number.isInteger(panelIndex)) detailPanelIndex = panelIndex;
-  else if (!sameFrame) detailPanelIndex = 0;
+  if (Number.isInteger(panelIndex)) {
+    detailPanelIndex = panelIndex;
+    detailView = "panel";
+  } else {
+    if (!sameFrame) detailPanelIndex = 0;
+    detailView = "frame";
+  }
   detailIndex = index;
   detailStructureId = structureId;
   detailSegmentIndex = segmentIndex;
@@ -1636,7 +1651,15 @@ utteranceSave?.addEventListener("click", () => {
     },
   });
 });
+detail.addEventListener("cancel", (event) => {
+  if (!revisionConfirm || revisionConfirm.hidden) return;
+  event.preventDefault();
+  hideRevisionConfirm();
+});
 detail.addEventListener("close", () => {
+  detailView = "frame";
+  hideRevisionConfirm();
+  resumeDockAfterPanel();
   if (detailGenerationStatus) {
     detailGenerationStatus.hidden = true;
     detailGenerationStatus.textContent = "";
@@ -2070,6 +2093,14 @@ function applyRendition(image, placementValue) {
   image.style.transform = FrameRenderer.renditionTransform(placementValue);
 }
 
+function applyPanelRendition(panelIndex, placementValue) {
+  applyRendition(panelImage(panelIndex), placementValue);
+  const section = detailPanelControls?.children?.[panelIndex];
+  const figure = section?.querySelector?.(".revision-current");
+  const current = figure?.querySelector?.("img");
+  if (current) applyRendition(current, placementValue);
+}
+
 function detailPanels() {
   if (!detailHost || typeof detailHost.querySelectorAll !== "function") return [];
   return [...detailHost.querySelectorAll(".panel")];
@@ -2130,7 +2161,7 @@ function frameScaleOf(node) {
 
 function restorePlacement(panel, panelIndex, placementValue) {
   rememberPlacement(panel, placementValue);
-  applyRendition(panelImage(panelIndex), placementValue);
+  applyPanelRendition(panelIndex, placementValue);
   const section = detailPanelControls?.children?.[panelIndex];
   const zoom = [...(section?.querySelectorAll?.("input") || [])].find((input) => input.type === "range");
   if (zoom) zoom.value = String(placementValue.zoom);
@@ -2202,7 +2233,11 @@ async function commitPlacement(frame, panel, panelIndex, patch, messages) {
 }
 
 function bindDetailPan(frame) {
-  for (const column of detailPanels()) {
+  const columns = [
+    ...detailPanels(),
+    ...(detailPanelControls?.querySelectorAll?.(".revision-current") || []),
+  ];
+  for (const column of columns) {
     const panelIndex = Number(column.dataset?.panelIndex);
     const panel = frame.panels?.[panelIndex];
     if (!panel?.assetId) continue;
@@ -2271,7 +2306,7 @@ function bindDetailPan(frame) {
       drag.moved = true;
       const next = { ...current, ...nextPan };
       rememberPlacement(panel, next);
-      applyRendition(image, next);
+      applyPanelRendition(panelIndex, next);
       updatePlacementCopy(panelIndex, next);
     });
     column.addEventListener("pointerup", (event) => stop(event, false));
@@ -2287,10 +2322,13 @@ function panelAddress(panelIndex) {
 }
 
 function panelSubsection(name, title) {
-  const node = document.createElement("div");
+  const node = document.createElement("details");
   node.className = `panel-subsection panel-subsection-${name}`;
   node.dataset.panelSection = name;
-  node.append(textElement("h4", "panel-subsection-title", title));
+  const summary = document.createElement("summary");
+  summary.className = "panel-subsection-title";
+  summary.textContent = title;
+  node.append(summary);
   return node;
 }
 
@@ -2422,75 +2460,221 @@ function bindInitialPanelCreate({ frame, panel, panelIndex, instruction, perform
   imagePart.append(textElement("p", "helper", "Фото позы из «Референсов» отправляется вместе с этой генерацией."));
 }
 
+function hideRevisionConfirm() {
+  revisionCancelHandler = null;
+  if (!revisionConfirm) return;
+  revisionConfirm.hidden = true;
+  if (detailScroll) detailScroll.inert = false;
+}
+
+function showRevisionConfirm(onConfirm) {
+  revisionCancelHandler = onConfirm;
+  if (!revisionConfirm) return;
+  revisionConfirm.hidden = false;
+  if (detailScroll) detailScroll.inert = true;
+  revisionConfirmDo?.focus?.();
+}
+
+revisionConfirmKeep?.addEventListener("click", () => {
+  hideRevisionConfirm();
+});
+revisionConfirmDo?.addEventListener("click", () => {
+  const confirm = revisionCancelHandler;
+  hideRevisionConfirm();
+  confirm?.();
+});
+
+function suspendDockForPanel() {
+  if (dockSuspended || !researchDockRoot) return;
+  dockSuspended = true;
+  dockRestoreCollapsed = researchDock?.isCollapsed?.() === true;
+  researchDock?.setCollapsed?.(true);
+  researchDockRoot.classList.add("research-dock--suspended");
+}
+
+function resumeDockAfterPanel() {
+  if (!dockSuspended || !researchDockRoot) return;
+  researchDockRoot.classList.remove("research-dock--suspended");
+  if (dockRestoreCollapsed === false) researchDock?.setCollapsed?.(false);
+  dockSuspended = false;
+  dockRestoreCollapsed = null;
+}
+
+function applyDetailView({ restoreFrame = false } = {}) {
+  const panel = detailView === "panel";
+  if (detail) detail.dataset.view = detailView;
+  if (detailTitle) {
+    detailTitle.hidden = panel;
+    if (!panel) detailTitle.textContent = "Редактор кадра";
+  }
+  if (detailFrameNumber) detailFrameNumber.hidden = panel;
+  if (panelEditor) panelEditor.hidden = !panel || !(detailPanelControls?.children?.length);
+  if (framePanelActions) framePanelActions.hidden = panel;
+  if (panel) {
+    if (detailHost) detailHost.hidden = true;
+    if (detailOutside) detailOutside.hidden = true;
+    if (detailRetained) detailRetained.hidden = true;
+    if (frameDialogue) frameDialogue.hidden = true;
+    if (utteranceEdit) utteranceEdit.hidden = true;
+    if (utteranceEditor) utteranceEditor.hidden = true;
+    if (nextFrame) nextFrame.hidden = true;
+    if (closeDetail) closeDetail.hidden = true;
+    suspendDockForPanel();
+    return;
+  }
+  if (detailHost) detailHost.hidden = false;
+  if (detailOutside) detailOutside.hidden = false;
+  if (closeDetail) closeDetail.hidden = false;
+  const frame = readyFrames[detailIndex];
+  if (restoreFrame && frame) {
+    if (detailRetained) {
+      detailRetained.hidden = !frame.retainedImageNotice;
+      detailRetained.textContent = frame.retainedImageNotice || "";
+    }
+    prepareUtteranceEditor(frame);
+    renderFrameDialogue(frame);
+    const following = readyFrames[detailIndex + 1];
+    if (nextFrame) nextFrame.hidden = !frame.visualReady || !following;
+  }
+  resumeDockAfterPanel();
+}
+
+function renderFramePanelActions(frame) {
+  if (!framePanelActions) return;
+  framePanelActions.replaceChildren();
+  (frame?.panels || []).forEach((panel, panelIndex) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "frame-panel-edit";
+    const subject = panel.subject ? ` · ${panel.subject}` : "";
+    button.textContent = `Редактировать изображение панели ${panelAddress(panelIndex)}${subject}`;
+    button.addEventListener("click", () => {
+      detailView = "panel";
+      selectDetailPanel(panelIndex, { explicit: true });
+      applyDetailView();
+    });
+    framePanelActions.append(button);
+  });
+}
+
 function bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart }) {
   const revision = panel.revision || null;
   instruction.value = revision?.draftInstruction || "";
+  let activeMode = revision?.draftMode || "refine";
   const summaryHost = document.createElement("div");
   summaryHost.className = "revision-summary-host";
   const paintSummary = (summary) => {
     summaryHost.replaceChildren();
     if (summary) summaryHost.append(renderRevisionSummary(document, summary));
-    const generate = imagePart.querySelector('[data-revision-action="generate"]');
-    if (generate) generate.disabled = summary?.providerCall === false;
   };
-  paintSummary(revision?.summary || null);
-  const actions = document.createElement("div");
-  actions.className = "revision-actions";
-  const refine = revisionButton(REVISION_COPY.refine, "refine");
-  const variation = revisionButton(REVISION_COPY.variation, "variation");
-  const generate = revisionButton(REVISION_COPY.generate, "generate");
-  actions.append(refine, variation, generate);
-  paintSummary(revision?.summary || null);
-  const history = document.createElement("div");
-  history.className = "revision-history";
+  const localSummary = (mode) => ({
+    basis: mode === "new-variation"
+      ? { kind: "none", ordinal: null }
+      : { kind: "current-panel", ordinal: null },
+    changes: [],
+    preserved: [],
+    notApplied: [],
+    reconstruction: revision?.summary?.reconstruction || null,
+    blockReason: mode === "refine" && !instruction.value.trim() ? "empty-refine" : null,
+    providerCall: mode === "new-variation" || Boolean(instruction.value.trim()),
+  });
   const candidates = revision?.candidates || [];
   const selected = candidates.find((candidate) => candidate.id === revision?.selectedCandidateId) || null;
+  const compare = document.createElement("div");
+  compare.className = "revision-compare";
+  const currentFigure = document.createElement("figure");
+  currentFigure.className = "revision-current";
+  currentFigure.dataset.panelIndex = String(panelIndex);
+  const currentImage = document.createElement("img");
+  currentImage.className = "panel-asset";
+  currentImage.alt = "Текущее изображение";
+  if (panel.asset) currentImage.src = panel.asset;
+  currentFigure.append(textElement("figcaption", "", "Текущее изображение"), currentImage);
+  applyRendition(currentImage, placementOf(panel));
+  compare.append(currentFigure);
+  const history = document.createElement("div");
+  history.className = "revision-history";
   if (selected) {
-    history.append(textElement("p", "revision-count", `Кандидат ${selected.ordinal} из ${candidates.length}`));
+    const candidateFigure = document.createElement("figure");
+    candidateFigure.className = "revision-candidate";
     const preview = document.createElement("img");
     preview.className = "revision-candidate-preview";
     preview.alt = `Кандидат ${selected.ordinal}`;
     preview.src = selected.assetUrl;
-    history.append(preview);
-    const undo = revisionButton(REVISION_COPY.undo, "undo");
-    const redo = revisionButton(REVISION_COPY.redo, "redo");
+    const undo = revisionButton("←", "undo");
+    const redo = revisionButton("→", "redo");
+    undo.setAttribute("aria-label", REVISION_COPY.undo);
+    redo.setAttribute("aria-label", REVISION_COPY.redo);
     undo.disabled = selected.ordinal <= 1;
     redo.disabled = selected.ordinal >= candidates.length;
-    history.append(undo, redo);
+    history.append(textElement("p", "revision-count", `Кандидат ${selected.ordinal} из ${candidates.length}`), undo, redo);
+    candidateFigure.append(
+      textElement("figcaption", "", `Кандидат ${selected.ordinal}`),
+      preview,
+      history,
+      textElement("p", "revision-candidate-note", "Текущее изображение изменится только после «Принять кандидат»."),
+    );
+    compare.append(candidateFigure);
     undo.addEventListener("click", () => navigateRevision("undo"));
     redo.addEventListener("click", () => navigateRevision("redo"));
   }
+  const modeField = document.createElement("fieldset");
+  modeField.className = "revision-mode";
+  modeField.append(textElement("legend", "", "Как создать следующий кандидат"));
+  for (const [value, label] of [["refine", REVISION_COPY.refine], ["new-variation", REVISION_COPY.variation]]) {
+    const choice = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = `revision-mode-${panelIndex}`;
+    input.value = value;
+    input.checked = activeMode === value;
+    choice.append(input, textElement("span", "", label));
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      activeMode = value;
+      if (!instruction.value.trim()) {
+        paintSummary(localSummary(value));
+        return;
+      }
+      postPanelRevision(frame, panelIndex, "-preview", { mode: value, instruction: instruction.value })
+        .then((preview) => paintSummary(preview.summary))
+        .catch(() => paintSummary(localSummary(value)));
+    });
+    modeField.append(choice);
+  }
+  const instructionLabel = document.createElement("label");
+  instructionLabel.className = "revision-instruction";
+  instructionLabel.append(textElement("span", "revision-instruction-label", "Что изменить"), instruction);
+  const generate = revisionButton(REVISION_COPY.generate, "generate");
+  generate.className = "revision-generate";
+  const compose = document.createElement("div");
+  compose.className = "revision-compose";
+  compose.append(modeField, instructionLabel, summaryHost, generate);
   const review = document.createElement("div");
   review.className = "revision-review";
-  const accept = revisionButton(REVISION_COPY.accept, "accept");
-  const cancel = revisionButton(REVISION_COPY.cancel, "cancel");
-  accept.disabled = !selected;
-  cancel.disabled = !revision;
-  review.append(accept, cancel);
-  const confirm = document.createElement("div");
-  confirm.className = "revision-confirm";
-  confirm.hidden = true;
-  const confirmCancel = revisionButton(REVISION_COPY.confirmCancel, "confirm-cancel");
-  const keepDraft = revisionButton(REVISION_COPY.keepDraft, "keep-draft");
-  confirm.append(
-    textElement("p", "helper", "Отменить черновик? Текущее изображение панели не изменится."),
-    confirmCancel,
-    keepDraft,
-  );
+  let accept = null;
+  if (selected) {
+    accept = revisionButton(REVISION_COPY.accept, "accept");
+    accept.className = "primary";
+    review.append(accept);
+  }
+  let cancel = null;
+  if (revision) {
+    cancel = revisionButton(REVISION_COPY.cancel, "cancel");
+    cancel.className = "secondary";
+    review.append(cancel);
+  }
   const setLocked = (locked) => {
     for (const button of imagePart.querySelectorAll("[data-revision-action]")) button.disabled = locked;
+    for (const input of modeField.querySelectorAll("input")) input.disabled = locked;
     if (locked) return;
-    accept.disabled = !selected;
-    cancel.disabled = !revision;
     const undo = history.querySelector('[data-revision-action="undo"]');
     const redo = history.querySelector('[data-revision-action="redo"]');
     if (undo) undo.disabled = !selected || selected.ordinal <= 1;
     if (redo) redo.disabled = !selected || selected.ordinal >= candidates.length;
-    generate.disabled = revision?.summary?.providerCall === false && !summaryHost.querySelector("[data-revision-summary]");
-    const current = summaryHost.querySelector("[data-revision-summary]");
-    if (current && revision?.summary?.providerCall === false && instruction.value === (revision?.draftInstruction || "")) {
-      generate.disabled = true;
-    }
+    if (accept) accept.disabled = false;
+    if (cancel) cancel.disabled = false;
+    generate.disabled = false;
   };
   const runRevision = async (suffix, body, { semanticAction, busy, success }) => {
     const addressed = panelRevisionAddress(frame, panel, panelIndex);
@@ -2535,7 +2719,6 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
     }
   };
   async function navigateRevision(direction) {
-    const addressed = panelRevisionAddress(frame, panel, panelIndex);
     setLocked(true);
     try {
       const next = await postPanelRevision(frame, panelIndex, "-navigate", { direction });
@@ -2545,65 +2728,23 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
     } finally {
       setLocked(false);
     }
-    addressed;
   }
-  refine.addEventListener("click", () => runRevision("", { mode: "refine" }, {
-    semanticAction: "panel_revision_open",
-    busy: "Открываю уточнение…",
-    success: "Черновик уточнения открыт. Генерация ещё не запускалась.",
-  }));
-  variation.addEventListener("click", () => runRevision("", { mode: "new-variation" }, {
-    semanticAction: "panel_revision_open",
-    busy: "Открываю новую вариацию…",
-    success: "Черновик вариации открыт. Предыдущее изображение не будет отправлено.",
-  }));
   generate.addEventListener("click", () => runRevision("-candidate", { mode: activeMode }, {
     semanticAction: "panel_generate",
     busy: "Создаю кандидат…",
     success: "Кандидат готов. Текущее изображение панели не изменилось.",
   }));
-  let activeMode = revision?.draftMode || "refine";
-  const markMode = (mode) => {
-    activeMode = mode;
-    refine.dataset.pressed = mode === "refine" ? "true" : "false";
-    variation.dataset.pressed = mode === "new-variation" ? "true" : "false";
-    refine.setAttribute("aria-pressed", mode === "refine" ? "true" : "false");
-    variation.setAttribute("aria-pressed", mode === "new-variation" ? "true" : "false");
-  };
-  markMode(activeMode);
-  refine.addEventListener("click", () => markMode("refine"), { capture: true });
-  variation.addEventListener("click", () => markMode("new-variation"), { capture: true });
-  accept.addEventListener("click", () => runRevision("-accept", { candidateId: selected?.id || null }, {
+  accept?.addEventListener("click", () => runRevision("-accept", { candidateId: selected?.id || null }, {
     semanticAction: "panel_revision_open",
     busy: "Принимаю кандидат…",
     success: "Кандидат стал текущим изображением панели.",
   }));
-  cancel.addEventListener("click", () => {
-    if (candidates.length) {
-      confirm.hidden = false;
-      return;
-    }
-    return runRevision("-cancel", {}, {
+  cancel?.addEventListener("click", () => {
+    showRevisionConfirm(() => runRevision("-cancel", {}, {
       semanticAction: "panel_revision_open",
       busy: "Отменяю черновик…",
       success: "Черновик отменён. Текущее изображение не изменилось.",
-    });
-  });
-  confirmCancel.addEventListener("click", () => {
-    confirm.hidden = true;
-    return runRevision("-cancel", {}, {
-      semanticAction: "panel_revision_open",
-      busy: "Отменяю черновик…",
-      success: "Черновик отменён. Текущее изображение не изменилось.",
-    });
-  });
-  keepDraft.addEventListener("click", () => {
-    confirm.hidden = true;
-  });
-  confirm.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    event.stopPropagation();
-    confirm.hidden = true;
+    }));
   });
   instruction.addEventListener("input", () => {
     const mode = activeMode;
@@ -2613,35 +2754,43 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
         const preview = await postPanelRevision(frame, panelIndex, "-preview", { mode, instruction: instruction.value });
         paintSummary(preview.summary);
       } catch {
-        // The explicit generate action remains the confirmation.
+        paintSummary(localSummary(mode));
       }
     }, 200);
   });
-  imagePart.append(
-    textElement("p", "helper", "Текущее изображение панели остаётся на месте, пока кандидат не принят."),
-    instruction,
-    summaryHost,
-    actions,
-    history,
-    review,
-    confirm,
-  );
-  imagePart.append(textElement("p", "helper", "Фото позы из «Референсов» отправляется только с созданием кандидата и применяется после принятия."));
+  if (revision?.summary) paintSummary(revision.summary);
+  else paintSummary(localSummary(activeMode));
+  imagePart.append(compare, compose);
+  if (review.childNodes?.length || review.children?.length) imagePart.append(review);
 }
 
 function renderPanelControls(frame) {
   detailPanelControls.replaceChildren();
   const panelCount = (frame.panels || []).length;
   if (!Number.isInteger(detailPanelIndex) || detailPanelIndex < 0 || detailPanelIndex >= panelCount) detailPanelIndex = 0;
-  if (panelEditor) panelEditor.hidden = panelCount === 0;
-  renderPanelTabs(frame);
   frame.panels.forEach((panel, panelIndex) => {
     const section = document.createElement("section");
     section.className = "panel-control";
     section.dataset.panelIndex = String(panelIndex);
     section.hidden = panelIndex !== detailPanelIndex;
+    const header = document.createElement("header");
+    header.className = "panel-view-header";
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "secondary";
+    back.textContent = "← К кадру";
+    back.addEventListener("click", () => {
+      detailView = "frame";
+      applyDetailView({ restoreFrame: true });
+    });
+    const closePanel = document.createElement("button");
+    closePanel.type = "button";
+    closePanel.className = "secondary";
+    closePanel.textContent = "Закрыть";
+    closePanel.addEventListener("click", () => detail.close());
     const title = document.createElement("h3");
     title.textContent = `Панель ${panelAddress(panelIndex)}${panel.subject ? ` · ${panel.subject}` : ""}`;
+    header.append(back, title, closePanel);
     const description = document.createElement("p");
     description.className = "panel-description-copy";
     description.textContent = panel.description;
@@ -2673,8 +2822,10 @@ function renderPanelControls(frame) {
     performance.type = "file";
     performance.accept = "image/png,image/jpeg,image/webp";
     performanceLabel.append(performance);
-    section.append(title, description);
-    const imagePart = panelSubsection("image", "Изображение");
+    section.append(header);
+    const imagePart = document.createElement("div");
+    imagePart.className = "panel-subsection panel-subsection-image";
+    imagePart.dataset.panelSection = "image";
     const basis = panelBasis(frame, panelIndex);
     if (basis) {
       const basisLine = document.createElement("p");
@@ -2706,7 +2857,7 @@ function renderPanelControls(frame) {
       textElement("p", "helper", "Влияет на позу, выражение и взгляд этой панели, но не на личность персонажа."),
     );
     performanceBox.append(performanceCopy);
-    referencesPart.append(identityReference(panel), performanceBox);
+    referencesPart.append(description, identityReference(panel), performanceBox);
     section.append(imagePart, framingPart, referencesPart);
     if (!panel.assetId) {
       framingPart.append(textElement("p", "helper", "Кадрирование появится, когда у панели будет своё изображение."));
@@ -2730,7 +2881,7 @@ function renderPanelControls(frame) {
         const next = { ...placementOf(panel), zoom: Number(zoom.value) };
         rememberPlacement(panel, next);
         updatePlacementCopy(panelIndex, next);
-        applyRendition(panelImage(panelIndex), next);
+        applyPanelRendition(panelIndex, next);
       });
       zoom.addEventListener("change", () => {
         const next = { ...placementOf(panel), zoom: Number(zoom.value) };
@@ -2750,7 +2901,7 @@ function renderPanelControls(frame) {
       reset.addEventListener("click", () => {
         const defaults = { ...FrameRenderer.PLACEMENT_DEFAULTS };
         rememberPlacement(panel, defaults);
-        applyRendition(panelImage(panelIndex), defaults);
+        applyPanelRendition(panelIndex, defaults);
         zoom.value = String(defaults.zoom);
         updatePlacementCopy(panelIndex, defaults);
         commitPlacement(frame, panel, panelIndex, { reset: true }, {
@@ -2770,7 +2921,7 @@ function renderPanelControls(frame) {
         const current = placementOf(panel);
         const next = { ...current, mirrored: !current.mirrored };
         rememberPlacement(panel, next);
-        applyRendition(panelImage(panelIndex), next);
+        applyPanelRendition(panelIndex, next);
         updatePlacementCopy(panelIndex, next);
         commitPlacement(frame, panel, panelIndex, next, {
           busy: "Сохраняю отражение…",
@@ -2794,6 +2945,8 @@ function renderPanelControls(frame) {
     column.addEventListener("click", () => selectDetailPanel(panelIndex, { explicit: true }));
   }
   selectDetailPanel(detailPanelIndex);
+  renderFramePanelActions(frame);
+  applyDetailView();
 }
 
 structureEditForm?.addEventListener("submit", async (event) => {

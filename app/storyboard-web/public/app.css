@@ -244,22 +244,31 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
 .detail-layout {
   display: grid;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 #detail {
-  width: min(1080px, calc(100vw - 32px));
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 32px);
-  overflow: visible;
+  position: relative;
+  box-sizing: border-box;
+  width: min(1080px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  overflow: hidden;
   border: 0;
   border-radius: 16px;
-  padding: 20px;
+  padding: 12px;
   background: #f3f0e9;
 }
 
 #detail-scroll {
-  max-height: calc(100vh - 72px);
-  overflow: auto;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  max-height: calc(100dvh - 48px);
+  overflow-x: hidden;
+  overflow-y: auto;
   display: grid;
   gap: 12px;
 }
@@ -756,6 +765,10 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   display: none;
 }
 
+#research-dock.research-dock--suspended {
+  display: none !important;
+}
+
 .research-region {
   display: grid;
   gap: 8px;
@@ -1177,8 +1190,16 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
 
 .stage-view[hidden],
 .frames-area[hidden],
-.panel-editor[hidden] {
-  display: none;
+.panel-editor[hidden],
+.frame-panel-actions[hidden],
+#detail-frame[hidden],
+#detail-title[hidden],
+#detail-frame-number[hidden],
+.frame-dialogue[hidden],
+#utterance-edit[hidden],
+#utterance-editor[hidden],
+.revision-confirm[hidden] {
+  display: none !important;
 }
 
 .stage-header {
@@ -1494,10 +1515,148 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
 .panel-editor {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
   padding: 14px;
   border: 1px solid #cbc7bd;
   border-radius: 12px;
   background: #faf8f3;
+  box-sizing: border-box;
+}
+
+.frame-panel-actions,
+.panel-controls,
+.panel-control,
+.revision-compare,
+.revision-compose,
+.revision-review,
+.revision-history,
+.dialog-actions {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.frame-panel-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.frame-panel-edit,
+.revision-generate,
+.revision-review .primary {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.panel-view-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.panel-view-header h3 {
+  flex: 1 1 160px;
+  min-width: 0;
+  margin: 0;
+  font-size: 18px;
+}
+
+.revision-compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.revision-current,
+.revision-candidate {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+}
+
+.revision-current figcaption,
+.revision-candidate figcaption,
+.revision-candidate-note,
+.revision-count {
+  margin: 0;
+  font-weight: 700;
+}
+
+.revision-current img,
+.revision-candidate-preview {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  max-height: 320px;
+  height: auto;
+  object-fit: contain;
+  background: #5d6e86;
+  box-sizing: border-box;
+}
+
+.revision-mode {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #d5d0c6;
+}
+
+.revision-mode label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.revision-instruction {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-weight: 700;
+}
+
+.revision-compose {
+  display: grid;
+  gap: 8px;
+}
+
+.revision-generate,
+.revision-review .primary {
+  padding: 10px 14px;
+  border: 1px solid #1d2428;
+  background: #1d2428;
+  color: #f7f4ee;
+  font: 15px/1.2 Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.revision-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.revision-preserved {
+  min-width: 0;
+}
+
+.revision-preserved summary {
+  cursor: pointer;
+  color: #1f5f8b;
+  font-weight: 700;
+}
+
+.panel-subsection-framing,
+.panel-subsection-references {
+  min-width: 0;
 }
 
 .panel-editor-title {
@@ -1593,32 +1752,62 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
   font-weight: 700;
 }
 
-.revision-actions,
-.revision-review,
-.revision-history {
+.revision-review {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid #e3ded3;
 }
 
-.revision-summary p,
-.revision-count {
+.revision-summary p {
   margin: 0;
 }
 
-.revision-candidate-preview {
-  width: 160px;
-  height: auto;
-  background: #5d6e86;
+.revision-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 16px;
 }
 
-.revision-confirm {
+.revision-confirm-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(29, 36, 40, 0.35);
+}
+
+.revision-confirm-card {
+  position: relative;
+  z-index: 1;
   display: grid;
   gap: 8px;
-  padding: 10px;
-  border: 1px solid #1d2428;
+  box-sizing: border-box;
+  width: min(420px, 100%);
+  max-width: 100%;
+  padding: 18px;
+  border-radius: 14px;
   background: #fffdf8;
+  box-shadow: 0 16px 40px rgba(29, 36, 40, 0.24);
+}
+
+@media (max-width: 720px) {
+  .revision-compare {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .frame-panel-edit,
+  .revision-generate,
+  .revision-review .primary,
+  .revision-review .secondary,
+  .panel-view-header button {
+    width: 100%;
+  }
 }
 
 .editor-canvas .panel-selected::after,

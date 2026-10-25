@@ -85,7 +85,7 @@ export const REVISION_COPY = Object.freeze({
   refine: "Уточнить текущее",
   variation: "Новая вариация",
   generate: "Создать кандидат",
-  accept: "Принять",
+  accept: "Принять кандидат",
   cancel: "Отменить черновик",
   undo: "Кандидат назад",
   redo: "Кандидат вперёд",
@@ -109,16 +109,24 @@ export function revisionBasisText(summary) {
   return "Основа: текущая панель.";
 }
 
+export function revisionPreservedDisclosure(summary) {
+  const facts = summary?.preserved || [];
+  if (!facts.length) return null;
+  return {
+    label: `Что сохранится · ${facts.length} свойств`,
+    text: formatFacts(facts),
+  };
+}
+
 export function revisionSummaryLines(summary) {
   if (!summary) return [];
   const lines = [
     revisionBasisText(summary),
     `Что изменится: ${formatFacts(summary.changes)}.`,
-    `Что сохранится: ${formatFacts(summary.preserved)}.`,
-    `Не применяется: ${summary.notApplied?.length
-      ? summary.notApplied.map((entry) => entry.text).join("; ")
-      : "нет"}.`,
   ];
+  if (summary.notApplied?.length) {
+    lines.push(`Не применяется: ${summary.notApplied.map((entry) => entry.text).join("; ")}.`);
+  }
   if (summary.reconstruction === "partial") {
     lines.push("Прошлое описание не восстанавливается: в запросе только уже известные свойства и эта правка. Основой остаётся само изображение.");
   } else if (summary.reconstruction === "known-supported") {
@@ -140,6 +148,17 @@ export function renderRevisionSummary(document, summary) {
     const paragraph = document.createElement("p");
     paragraph.textContent = line;
     box.append(paragraph);
+  }
+  const preserved = revisionPreservedDisclosure(summary);
+  if (preserved) {
+    const details = document.createElement("details");
+    details.className = "revision-preserved";
+    const disclosure = document.createElement("summary");
+    disclosure.textContent = preserved.label;
+    const paragraph = document.createElement("p");
+    paragraph.textContent = preserved.text;
+    details.append(disclosure, paragraph);
+    box.append(details);
   }
   return box;
 }
