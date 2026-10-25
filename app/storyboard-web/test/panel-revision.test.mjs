@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { serializeImageRequest, toReference } from "../image-reference-strategy.mjs";
 import {
   applySupportedPatch,
   assembleRevisionReferences,
@@ -9,6 +10,7 @@ import {
   summarizeRevision,
 } from "../panel-revision.mjs";
 import { revisionBasisText, revisionSummaryLines } from "../public/panel-revision-view.mjs";
+import { deliverPreparedImage } from "../server.mjs";
 
 const knownIntent = {
   framing: "close-up",
@@ -182,4 +184,190 @@ test("summary names basis, changes, preserved state, and text that is not applie
     reconstruction: "partial",
     basis: { kind: "current-panel", ordinal: null },
   }).join(" "), /не восстанавливается/);
+});
+
+const ROLE_LINE = {
+  anchor: "is the approved identity anchor for Маша. It controls identity.",
+  previous: "is the previous result for this panel. Use it as the staging draft and apply only the supported changes named below.",
+  performance: "is the performance reference. It controls pose, expression, gaze, head angle, composition, and crop, but never identity.",
+  style: "is the project style anchor. It controls rendering language only, never identity or staging.",
+};
+
+const PASSTHROUGH_ENV = {
+  IMAGE_REFERENCE_STRATEGY: "passthrough",
+  IMAGE_MODEL: "image-test",
+  BASE_URL: "https://gateway.invalid.example/v1",
+  CONTEST_API_TOKEN: "not-sent",
+};
+
+function expectedImageLines(roles) {
+  return roles.map((role, index) => `Image ${index + 1} ${ROLE_LINE[role]}`);
+}
+
+function imageLines(prompt) {
+  return String(prompt ?? "").split("\n").filter((line) => /^Image \d+ /.test(line));
+}
+
+function markedAsset(id, role, size = 96) {
+  const bytes = Buffer.concat([
+    Buffer.from(`role:${role}:`),
+    Buffer.alloc(size, role.charCodeAt(0)),
+  ]);
+  return { id, mime: "image/png", bytes, width: 8, height: 8 };
+}
+
+function sentRoles(images) {
+  return images.map((image) => {
+    const match = /^role:([a-z]+):/.exec(image.bytes.toString("utf8"));
+    if (!match) throw new Error("provider image is missing its role marker");
+    return match[1];
+  });
+}
+
+async function sendRevision({ mode, assets, env }) {
+  const assembled = assembleRevisionReferences({ mode, ...assets });
+  assert.equal(assembled.ok, true, mode);
+  const fetches = [];
+  const calls = [];
+  const result = await deliverPreparedImage({
+    slots: assembled.slots,
+    generationMode: assembled.generationMode,
+    assembled,
+    compile: (flags) => compileRevisionPrompt(baseline(), {
+      aspectRatio: "5:4",
+      hasPrevious: flags.hasPrevious,
+      hasPerformance: flags.hasPerformance,
+      hasStyle: flags.hasStyle,
+      identityAlsoStyle: flags.identityAlsoStyle,
+    }),
+    aspectRatio: "5:4",
+    imageGenerator: async (input) => {
+      calls.push(input);
+      return { ok: true, image: { bytes: Buffer.from("fake-output"), mime: "image/png", width: 1, height: 1 } };
+    },
+    env,
+    fetchImpl: async () => {
+      fetches.push("fetch");
+      throw new Error("provider fetch is not used");
+    },
+  });
+  return { assembled, result, calls, fetches };
+}
+
+function assertProviderBoundary(label, sent, expectedRoles) {
+  assert.equal(sent.fetches.length, 0, label);
+  assert.equal(sent.result.ok, true, `${label} result`);
+  assert.equal(sent.calls.length, 1, label);
+  const call = sent.calls[0];
+  const lines = expectedImageLines(expectedRoles);
+  assert.equal(call.transport.referenceRoles, expectedRoles.join(","), label);
+  assert.deepEqual(sentRoles(call.images), expectedRoles, label);
+  assert.deepEqual(imageLines(call.prompt), lines, label);
+  let cursor = -1;
+  for (const line of lines) {
+    const at = call.serializedBody.indexOf(line);
+    assert.equal(at > cursor, true, `${label} serialized ${line}`);
+    cursor = at;
+  }
+}
+
+test("Image N declarations match the references included in the provider request", async () => {
+  const anchor = markedAsset("identity", "anchor");
+  const previous = markedAsset("panel", "previous");
+  const performance = markedAsset("pose", "performance");
+  const style = markedAsset("look", "style");
+
+  const refinePerformance = await sendRevision({
+    mode: "refine",
+    assets: { anchor, previous, performance, style },
+    env: PASSTHROUGH_ENV,
+  });
+  assert.deepEqual(
+    refinePerformance.assembled.slots.map((slot) => slot.role),
+    ["anchor", "previous", "performance"],
+  );
+  assert.deepEqual(refinePerformance.assembled.omissions, [
+    { role: "style", assetId: "look", reason: "reference-limit" },
+  ]);
+  assertProviderBoundary(
+    "refine anchor + previous + performance",
+    refinePerformance,
+    ["anchor", "previous", "performance"],
+  );
+
+  const refineStyle = await sendRevision({
+    mode: "refine",
+    assets: { anchor, previous, performance: null, style },
+    env: PASSTHROUGH_ENV,
+  });
+  assert.deepEqual(
+    refineStyle.assembled.slots.map((slot) => slot.role),
+    ["anchor", "previous", "style"],
+  );
+  assertProviderBoundary(
+    "refine anchor + previous + style",
+    refineStyle,
+    ["anchor", "previous", "style"],
+  );
+
+  const variation = await sendRevision({
+    mode: "new-variation",
+    assets: { anchor, previous, performance, style },
+    env: PASSTHROUGH_ENV,
+  });
+  assert.deepEqual(
+    variation.assembled.slots.map((slot) => slot.role),
+    ["anchor", "performance", "style"],
+  );
+  assertProviderBoundary(
+    "new variation anchor + performance + style",
+    variation,
+    ["anchor", "performance", "style"],
+  );
+
+  const bulkyStyle = markedAsset("look", "style", 16000);
+  const preview = assembleRevisionReferences({
+    mode: "refine",
+    anchor,
+    previous,
+    performance: null,
+    style: bulkyStyle,
+  });
+  const kept = preview.slots
+    .filter((slot) => slot.role !== "style")
+    .map((slot) => toReference(slot.role, slot.asset));
+  const stalePrompt = compileRevisionPrompt(baseline(), {
+    aspectRatio: "5:4",
+    hasPrevious: true,
+    hasPerformance: false,
+    hasStyle: true,
+    identityAlsoStyle: false,
+  });
+  const budget = Buffer.byteLength(serializeImageRequest({
+    prompt: stalePrompt,
+    references: kept,
+    aspectRatio: "5:4",
+    model: "image-test",
+  }));
+  const budgeted = await sendRevision({
+    mode: "refine",
+    assets: { anchor, previous, performance: null, style: bulkyStyle },
+    env: {
+      IMAGE_REFERENCE_STRATEGY: "budgeted",
+      IMAGE_REQUEST_BUDGET_BYTES: String(budget),
+      IMAGE_MODEL: "image-test",
+      BASE_URL: "https://gateway.invalid.example/v1",
+      CONTEST_API_TOKEN: "not-sent",
+    },
+  });
+  assert.deepEqual(
+    budgeted.assembled.slots.map((slot) => slot.role),
+    ["anchor", "previous", "style"],
+  );
+  assert.equal(budgeted.result.diagnostics?.omittedRoles, "style");
+  assertProviderBoundary(
+    "budget omits included style",
+    budgeted,
+    ["anchor", "previous"],
+  );
 });

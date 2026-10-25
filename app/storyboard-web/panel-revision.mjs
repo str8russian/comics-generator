@@ -213,6 +213,7 @@ export function assembleRevisionReferences({
   return {
     ok: true,
     slots: slots.map((slot) => ({ role: slot.role, asset: slot.asset })),
+    roles,
     omissions,
     previousDropped: false,
     styleDroppedByLimit: omissions.some((entry) => entry.role === "style"),
@@ -236,16 +237,16 @@ function roleLines(snapshot, flags) {
     roles.push(`Image ${next} is the approved identity anchor. It controls identity.`);
     next += 1;
   }
-  if (flags.hasStyle && !flags.identityAlsoStyle) {
-    roles.push(`Image ${next} is the project style anchor. It controls rendering language only, never identity or staging.`);
+  if (flags.hasPrevious) {
+    roles.push(`Image ${next} is the previous result for this panel. Use it as the staging draft and apply only the supported changes named below.`);
     next += 1;
   }
   if (flags.hasPerformance) {
     roles.push(`Image ${next} is the performance reference. It controls pose, expression, gaze, head angle, composition, and crop, but never identity.`);
     next += 1;
   }
-  if (flags.hasPrevious) {
-    roles.push(`Image ${next} is the previous result for this panel. Use it as the staging draft and apply only the supported changes named below.`);
+  if (flags.hasStyle && !flags.identityAlsoStyle) {
+    roles.push(`Image ${next} is the project style anchor. It controls rendering language only, never identity or staging.`);
   }
   return roles;
 }

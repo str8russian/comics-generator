@@ -1351,7 +1351,7 @@ function upstreamPanelOmissions(assembled, refs) {
   return omissions;
 }
 
-async function deliverPreparedImage({
+export async function deliverPreparedImage({
   slots,
   generationMode,
   assembled,
