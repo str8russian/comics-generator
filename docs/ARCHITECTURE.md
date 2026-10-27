@@ -1,6 +1,6 @@
 # Storyboard Web architecture
 
-This map describes implementation `master` at `794cfb32e9232e01112a17a7c2ce9001206921b9`. It is a navigation aid. It does not authorize a split of `server.mjs` or the pending stage change in `DEC-081`.
+This map describes the implementation tree after the bounded Stage 2B research-route extraction from base `2cdb4eb3fefc9b113bffda612aa1eb76ca529af0`. It is a navigation aid. It does not authorize a split of `server.mjs` or the pending stage change in `DEC-081`.
 
 ## Composition root and startup
 
@@ -15,7 +15,7 @@ This map describes implementation `master` at `794cfb32e9232e01112a17a7c2ce90012
 - [`createImageGenerationTraceRecorder`](../app/storyboard-web/image-generation-trace.mjs) shares that pool;
 - the render controller is created on first render use through [`createRenderController`](../app/storyboard-web/render-service.mjs).
 
-`migrate: false` or a supplied `migrate` function skips or replaces that startup migration. The same file still owns static-file serving, API dispatch, request bodies, and most product handlers. At this commit it is 3,148 lines. Useful seams for navigation are the static `routes` table, `routeProduct`, and the `createServer` dependency block. Those are facts about where to read, not an approved extraction plan.
+`migrate: false` or a supplied `migrate` function skips or replaces that startup migration. The same file still owns static-file serving, API dispatch, request bodies, and most product handlers. `server.mjs` is 2,988 lines. Research notes, events, and trace HTTP is [`research-routes.mjs`](../app/storyboard-web/research-routes.mjs) (235 lines), delegated once from `routeProduct`. These route groups remain in `server.mjs`: legacy storyboard, project/material/source, visual operations and storyboard editing, anchors and characters, panel generation and revision, render/video/intro, and static files plus project collection, open, rename, and duplicate. Useful seams for navigation are the static `routes` table, `routeProduct`, and the `createServer` dependency block. Those are facts about where to read, not an approved extraction plan.
 
 ## Browser UI
 
@@ -34,14 +34,14 @@ Shared frame geometry and dialogue-region drawing live in [`prototypes/storyboar
 
 ## HTTP and API
 
-Static GET paths are the `routes` array in `server.mjs` (HTML, client modules, viewer assets, and the three files under `app/storyboard-web/public/character-anchors/`). Dynamic handling is `routeProduct` in the same file. Project pages are `/projects/:id`. APIs under `/api/projects/:id/...` are rewritten onto the same handlers inside `withProject`.
+Static GET paths are the `routes` array in `server.mjs` (HTML, client modules, viewer assets, and the three files under `app/storyboard-web/public/character-anchors/`). Dynamic handling is `routeProduct` in the same file. Its first branch delegates `/api/research/notes`, `/api/research/events`, and `/api/research/trace` to [`research-routes.mjs`](../app/storyboard-web/research-routes.mjs); the other branches stay in `routeProduct`. Project pages are `/projects/:id`. APIs under `/api/projects/:id/...` are rewritten onto the same handlers inside `withProject`.
 
 Handlers then call stores, [`interpretDraft`](../app/storyboard-web/interpret.mjs), [`stageStoryboard`](../app/storyboard-web/stage.mjs), [`editStoryboard`](../app/storyboard-web/storyboard-edit.mjs), image generation, or the render controller. Grouped surfaces:
 
 - source and storyboard: `/api/draft`, `/api/readings`, `/api/confirmations`, `/api/material-states`, `/api/source-utterances`, `/api/storyboard-results`, `/api/visual/storyboard/edit`, `/api/visual/storyboard/undo`;
 - characters and anchors: identity, anchor, anchor-session, accept, retire, restore, approve;
 - frames and panels: generate, placement, and the `revision`, `revision-preview`, `revision-candidate`, `revision-navigate`, `revision-accept`, and `revision-cancel` panel paths;
-- research: `/api/research/notes`, `/api/research/events`, `/api/research/trace`;
+- research: `/api/research/notes`, `/api/research/events`, `/api/research/trace` in `research-routes.mjs`;
 - video: `/api/visual/intro-templates`, `/api/visual/render`, `/api/visual/render/result`, `/api/visual/approve`;
 - product operations batch: `/api/visual/operations`.
 
@@ -58,7 +58,7 @@ Related modules, not a function list:
 - assembly: [`assembly.mjs`](../app/storyboard-web/assembly.mjs) `applyOperation` is the structural mutation set. [`applyProductOperation`](../app/storyboard-web/visual-store.mjs) is the persisted product-operation entry, including one `duplicateFrame` and the batch rejection of `duplicateFrame`;
 - anchors: [`anchor-session-request.mjs`](../app/storyboard-web/anchor-session-request.mjs) and the anchor methods on `visual-store.mjs`;
 - panel revision: [`panel-revision.mjs`](../app/storyboard-web/panel-revision.mjs) compiles effective revision state. The focused Panel Editor, Refine / New variation copy, and candidate draft flow are the retained Feature 022 UI;
-- research capture: the dock and `public/app.js` emit events; `research-store.mjs` and [`research-text-policy.mjs`](../app/storyboard-web/research-text-policy.mjs) persist them;
+- research capture: the dock and `public/app.js` emit events; [`research-routes.mjs`](../app/storyboard-web/research-routes.mjs) accepts the three research HTTP routes; `research-store.mjs` and [`research-text-policy.mjs`](../app/storyboard-web/research-text-policy.mjs) persist them;
 - project duplication: [`project-duplicate.mjs`](../app/storyboard-web/project-duplicate.mjs);
 - intro slots: [`intro-templates.mjs`](../app/storyboard-web/intro-templates.mjs).
 
@@ -104,7 +104,7 @@ Older narrative docs under `docs/` belong to that history: `docs/CORRECTION_PROC
 browser
   public/index.html + public/app.js + workspace-stages
   frame-renderer.mjs + panel-background slate
-    -> HTTP composition root (server.mjs routes and routeProduct)
+    -> HTTP composition root (server.mjs routes and routeProduct; research-routes.mjs for the three research routes)
       -> interpret / stage / source-edit / storyboard-edit
          dialogue-mode / assembly / panel-revision / research capture
         -> project-store, visual-store, research-store
