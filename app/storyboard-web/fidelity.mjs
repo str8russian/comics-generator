@@ -168,13 +168,15 @@ function physicalLines(text) {
   return lines;
 }
 
-const EXPLICIT_MESSAGE_LINE = /^([\p{L}\p{N}+]+(?: [\p{L}\p{N}+]+)*)(?:: |:)([\s\S]*)$/u;
-
 function explicitMessageLabel(line) {
-  const match = EXPLICIT_MESSAGE_LINE.exec(line);
-  if (!match || !/\p{L}/u.test(match[1])) return null;
-  if (!hasSourceCharacter(match[2])) return null;
-  return match[1];
+  const colon = line.indexOf(":");
+  if (colon <= 0) return null;
+  const label = line.slice(0, colon);
+  if (!hasSourceCharacter(label)) return null;
+  let message = line.slice(colon + 1);
+  if (message.startsWith(" ")) message = message.slice(1);
+  if (!hasSourceCharacter(message)) return null;
+  return label;
 }
 
 function explicitMessageGroups(item) {

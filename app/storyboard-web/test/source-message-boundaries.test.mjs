@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { anchorDraft } from "../fidelity.mjs";
 import { interpretDraft } from "../interpret.mjs";
-import { stageStoryboard } from "../stage.mjs";
+import { buildChecked, stageStoryboard } from "../stage.mjs";
 
 const LINES = [
   "Katerina 4+: Ilya?",
@@ -265,4 +265,50 @@ test("keeps an unresolved line after grouped explicit messages", async () => {
   assert.deepEqual(interpreted.sourceItems.map((item) => item.text), ["первый", "второй", "без подписи"]);
   assert.deepEqual(interpreted.sourceItems.map((item) => item.speakerStatus), ["explicit", "explicit", "unresolved"]);
   assert.equal(interpreted.sourceItems[2].speakerLabel, undefined);
+});
+
+test("keeps grouped explicit messages distinct when the label has punctuation or repeated spaces", () => {
+  const labels = [
+    "Мария-Анна",
+    "O’Connor",
+    "O'Connor",
+    "Dr. X",
+    "Котёнок № 1",
+    "Анна  Мария",
+  ];
+  for (const label of labels) {
+    const lines = [`${label}: первая`, `${label}: вторая`];
+    const draft = lines.join("\n");
+    const anchored = anchorDraft(draft, [
+      explicit("merged", label, draft, ["seg-0", "seg-1"]),
+    ]);
+    assert.equal(anchored.ok, true, label);
+    assert.equal(anchored.sourceItems.length, 2, label);
+    assert.deepEqual(anchored.sourceItems.map((item) => item.text), ["первая", "вторая"], label);
+    assert.deepEqual(anchored.sourceItems.map((item) => item.speakerLabel), [label, label], label);
+    assert.deepEqual(anchored.sourceItems.map((item) => item.sourceQuote), lines, label);
+    for (const item of anchored.sourceItems) {
+      assert.equal(draft.slice(item.draftStart, item.draftEnd), item.sourceQuote, label);
+      assert.equal(item.text.includes(`${label}:`), false, label);
+    }
+    const staged = buildChecked(draft, anchored.sourceItems, {
+      frames: anchored.sourceItems.map((item, index) => ({
+        id: `f${index}`,
+        layout: "single",
+        origin: "source",
+        panels: [{ description: `Кадр ${index + 1}` }],
+        sourceItemId: item.id,
+        sourceRole: "utterance",
+        speakerPanel: 0,
+      })),
+      review: [],
+    });
+    assert.equal(staged.ok, true, label);
+    assert.deepEqual(staged.body.frames.map((frame) => frame.dialogue), ["первая", "вторая"], label);
+    assert.deepEqual(
+      staged.body.frames.map((frame) => frame.sourceItemId),
+      anchored.sourceItems.map((item) => item.id),
+      label,
+    );
+  }
 });
