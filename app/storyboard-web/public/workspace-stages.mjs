@@ -39,16 +39,14 @@ function storyStage({ draftText, review, visual, frames }) {
       status: "Подтверждено",
       tone: "done",
       locked: false,
-      next: frames.length
-        ? { label: "Перейти к раскадровке", goto: "storyboard" }
-        : { label: "Собрать раскадровку", focus: "stage-material" },
+      next: frames.length ? { label: "Перейти к раскадровке", goto: "storyboard" } : null,
     };
   }
   if (review === "reading") {
-    return { status: "Нужно подтвердить", tone: "todo", locked: false, next: { label: "Подтвердить разбор", focus: "confirm-material" } };
+    return { status: "Нужно подтвердить", tone: "todo", locked: false, next: null };
   }
   if (String(draftText || "").trim()) {
-    return { status: "Черновик", tone: "todo", locked: false, next: { label: "Разобрать черновик", focus: "read-draft" } };
+    return { status: "Черновик", tone: "todo", locked: false, next: null };
   }
   return { status: "Нет черновика", tone: "todo", locked: false, next: { label: "Вставьте черновик диалога", focus: "draft" } };
 }

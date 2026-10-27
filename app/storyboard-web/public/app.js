@@ -3075,14 +3075,144 @@ function textsMatch(readingText) {
     && draftField.value === readingText;
 }
 
+const STORY_WAIT_COPY = "Это может занять некоторое время.";
+const STORY_READING_SUCCESS = "Черновик разобран. Проверьте разбор и подтвердите.";
+const STORY_STAGING_SUCCESS = "Раскадровка собрана.";
+const STORY_READING_FAILURE = "Черновик не разобран. Текст на экране сохранён, можно попробовать ещё раз.";
+const STORY_STAGING_FAILURE = "Раскадровку собрать не удалось. Подтверждённый разбор на месте, можно попробовать ещё раз.";
+const STORY_STAGING_BLOCKED = "Раскадровку сейчас собрать нельзя. Подтверждённый разбор на месте, можно попробовать ещё раз.";
+const STORY_OPERATIONS = {
+  reading: {
+    buttonId: "read-draft",
+    pendingLabel: "Разбираю черновик…",
+    idleLabel: "Разобрать черновик",
+  },
+  staging: {
+    buttonId: "stage-material",
+    pendingLabel: "Собираю раскадровку…",
+    idleLabel: "Собрать раскадровку",
+  },
+};
+const STORY_CONTROL_IDS = ["draft", "reload-draft", "keep-draft", "read-draft", "confirm-material", "stage-material"];
+let storyLock = null;
+
+function storyLocked() {
+  return storyLock != null;
+}
+
+function storyboardReady() {
+  const state = document.body?.dataset?.state;
+  return readyFrames.length > 0 && state !== "failed" && state !== "blocked";
+}
+
+function storyControlNodes() {
+  const nodes = [];
+  for (const id of STORY_CONTROL_IDS) {
+    const node = document.querySelector(`#${id}`);
+    if (node) nodes.push(node);
+  }
+  for (const id of ["material-characters", "material-aliases", "material-speakers"]) {
+    const root = document.querySelector(`#${id}`);
+    if (!root?.querySelectorAll) continue;
+    for (const node of root.querySelectorAll("button, input, textarea, select")) nodes.push(node);
+  }
+  return nodes;
+}
+
+function showStoryPending(label) {
+  if (!loading) return;
+  loading.hidden = false;
+  loading.setAttribute("role", "status");
+  loading.setAttribute("aria-live", "polite");
+  loading.setAttribute("aria-busy", "true");
+  const spinner = document.createElement("span");
+  spinner.className = "story-operation-spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  const copy = document.createElement("div");
+  copy.className = "story-operation-copy";
+  const name = document.createElement("p");
+  name.className = "story-operation-label";
+  name.textContent = label;
+  const wait = document.createElement("p");
+  wait.className = "story-operation-wait";
+  wait.textContent = STORY_WAIT_COPY;
+  copy.append(name, wait);
+  loading.replaceChildren(spinner, copy);
+}
+
+function hideStoryPending() {
+  if (!loading) return;
+  loading.hidden = true;
+  loading.removeAttribute?.("aria-busy");
+  loading.replaceChildren();
+}
+
+function showStoryNotice(message) {
+  if (!notice) return;
+  notice.hidden = false;
+  notice.textContent = message;
+}
+
+function restoreStoryIdleLabels() {
+  for (const spec of Object.values(STORY_OPERATIONS)) {
+    const button = document.querySelector(`#${spec.buttonId}`);
+    if (!button) continue;
+    button.textContent = spec.idleLabel;
+    button.classList?.remove?.("is-pending");
+    button.removeAttribute?.("aria-busy");
+  }
+  const confirmButton = document.querySelector("#confirm-material");
+  if (confirmButton) confirmButton.textContent = "Подтвердить";
+}
+
+function applyStoryLock() {
+  if (!storyLock) return;
+  const story = document.querySelector("#stage-view-story");
+  if (story?.setAttribute) {
+    story.setAttribute("aria-busy", "true");
+    story.setAttribute("inert", "");
+  }
+  for (const entry of storyLock.controls) entry.node.disabled = true;
+  const spec = STORY_OPERATIONS[storyLock.kind];
+  const button = document.querySelector(`#${spec.buttonId}`);
+  if (!button) return;
+  button.textContent = spec.pendingLabel;
+  button.classList?.add?.("is-pending");
+  button.setAttribute("aria-busy", "true");
+}
+
+function acquireStoryOperation(kind) {
+  if (storyLock) return false;
+  storyLock = {
+    kind,
+    controls: storyControlNodes().map((node) => ({ node, disabled: Boolean(node.disabled) })),
+  };
+  applyStoryLock();
+  showStoryPending(STORY_OPERATIONS[kind].pendingLabel);
+  return true;
+}
+
+function releaseStoryOperation() {
+  if (!storyLock) return;
+  const story = document.querySelector("#stage-view-story");
+  story?.removeAttribute?.("aria-busy");
+  story?.removeAttribute?.("inert");
+  for (const entry of storyLock.controls) entry.node.disabled = entry.disabled;
+  storyLock = null;
+  hideStoryPending();
+  refreshConfirmation();
+}
+
 function refreshConfirmation() {
   if (!confirmMaterial || !materialMismatch) return;
   const readingMode = review?.mode === "reading";
   confirmMaterial.hidden = !readingMode;
-  if (stageMaterial) stageMaterial.hidden = review?.mode !== "material";
+  if (stageMaterial) stageMaterial.hidden = review?.mode !== "material" || storyboardReady();
   const matched = readingMode && textsMatch(review.text);
   confirmMaterial.disabled = !matched;
   materialMismatch.hidden = !readingMode || matched;
+  if (!storyLocked()) restoreStoryIdleLabels();
+  if (storyLocked()) applyStoryLock();
   refreshStages();
 }
 
@@ -3143,6 +3273,7 @@ function syncSelects() {
 }
 
 function scheduleCastSave() {
+  if (storyLocked()) return;
   castChain = castChain.then(() => saveCast()).catch(() => {});
 }
 
@@ -3151,6 +3282,7 @@ function castPhaseForReview() {
 }
 
 async function saveCast() {
+  if (storyLocked()) return { ok: false };
   if (!review) return { ok: false };
   const cast = collectCast();
   if (!cast) return { ok: false };
@@ -3271,6 +3403,7 @@ function renderReview() {
     input.dataset.previousName = character.name;
     input.addEventListener("input", () => syncSelects());
     input.addEventListener("blur", () => {
+      if (storyLocked()) return;
       pendingCastEdit = {
         editKind: "character_rename",
         submittedText: input.value,
@@ -3283,6 +3416,7 @@ function renderReview() {
       scheduleCastSave();
     });
     toggle.addEventListener("click", () => {
+      if (storyLocked()) return;
       const next = toggle.getAttribute("aria-pressed") !== "true";
       if (!next) {
         const count = (review.cast?.speakers || []).filter((speaker) => speaker.characterName === input.value).length;
@@ -3329,6 +3463,7 @@ function renderReview() {
     const current = (review.cast?.aliases || []).find((alias) => alias.surface === surface);
     fillSelect(select, current?.characterName || "");
     select.addEventListener("change", () => {
+      if (storyLocked()) return;
       pendingCastEdit = {
         editKind: "alias_assignment",
         submittedText: select.value,
@@ -3357,6 +3492,7 @@ function renderReview() {
     const current = (review.cast?.speakers || []).find((speaker) => speaker.sourceItemId === item.id);
     fillSelect(select, current?.characterName || "");
     select.addEventListener("change", () => {
+      if (storyLocked()) return;
       pendingCastEdit = {
         editKind: "speaker_assignment",
         submittedText: select.value,
@@ -3401,6 +3537,7 @@ function restoreReview(project) {
 draftField.addEventListener("input", () => refreshConfirmation());
 
 confirmMaterial?.addEventListener("click", async () => {
+  if (storyLocked()) return;
   if (!review || review.mode !== "reading" || confirmMaterial.disabled) return;
   const synced = await draftAutosave.flush();
   refreshConfirmation();
@@ -3466,55 +3603,68 @@ function restoreStoryboard(project) {
 }
 
 stageMaterial?.addEventListener("click", async () => {
-  if (!review || review.mode !== "material") return;
-  showLoading();
-  loading.textContent = "Сборка раскадровки…";
-  await runProductResearchAction({
-    semanticAction: "stage_storyboard",
-    submittedText: null,
-    commandTarget: createEmptyCommandTarget("storyboard"),
-    async operation() {
-      let response;
-      try {
-        response = await fetch(scoped("/api/storyboard-results"), { method: "POST" });
-      } catch (error) {
-        showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
-        const err = error instanceof Error ? error : new Error("provider");
-        err.kind = "provider";
-        throw err;
-      }
-      let payload = null;
-      try {
-        payload = await response.json();
-      } catch {
-        showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
-        const err = new Error("invalid-request");
-        err.kind = "invalid-request";
-        throw err;
-      }
-      if (!response.ok || !payload || payload.status === "failed") {
-        showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
-        const err = new Error("failed");
-        err.kind = payload?.kind || "request-failed";
-        throw err;
-      }
-      if (payload.status === "blocked") {
-        showTerminal(pageState({ http: payload }));
-        const err = new Error("blocked");
-        err.kind = "blocked";
-        throw err;
-      }
-      if (payload.status !== "checked") {
-        showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
-        const err = new Error("invalid-request");
-        err.kind = "invalid-request";
-        throw err;
-      }
-      await presentCheckedStoryboard(payload);
-      await refreshVisual();
-      return payload;
-    },
-  });
+  if (storyLocked()) return;
+  if (!review || review.mode !== "material" || stageMaterial.hidden) return;
+  if (!acquireStoryOperation("staging")) return;
+  try {
+    showLoading();
+    await runProductResearchAction({
+      semanticAction: "stage_storyboard",
+      submittedText: null,
+      commandTarget: createEmptyCommandTarget("storyboard"),
+      async operation() {
+        let response;
+        try {
+          response = await fetch(scoped("/api/storyboard-results"), { method: "POST" });
+        } catch (error) {
+          showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
+          showStoryNotice(STORY_STAGING_FAILURE);
+          const err = error instanceof Error ? error : new Error("provider");
+          err.kind = "provider";
+          throw err;
+        }
+        let payload = null;
+        try {
+          payload = await response.json();
+        } catch {
+          showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
+          showStoryNotice(STORY_STAGING_FAILURE);
+          const err = new Error("invalid-request");
+          err.kind = "invalid-request";
+          throw err;
+        }
+        if (!response.ok || !payload || payload.status === "failed") {
+          showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
+          showStoryNotice(STORY_STAGING_FAILURE);
+          const err = new Error("failed");
+          err.kind = payload?.kind || "request-failed";
+          throw err;
+        }
+        if (payload.status === "blocked") {
+          showTerminal(pageState({ http: payload }));
+          showStoryNotice(STORY_STAGING_BLOCKED);
+          const err = new Error("blocked");
+          err.kind = "blocked";
+          throw err;
+        }
+        if (payload.status !== "checked") {
+          showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
+          showStoryNotice(STORY_STAGING_FAILURE);
+          const err = new Error("invalid-request");
+          err.kind = "invalid-request";
+          throw err;
+        }
+        await presentCheckedStoryboard(payload);
+        await refreshVisual();
+        const state = document.body?.dataset?.state;
+        if (state === "ready" || state === "checked") showStoryNotice(STORY_STAGING_SUCCESS);
+        else showStoryNotice(state === "blocked" ? STORY_STAGING_BLOCKED : STORY_STAGING_FAILURE);
+        return payload;
+      },
+    });
+  } finally {
+    releaseStoryOperation();
+  }
 });
 
 function showMissingProject() {
@@ -3598,54 +3748,66 @@ bindDuplicateDialog({
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (storyLocked()) return;
+  if (!acquireStoryOperation("reading")) return;
   const submittedDraft = draftField.value;
-  const synced = await draftAutosave.flush();
-  if (!synced) return;
-  showLoading();
-  loading.textContent = "Разбор черновика…";
-  await runProductResearchAction({
-    semanticAction: "reading",
-    submittedText: submittedDraft,
-    commandTarget: createEmptyCommandTarget("none"),
-    async operation() {
-      let response;
-      try {
-        response = await fetch(scoped("/api/readings"), { method: "POST" });
-      } catch (error) {
-        showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
-        const err = error instanceof Error ? error : new Error("provider");
-        err.kind = "provider";
-        throw err;
-      }
-      let payload = null;
-      try {
-        payload = await response.json();
-      } catch {
-        showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
-        const err = new Error("invalid-request");
-        err.kind = "invalid-request";
-        throw err;
-      }
-      loading.hidden = true;
-      if (response.status === 409 || payload?.kind === "stale-reading") {
-        materialMismatch.hidden = false;
-        const err = new Error("stale-reading");
-        err.kind = "stale-reading";
-        throw err;
-      }
-      if (!payload || payload.status !== "ready") {
-        hideReview();
-        showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
-        const err = new Error("invalid-request");
-        err.kind = payload?.kind || "invalid-request";
-        throw err;
-      }
-      hideFailure();
-      notice.hidden = true;
-      showMaterial(payload, "reading");
-      return payload;
-    },
-  });
+  let staleReading = false;
+  try {
+    const synced = await draftAutosave.flush();
+    if (!synced) return;
+    applyStoryLock();
+    showLoading();
+    await runProductResearchAction({
+      semanticAction: "reading",
+      submittedText: submittedDraft,
+      commandTarget: createEmptyCommandTarget("none"),
+      async operation() {
+        let response;
+        try {
+          response = await fetch(scoped("/api/readings"), { method: "POST" });
+        } catch (error) {
+          showTerminal(pageState({ http: { status: "failed", kind: "provider" } }));
+          showStoryNotice(STORY_READING_FAILURE);
+          const err = error instanceof Error ? error : new Error("provider");
+          err.kind = "provider";
+          throw err;
+        }
+        let payload = null;
+        try {
+          payload = await response.json();
+        } catch {
+          showTerminal(pageState({ http: { status: "failed", kind: "invalid-request" } }));
+          showStoryNotice(STORY_READING_FAILURE);
+          const err = new Error("invalid-request");
+          err.kind = "invalid-request";
+          throw err;
+        }
+        if (response.status === 409 || payload?.kind === "stale-reading") {
+          staleReading = true;
+          materialMismatch.hidden = false;
+          showStoryNotice(STORY_READING_FAILURE);
+          const err = new Error("stale-reading");
+          err.kind = "stale-reading";
+          throw err;
+        }
+        if (!payload || payload.status !== "ready") {
+          hideReview();
+          showTerminal(pageState({ http: payload || { status: "failed", kind: "invalid-request" } }));
+          showStoryNotice(STORY_READING_FAILURE);
+          const err = new Error("invalid-request");
+          err.kind = payload?.kind || "invalid-request";
+          throw err;
+        }
+        hideFailure();
+        showMaterial(payload, "reading");
+        showStoryNotice(STORY_READING_SUCCESS);
+        return payload;
+      },
+    });
+  } finally {
+    releaseStoryOperation();
+    if (staleReading && materialMismatch) materialMismatch.hidden = false;
+  }
 });
 
 const renderLabels = {

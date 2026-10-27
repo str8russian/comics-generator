@@ -54,20 +54,20 @@ test("empty project: only Story is open and every later stage is locked with an 
   assert.equal(defaultStage(empty), "story");
 });
 
-test("draft and material review statuses point at the existing Story controls", () => {
+test("Story steps with a visible local action do not publish a duplicate focus next action", () => {
   const draft = deriveStages({ ...empty, draftText: "Путин: Привет" });
   assert.equal(draft.story.status, "Черновик");
-  assert.deepEqual(draft.story.next, { label: "Разобрать черновик", focus: "read-draft" });
+  assert.equal(draft.story.next, null);
 
   const reading = deriveStages({ ...empty, draftText: "x", review: "reading" });
   assert.equal(reading.story.status, "Нужно подтвердить");
-  assert.deepEqual(reading.story.next, { label: "Подтвердить разбор", focus: "confirm-material" });
+  assert.equal(reading.story.next, null);
   assert.equal(defaultStage({ ...empty, review: "reading" }), "story");
 
   const material = deriveStages({ ...empty, draftText: "x", review: "material" });
   assert.equal(material.story.status, "Подтверждено");
   assert.equal(material.story.tone, "done");
-  assert.deepEqual(material.story.next, { label: "Собрать раскадровку", focus: "stage-material" });
+  assert.equal(material.story.next, null);
   assert.equal(material.storyboard.locked, true);
   assert.deepEqual(material.storyboard.next, { label: "Перейти к истории", goto: "story" });
   assert.equal(defaultStage({ ...empty, review: "material" }), "story");

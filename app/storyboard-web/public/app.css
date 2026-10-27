@@ -161,6 +161,57 @@ body[data-busy="true"] button:not([data-research-allow="notes-send"]) {
   font-size: 18px;
 }
 
+.loading {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #1d2428;
+  background: #fff8e8;
+}
+
+.loading[hidden] {
+  display: none !important;
+}
+
+.story-operation-spinner {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  border: 3px solid #d9d3c5;
+  border-top-color: #1d2428;
+  border-radius: 50%;
+  animation: story-operation-spin 0.8s linear infinite;
+}
+
+.story-operation-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.story-operation-label,
+.story-operation-wait {
+  margin: 0;
+}
+
+.story-operation-label {
+  font-weight: 700;
+}
+
+#stage-view-story[aria-busy="true"] {
+  opacity: 0.72;
+}
+
+button.is-pending:disabled {
+  opacity: 1;
+  cursor: progress;
+}
+
+@keyframes story-operation-spin {
+  to { transform: rotate(360deg); }
+}
+
 #failure-codes {
   margin: 0 0 16px;
   padding-left: 20px;

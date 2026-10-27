@@ -31,7 +31,13 @@
     </section>
     <div id="workspace-body">
     <div id="workspace-alerts" class="workspace-alerts">
-      <p id="loading" class="loading" hidden>Сборка раскадровки…</p>
+      <div id="loading" class="loading story-operation" role="status" aria-live="polite" hidden>
+        <span class="story-operation-spinner" aria-hidden="true"></span>
+        <div class="story-operation-copy">
+          <p class="story-operation-label"></p>
+          <p class="story-operation-wait">Это может занять некоторое время.</p>
+        </div>
+      </div>
       <p id="notice" class="notice" hidden></p>
       <ul id="failure-codes" hidden></ul>
       <p id="failure-kind" hidden></p>

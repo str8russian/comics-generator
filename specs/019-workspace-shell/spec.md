@@ -4,7 +4,7 @@
 
 Production contract for Feature 019. It brings the owner-accepted W1 information architecture (`DEC-070`) into the production storyboard page. One owner-operated browser checkpoint. This does not claim owner acceptance.
 
-The feature reorganizes the page. It adds no product capability. Every operation that was reachable before stays reachable, sends the same request to the same endpoint with the same JSON body, keeps its availability condition, busy boundary, research trace, provider behaviour, and Undo semantics. What changes is where controls live and how the page is navigated.
+The feature reorganizes the page. It adds no product capability. Every operation that was reachable before stays reachable, sends the same request to the same endpoint with the same JSON body, keeps its availability condition, research trace, provider behaviour, and Undo semantics. What changes is where controls live and how the page is navigated. Story reading and staging later gained a truthful pending boundary, described under **Story reading and staging**; that boundary does not change the request.
 
 ## Global header
 
@@ -20,7 +20,9 @@ Below it, a stage bar shows **История → Раскадровка → Пе
 | Визуал | Утверждено · Нужно утвердить · `a/b готовы` · Нужны базовые образы · Заблокировано | `readyForVideo`, `complete`, `allAnchorsApproved`, `visual.frames[].visualReady` |
 | Видео | Сборка идёт · Видео готово · Сборка не удалась · Готово к сборке · Визуал не утверждён · Заблокировано | loaded render status, `readyForVideo` |
 
-Each stage view has one next action. It either navigates to another stage, moves focus to the existing control inside the stage (for example **Подтвердить**, **Собрать раскадровку**, **Утвердить визуальную раскадровку**, **Собрать видео**), or, in Визуал only, runs the relocated per-frame action for the first frame that still needs images: **Создать изображения кадра N** (the former card button, same handler and payload) or **Открыть кадр N** for a manual image frame. Focusing a control never triggers it.
+Each stage view has one next action, except a Story step whose real control is already visible on the stage. A next action navigates to another stage, moves focus to an existing control that is not already the visible Story action (for example **Утвердить визуальную раскадровку**, **Собрать видео**, or a character card), or, in Визуал only, runs the relocated per-frame action for the first frame that still needs images: **Создать изображения кадра N** (the former card button, same handler and payload) or **Открыть кадр N** for a manual image frame. Focusing a control never triggers it.
+
+On История, **Разобрать черновик**, **Подтвердить**, and **Собрать раскадровку** stay in the draft form and the material review. Those steps do not also render an upper **Дальше** button whose only behavior is to focus the same control. An empty draft may still focus the draft field. After the storyboard exists, История shows the cross-stage action **Перейти к раскадровке** and does not leave **Собрать раскадровку** as a second primary action. This remains the five-stage shell. The four-stage order in `DEC-081` is not implemented here.
 
 The selected stage is client-side state, reflected in the URL hash as `#stage=<id>` so reload keeps it. On first load without a hash the page opens the stage of the current workflow position: Видео when the Visual storyboard is ready for video; Визуал when every panel has an image or every base anchor is approved; Персонажи when a storyboard with characters exists; Раскадровка when frames exist; otherwise История.
 
@@ -28,7 +30,7 @@ A locked stage can be opened. It shows **Заблокировано**, the reaso
 
 ## Stage contents
 
-- **История:** the draft form with autosave and conflict handling; material review with cast editing, **Подтвердить**, and **Собрать раскадровку**.
+- **История:** the draft form with autosave and conflict handling; material review with cast editing, **Подтвердить**, and **Собрать раскадровку**. Reading and staging follow **Story reading and staging** below.
 - **Раскадровка:** the structure instruction form, then the frame grid and inspector.
 - **Персонажи:** the character cards and the base-anchor session (`DEC-056`), unchanged.
 - **Визуал:** the visual heading and progress, the Visual approval gate as the first block (labelled as the required check before video, `DEC-044`), **Открыть последний кадр**, then the same frame grid and inspector.
@@ -37,6 +39,12 @@ A locked stage can be opened. It shows **Заблокировано**, the reaso
 Раскадровка and Визуал share one grid and the existing `FrameRenderer` (`DEC-039`). The existing presentation rule (`presentFrameForMount`) always shows images for frames that have them, so both stages currently show the same frame presentation. A text-description presentation of frames that already have images needs a renderer mode this feature does not build.
 
 Loading, notice, failure codes, failure kind, and the floating action status sit outside every stage view and stay visible on every stage while active.
+
+## Story reading and staging
+
+**Разобрать черновик** (`POST /api/projects/:id/readings` after the existing draft flush) and **Собрать раскадровку** (`POST /api/projects/:id/storyboard-results`) are the two long Story actions. One accepted activation starts one request and one research lifecycle (`reading` or `stage_storyboard`). The lock begins before the flush or the request, so a second click, submit, or keyboard activation cannot start another one. The Story work area is `aria-busy` and its controls are disabled for the duration. Notes stay on the existing global busy policy. There is no cancel, percentage, timer, provider name, or invented server phase.
+
+While reading is pending the button reads **Разбираю черновик…**. While staging is pending it reads **Собираю раскадровку…**. The shared status shows that label, an indeterminate spinner, and **Это может занять некоторое время.** Success clears the lock. Reading success says **Черновик разобран. Проверьте разбор и подтвердите.** and shows the review, with **Подтвердить** under the existing validity rules. Staging success says **Раскадровка собрана.** and leaves **Перейти к раскадровке** as the next action. Failure clears the lock, keeps the draft or the confirmed review, keeps the existing failure kind and codes, and adds a plain retry sentence. One later activation may send one new request. A refresh during a request keeps today's semantics: the client does not resume a job the server does not expose.
 
 ## Content-first frame cards
 
@@ -93,7 +101,7 @@ Explicitly selecting a panel in the Panel Editor (tab, canvas click, or the insp
 ## Protected
 
 - Operation names, endpoints, request bodies, persistence, schema, migrations, store code, provider prompts, generation behaviour, and timeouts.
-- Availability conditions, busy boundaries, research `semanticAction` values and context fields, and Undo behaviour of every moved control.
+- Availability conditions, research `semanticAction` values and context fields, and Undo behaviour of every moved control. Story reading and staging use the pending boundary above; their endpoints, JSON bodies, and research values stay the same. Other operations keep their existing busy boundaries.
 - Stage navigation, selection, the inspector, and opening editors make no API mutation and no provider call.
 - No product state moves to chat or local storage; the stage hash is the only new client state.
 - The only server change is three static routes: `/workspace-stages.mjs`, `/frame-inspector.mjs`, `/panel-basis.mjs`.
