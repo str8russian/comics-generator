@@ -1,24 +1,81 @@
-# comics-pipeline
+# Comics Generator
 
-Server-side half of the video-comic generator: the schema, the role prompts, the rule validator, and
-the eval harness. The core pipeline remains data-first. The `storyboard-web` product spike also
-contains an opt-in visual workflow that calls the configured image provider only after a user
-selects an identity photo and starts a generation.
+Comics Generator turns a ready story with nearly finished dialogue into a short illustrated video comic. The production application in this repository is **storyboard-web** (`app/storyboard-web`): a browser workspace over PostgreSQL, with text and image providers and a Video Spec render.
 
-## Visual storyboard workflow spike
+Agent entry: [AGENTS.md](AGENTS.md). Layer map: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Measurement protocol: [docs/CONTEXT_COST_BASELINE.md](docs/CONTEXT_COST_BASELINE.md).
 
-The local `storyboard-web` path now exercises the workflow from raw dialogue to a visual storyboard
-ready for video: Interpret and Stage, free-form structural edits with undo, local identity photos,
-iterative base anchors, one-frame-at-a-time generation, per-panel revisions and performance
-references, placement-only zoom, and final visual approval. It deliberately has no generate-all
-action.
+## What it does now
 
-Set `DATABASE_URL`, `BASE_URL`, and `CONTEST_API_TOKEN` as for the existing application. Text calls
-use `CONTEST_MODEL`; image calls default to `gemini-3-pro-image-preview` and can be overridden with
-`IMAGE_MODEL`. `IMAGE_TIMEOUT_MS` controls the image request timeout. Image reference
-transport defaults to `IMAGE_REFERENCE_STRATEGY=budgeted` with
-`IMAGE_REQUEST_BUDGET_BYTES=850000`. Set the strategy to `passthrough` and restart to
-send the historical request body without resizing or omission.
+The running workspace has five stages, in this order: Story (История), Storyboard (Раскадровка), Characters (Персонажи), Visual (Визуал), Video (Видео). The stage list is `STAGES` in `app/storyboard-web/public/workspace-stages.mjs`.
+
+An owner can keep a dialogue draft, confirm source and cast, stage a storyboard, create and approve character anchors, generate and place panel images, revise frames, and assemble a video. Feature 022's panel-revision code is in this tree. `DEC-080` retains that code and rejects that product UX; it is not an accepted baseline to polish.
+
+`DEC-081` accepts a pending direction: four stages, Story → Characters → Storyboard → Video, with Visual approval inside Storyboard and video assembly blocked until the current storyboard version is approved. That direction is not implemented. The current Video stage still offers assembly when Visual is unapproved, and `POST /api/visual/render` does not check `readyForVideo`.
+
+## Runtime
+
+- Node.js `>=24` (`package.json` `engines`).
+- PostgreSQL 16 via [`docker-compose.yml`](docker-compose.yml). The `db` service publishes `127.0.0.1:5432` and creates database `comics`. [`docker/postgres/init-test-db.sql`](docker/postgres/init-test-db.sql) also creates `comics_test`.
+- The `app` service publishes `127.0.0.1:4173`. Its image command is `node app/storyboard-web/server.mjs` ([`Dockerfile`](Dockerfile)).
+
+## Environment
+
+Copy [`.env.example`](.env.example) to `.env.local` (gitignored) and fill it in locally. Do not commit tokens or database passwords.
+
+The application pool reads `DATABASE_URL` ([`app/storyboard-web/db/pool.mjs`](app/storyboard-web/db/pool.mjs)). Text calls read `BASE_URL`, `CONTEST_API_TOKEN`, and `CONTEST_MODEL` (or `INTERPRET_MODEL` / `STAGE_MODEL`) through [`config.mjs`](app/storyboard-web/config.mjs). Image calls default `IMAGE_MODEL` to `gemini-3-pro-image-preview` and read `IMAGE_TIMEOUT_MS`, `IMAGE_REFERENCE_STRATEGY` (`budgeted` or `passthrough`), and `IMAGE_REQUEST_BUDGET_BYTES` ([`image-provider.mjs`](app/storyboard-web/image-provider.mjs), [`image-reference-strategy.mjs`](app/storyboard-web/image-reference-strategy.mjs)). Optional server bind variables are `STORYBOARD_PORT` (default `4173`) and `STORYBOARD_HOST` (default `127.0.0.1`).
+
+`.env.example` does not list every variable the server reads. Names above are the ones startup and provider calls use. Leave secrets out of docs and commits.
+
+## Database, migrations, and startup
+
+Compose sets the application `DATABASE_URL` to the `comics` database on the `db` service. `comics_test` is the disposable database for the PostgreSQL test lane. Do not point tests at the owner or production database, including the compose `comics` database when that database holds owner projects.
+
+[`db/migrate.mjs`](app/storyboard-web/db/migrate.mjs) applies `app/storyboard-web/db/migrations/*.sql` and records `schema_migration`. `createServer` runs that migration on the first `listen` unless the caller passes `migrate: false`.
+
+The repository start path is:
+
+```sh
+node app/storyboard-web/server.mjs
+```
+
+The process uses the environment it is given. It does not load `.env.local` by itself. Docker Compose injects `env_file` and the `DATABASE_URL` above. A local shell can export the variables, or use Node's `--env-file-if-exists=.env.local`, which the spike scripts in `package.json` already use. There is no npm start script.
+
+## Tests
+
+From the repository root:
+
+```sh
+npm run test:storyboard
+npm run test:storyboard:postgres
+npm run test:storyboard:focus -- app/storyboard-web/test/schema.test.mjs
+```
+
+| Script | What it runs | Safety |
+|---|---|---|
+| `test:storyboard` | `node --test app/storyboard-web/test/*.test.mjs` | Offline. No database and no provider credential. Includes `app/storyboard-web/test/postgres-verify.test.mjs`. Runs the `*.test.mjs` files directly in `app/storyboard-web/test/`. |
+| `test:storyboard:postgres` | `node app/storyboard-web/test/postgres/verify.mjs` | Requires `STORYBOARD_TEST_DATABASE_URL` naming an isolated disposable database `comics_test`. Does not read `DATABASE_URL`. Succeeds only with nonzero tests and zero skips. |
+| `test:storyboard:focus` | `node app/storyboard-web/test/focus-runner.mjs` | One or more explicit `app/storyboard-web/test/**/*.test.mjs` paths after `--`. |
+
+Leave a focused glob unquoted so the shell expands it:
+
+```sh
+npm run test:storyboard:focus -- app/storyboard-web/test/schema.test.mjs
+npm run test:storyboard:focus -- app/storyboard-web/test/schema*.test.mjs
+```
+
+A quoted glob is one literal argument and is refused:
+
+```sh
+npm run test:storyboard:focus -- 'app/storyboard-web/test/*.test.mjs'
+```
+
+An empty `npm run test:storyboard:focus`, a path outside `app/storyboard-web/test/`, and a file that does not end in `.test.mjs` are refused.
+
+`npm run golden` and `npm run check` both run `tools/build-golden.mjs` and can rewrite files under `golden/`. Run them only when the task explicitly authorizes golden regeneration. The offline and focused lanes above do not rebuild golden artifacts.
+
+## Historical multi-role pipeline
+
+The sections below are the previous root README, kept as provenance for the experiment in `schema/`, `catalog/`, top-level `prompts/`, `tools/`, `golden/`, `evals/`, and `renderer-remotion/`. They are not the operating instructions for storyboard-web. Sentences that say image generation is absent describe that experiment. The production application above does call text and image providers. `npm run check` in this section rebuilds golden artifacts.
 
 ## The one structural decision
 
@@ -98,7 +155,7 @@ node tools/run.mjs new "writer-v1"
 
 `PIPELINE_MODEL` is required — `run.mjs new` refuses to create a run that does not record which
 model produced it, because every comparison in the eval is between runs. Each run folder also gets
-a copy of the prompts, catalog and schema it used under `inputs/`, not just their hashes: a hash
+a copy of the prompts, catalog and schema it used under an inputs directory in that run, not just their hashes: a hash
 tells you two runs differ, the copy tells you how, after you have since edited the prompt.
 
 Then per case, for each role: paste `prompts/00-shared-context.md` + the role prompt + the inputs,
@@ -135,7 +192,7 @@ problem, and another turn will not find it.
 
 ## Rendering
 
-Copy `renderer-remotion/{types.ts,Storyboard.tsx,templates.tsx}` into a Remotion project's `src/sb/`,
+Copy `renderer-remotion/types.ts`, `renderer-remotion/Storyboard.tsx`, and `renderer-remotion/templates.tsx` into a Remotion project's src/sb directory,
 import the storyboard JSON, and register a `<Composition>` with
 `durationInFrames={sb.project.totalDurationFrames}`. The renderer computes no timing of its own; if a
 duration is wrong, the storyboard is wrong.
