@@ -1,44 +1,24 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import http from "node:http";
 import test from "node:test";
 import { createServer } from "../server.mjs";
+import { close, listen, request } from "./loopback-http.mjs";
 
-function listen(server) {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+async function postStoryboard(port) {
+  const body = "not-json";
+  const response = await request(port, {
+    method: "POST",
+    path: "/api/storyboard",
+    headers: {
+      "content-type": "text/plain",
+      "content-length": Buffer.byteLength(body),
+    },
+    body,
   });
-}
-
-function close(server) {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function postStoryboard(port) {
-  return new Promise((resolve, reject) => {
-    const body = "not-json";
-    const req = http.request({
-      hostname: "127.0.0.1",
-      port,
-      method: "POST",
-      path: "/api/storyboard",
-      headers: {
-        "content-type": "text/plain",
-        "content-length": Buffer.byteLength(body),
-      },
-    }, (res) => {
-      res.resume();
-      res.on("end", () => resolve({
-        status: res.statusCode,
-        allow: res.headers.allow,
-      }));
-    });
-    req.on("error", reject);
-    req.end(body);
-  });
+  return {
+    status: response.status,
+    allow: response.headers.allow,
+  };
 }
 
 test("default createServer hides POST /api/storyboard without a database", async () => {

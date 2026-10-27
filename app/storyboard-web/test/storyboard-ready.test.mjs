@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import http from "node:http";
 import test from "node:test";
 import { FONT_LADDER } from "../../../prototypes/storyboard-viewer/frame-renderer.mjs";
 import { compileOverflow } from "../overflow.mjs";
 import { createServer } from "../server.mjs";
+import { close, listen, request } from "./loopback-http.mjs";
 
 const interpretPrompt = readFileSync(new URL("../prompts/interpret.md", import.meta.url), "utf8");
 const stagePrompt = readFileSync(new URL("../prompts/stage.md", import.meta.url), "utf8");
@@ -94,43 +94,21 @@ function stageBody() {
   };
 }
 
-function listen(server) {
-  return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+async function postDraft(port, text) {
+  const body = JSON.stringify({ draft: text });
+  const response = await request(port, {
+    method: "POST",
+    path: "/api/storyboard",
+    headers: {
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(body),
+    },
+    body,
   });
-}
-
-function close(server) {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function postDraft(port, text) {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ draft: text });
-    const req = http.request({
-      hostname: "127.0.0.1",
-      port,
-      method: "POST",
-      path: "/api/storyboard",
-      headers: {
-        "content-type": "application/json",
-        "content-length": Buffer.byteLength(body),
-      },
-    }, (res) => {
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => {
-        resolve({
-          status: res.statusCode,
-          body: Buffer.concat(chunks).toString("utf8"),
-        });
-      });
-    });
-    req.on("error", reject);
-    req.end(body);
-  });
+  return {
+    status: response.status,
+    body: response.body.toString("utf8"),
+  };
 }
 
 test("returns checked dialogue slices and a last frame after synchronous fitting", async () => {

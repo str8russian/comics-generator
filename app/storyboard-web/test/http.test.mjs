@@ -1,8 +1,8 @@
 globalThis.location = { pathname: "/projects/00000000-0000-4000-8000-000000000001" };
 import assert from "node:assert/strict";
-import http from "node:http";
 import test from "node:test";
 import { createServer, DEFAULT_MAX_BODY_BYTES, routes } from "../server.mjs";
+import { close, listen, request } from "./loopback-http.mjs";
 
 const files = {
   "app/storyboard-web/public/projects.html": "<!doctype html><title>projects</title>",
@@ -38,41 +38,13 @@ function readFile(filePath) {
   return files[filePath];
 }
 
-function listen(server) {
-  return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
-  });
-}
-
-function close(server) {
-  return new Promise((resolve, reject) => {
-    server.close((error) => error ? reject(error) : resolve());
-  });
-}
-
-function send(port, { method = "GET", path = "/", headers = {}, body } = {}) {
-  return new Promise((resolve, reject) => {
-    const req = http.request({
-      hostname: "127.0.0.1",
-      port,
-      method,
-      path,
-      headers,
-    }, (res) => {
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => {
-        resolve({
-          status: res.statusCode,
-          headers: res.headers,
-          body: Buffer.concat(chunks).toString("utf8"),
-        });
-      });
-    });
-    req.on("error", reject);
-    if (body != null) req.write(body);
-    req.end();
-  });
+async function send(port, { method = "GET", path = "/", headers = {}, body } = {}) {
+  const response = await request(port, { method, path, headers, body });
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: response.body.toString("utf8"),
+  };
 }
 
 test("names the static allowlist from the storyboard contract", () => {

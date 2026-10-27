@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import http from "node:http";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { executeImageRequest } from "../image-reference-strategy.mjs";
@@ -9,40 +8,22 @@ import {
   generateImage,
 } from "../image-provider.mjs";
 import { createServer } from "../server.mjs";
+import { close, listen, request } from "./loopback-http.mjs";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nCEAAAAASUVORK5CYII=", "base64");
 const sourceUrl = `data:image/png;base64,${png.toString("base64")}`;
 
-function listen(server) {
-  return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+async function postJson(port, requestPath, payload) {
+  const response = await request(port, {
+    method: "POST",
+    path: requestPath,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
   });
-}
-
-function close(server) {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function send(port, body) {
-  return new Promise((resolve, reject) => {
-    const req = http.request({
-      hostname: "127.0.0.1",
-      port,
-      method: "POST",
-      path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/Mira/anchor-session",
-      headers: { "content-type": "application/json" },
-    }, (res) => {
-      const chunks = [];
-      res.on("data", (chunk) => chunks.push(chunk));
-      res.on("end", () => {
-        resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") });
-      });
-    });
-    req.on("error", reject);
-    req.end(JSON.stringify(body));
-  });
+  return {
+    status: response.status,
+    body: response.body.toString("utf8"),
+  };
 }
 
 test("anchor-session provider budget stays under one minute and keeps a lower configured timeout", () => {
@@ -116,7 +97,7 @@ test("a hung anchor-session provider request is aborted once and returns timeout
   const port = await listen(server);
   try {
     const started = Date.now();
-    const response = await send(port, {
+    const response = await postJson(port, "/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/Mira/anchor-session", {
       basis: "from-source",
       instruction: "",
       sourceImage: sourceUrl,
@@ -155,49 +136,21 @@ test("anchor accept forwards one source authority and rejects both", async () =>
   });
   const port = await listen(server);
   try {
-    const reused = await new Promise((resolve, reject) => {
-      const req = http.request({
-        hostname: "127.0.0.1",
-        port,
-        method: "POST",
-        path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/Mira/anchor-accept",
-        headers: { "content-type": "application/json" },
-      }, (res) => {
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") }));
-      });
-      req.on("error", reject);
-      req.end(JSON.stringify({
-        provenance: "generated_from_source",
-        imageDataUrl: sourceUrl,
-        sourceAssetId: "source-1",
-        instruction: "",
-      }));
+    const reused = await postJson(port, "/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/Mira/anchor-accept", {
+      provenance: "generated_from_source",
+      imageDataUrl: sourceUrl,
+      sourceAssetId: "source-1",
+      instruction: "",
     });
     assert.equal(reused.status, 200);
     assert.equal(seen[0].sourceAssetId, "source-1");
     assert.equal(seen[0].sourceImage, null);
     assert.equal(seen[0].provenance, "generated_from_source");
-    const conflict = await new Promise((resolve, reject) => {
-      const req = http.request({
-        hostname: "127.0.0.1",
-        port,
-        method: "POST",
-        path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/Mira/anchor-accept",
-        headers: { "content-type": "application/json" },
-      }, (res) => {
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString("utf8") }));
-      });
-      req.on("error", reject);
-      req.end(JSON.stringify({
-        provenance: "generated_from_source",
-        imageDataUrl: sourceUrl,
-        sourceImageDataUrl: sourceUrl,
-        sourceAssetId: "source-1",
-      }));
+    const conflict = await postJson(port, "/api/projects/00000000-0000-4000-8000-000000000001/visual/characters/Mira/anchor-accept", {
+      provenance: "generated_from_source",
+      imageDataUrl: sourceUrl,
+      sourceImageDataUrl: sourceUrl,
+      sourceAssetId: "source-1",
     });
     assert.equal(conflict.status, 400);
     assert.equal(JSON.parse(conflict.body).kind, "invalid-request");
