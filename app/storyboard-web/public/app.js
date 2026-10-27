@@ -3282,7 +3282,6 @@ function castPhaseForReview() {
 }
 
 async function saveCast() {
-  if (storyLocked()) return { ok: false };
   if (!review) return { ok: false };
   const cast = collectCast();
   if (!cast) return { ok: false };

@@ -248,6 +248,101 @@ describe("truthful Story long-running actions", { concurrency: false }, () => {
     assert.equal($("#loading").hidden, true);
   });
 
+  test("a cast save queued before staging still finishes during the Story lock", async () => {
+    resetRecorder();
+    const draft = "Путин: Привет";
+    $("#draft").value = draft;
+    page.setResearchReviewState({
+      id: "material-1",
+      text: draft,
+      sourceItems: [{ id: "utterance-1", kind: "utterance", sourceQuote: "Привет" }],
+      cast: {
+        characters: [{ name: "Путин", included: true }, { name: "Дуров", included: true }],
+        aliases: [{ surface: "Владимир", characterName: "Путин" }],
+        speakers: [{ sourceItemId: "utterance-1", characterName: "Путин" }],
+      },
+      surfaceForms: [{ quote: "Владимир" }],
+      findings: [],
+    }, "material");
+    let materialSeen = 0;
+    let releaseMaterial;
+    let releaseStage;
+    const materialGate = new Promise((resolve) => {
+      releaseMaterial = resolve;
+    });
+    const stageGate = new Promise((resolve) => {
+      releaseStage = resolve;
+    });
+    harness.respond = async (entry) => {
+      if (entry.method === "POST" && entry.path === `${API}/material-states`) {
+        materialSeen += 1;
+        if (materialSeen === 1) {
+          await materialGate;
+          return jsonResponse(200, { materialStateId: "material-2" });
+        }
+        return jsonResponse(200, { materialStateId: "material-3" });
+      }
+      if (entry.method === "POST" && entry.path === `${API}/storyboard-results`) {
+        await stageGate;
+        return jsonResponse(200, checkedBoard());
+      }
+      return null;
+    };
+    try {
+      const alias = $("#material-aliases").querySelector("select");
+      const speaker = $("#material-speakers").querySelector("select");
+      alias.value = "Дуров";
+      alias.dispatchEvent({ type: "change" });
+      await flush(4);
+      assert.equal(posts("/material-states").length, 1);
+      assert.equal(researchStarts("cast_edit").length, 1);
+      speaker.value = "Дуров";
+      speaker.dispatchEvent({ type: "change" });
+      assert.equal(posts("/material-states").length, 1, "second edit is queued, not sent");
+      $("#stage-material").dispatchEvent({ type: "click" });
+      assertPending("Собираю раскадровку…");
+      await flush(4);
+      assert.equal(posts("/storyboard-results").length, 1);
+      assert.equal(researchStarts("stage_storyboard").length, 1);
+      $("#stage-material").dispatchEvent({ type: "click" });
+      $("#stage-material").click();
+      assert.equal(posts("/storyboard-results").length, 1);
+      assert.equal(researchStarts("stage_storyboard").length, 1);
+      assert.equal(posts("/material-states").length, 1);
+      releaseMaterial();
+      await flush(6);
+      assertPending("Собираю раскадровку…");
+      assert.equal(posts("/material-states").length, 2);
+      assert.equal(posts("/storyboard-results").length, 1);
+      const speakerStarts = researchStarts("cast_edit").filter((event) => event.editTarget?.editKind === "speaker_assignment");
+      assert.equal(speakerStarts.length, 1);
+      const speakerTerminals = harness.researchPosts.filter((event) => (
+        event.eventKind === "action_terminal" && event.correlationId === speakerStarts[0].correlationId
+      ));
+      assert.equal(speakerTerminals.length, 1);
+      assert.equal(speakerTerminals[0].outcome, "success");
+      const nextSpeaker = $("#material-speakers").querySelector("select");
+      nextSpeaker.value = "Путин";
+      nextSpeaker.dispatchEvent({ type: "change" });
+      await flush(4);
+      assert.equal(posts("/material-states").length, 2);
+      assert.equal(researchStarts("cast_edit").length, 2);
+      releaseStage();
+      await settle();
+      assert.equal($("#loading").hidden, true);
+      assert.equal($("#stage-view-story").getAttribute("aria-busy"), null);
+      assert.equal($("#notice").textContent, STAGING_SUCCESS);
+      assert.equal($("#material-review").hidden, false);
+      assert.equal(posts("/storyboard-results").length, 1);
+      assert.equal(posts("/material-states").length, 2);
+    } finally {
+      releaseMaterial();
+      releaseStage();
+      await flush(8);
+      page.setResearchVisualState(null);
+    }
+  });
+
   test("staging enters pending on a deferred storyboard request and rejects a second activation", async () => {
     resetRecorder();
     const draft = "Путин: Привет";
