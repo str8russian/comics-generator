@@ -108,21 +108,21 @@ Values stay `pending` until that task is collected. Do not backfill estimates.
 
 | Field | T1 | T2 | T3 | T4 | T5 |
 |---|---|---|---|---|---|
-| Category | pending | pending | pending | pending | pending |
-| Base | pending | pending | pending | pending | pending |
-| Head | pending | pending | pending | pending | pending |
-| Agent / model / environment | pending | pending | pending | pending | pending |
-| Scope size | pending | pending | pending | pending | pending |
-| Files read before first edit | pending | pending | pending | pending | pending |
-| Unique files / modules read | pending | pending | pending | pending | pending |
-| Input tokens | pending | pending | pending | pending | pending |
-| Total tool calls | pending | pending | pending | pending | pending |
-| Navigation tool calls | pending | pending | pending | pending | pending |
-| Navigation share | pending | pending | pending | pending | pending |
-| Validation effort | pending | pending | pending | pending | pending |
-| Regressions / rework | pending | pending | pending | pending | pending |
-| Unexpected historical files | pending | pending | pending | pending | pending |
-| Outcome and residual uncertainty | pending | pending | pending | pending | pending |
+| Category | Bounded production correction: source-message boundaries | pending | pending | pending | pending |
+| Base | `dabe9141bf851561cf6afe1b48e827efeece11d6` | pending | pending | pending | pending |
+| Head | `7b30bef4bb38b936c1f0142b14cd3077c815c250` | pending | pending | pending | pending |
+| Agent / model / environment | Cursor / Grok 4.7 / Darwin 24.5.0 | pending | pending | pending | pending |
+| Scope size | 4 files, +517 / -13 | pending | pending | pending | pending |
+| Files read before first edit | 26 | pending | pending | pending | pending |
+| Unique files / modules read | 27 | pending | pending | pending | pending |
+| Input tokens | unavailable | pending | pending | pending | pending |
+| Total tool calls | 114 | pending | pending | pending | pending |
+| Navigation tool calls | 64 | pending | pending | pending | pending |
+| Navigation share | 64 / 114 (56.1%) | pending | pending | pending | pending |
+| Validation effort | Three red/green focused cycles: 4 → 78, 5 → 79, and 6 → 80 tests; offline suites 669, 670, and 671. Coordinator final: critical evidence cases pass, focused 80/80, offline 671/671. | pending | pending | pending | pending |
+| Regressions / rework | Two corrective iterations and follow-up commits: remove the narrow label-character whitelist, then replace arbitrary-colon splitting with positive speaker-label evidence. | pending | pending | pending | pending |
+| Unexpected historical files | None | pending | pending | pending | pending |
+| Outcome and residual uncertainty | Accepted and integrated. Exact seven-line fixture manually verified by owner; broader label and colon cases automated only. Insufficient label evidence deliberately preserves grouped source-exact text. Zero provider calls. | pending | pending | pending | pending |
 
 ### After T5
 
