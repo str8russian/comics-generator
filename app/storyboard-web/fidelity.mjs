@@ -149,6 +149,101 @@ function countOrderedAssignments(candidates) {
   return { count, assignment };
 }
 
+function separatorLength(text, index) {
+  if (text.startsWith("\r\n", index)) return 2;
+  if (text[index] === "\n" || text[index] === "\r") return 1;
+  return 0;
+}
+
+function physicalLines(text) {
+  const lines = [];
+  let cursor = 0;
+  while (cursor <= text.length) {
+    let end = cursor;
+    while (end < text.length && separatorLength(text, end) === 0) end += 1;
+    lines.push({ start: cursor, end });
+    if (end >= text.length) break;
+    cursor = end + separatorLength(text, end);
+  }
+  return lines;
+}
+
+const EXPLICIT_MESSAGE_LINE = /^([\p{L}\p{N}+]+(?: [\p{L}\p{N}+]+)*)(?:: |:)([\s\S]*)$/u;
+
+function explicitMessageLabel(line) {
+  const match = EXPLICIT_MESSAGE_LINE.exec(line);
+  if (!match || !/\p{L}/u.test(match[1])) return null;
+  if (!hasSourceCharacter(match[2])) return null;
+  return match[1];
+}
+
+function explicitMessageGroups(item) {
+  if (!item || item.kind !== "utterance" || item.speakerStatus !== "explicit") return null;
+  if (typeof item.sourceQuote !== "string") return null;
+  if (!item.sourceQuote.includes("\n") && !item.sourceQuote.includes("\r")) return null;
+  const lines = physicalLines(item.sourceQuote);
+  const explicit = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const label = explicitMessageLabel(item.sourceQuote.slice(lines[index].start, lines[index].end));
+    if (label) explicit.push({ index, label });
+  }
+  if (explicit.length < 2 || explicit[0].index !== 0) return null;
+  return explicit.map((entry, position) => ({
+    fromLine: entry.index,
+    toLine: position + 1 < explicit.length ? explicit[position + 1].index - 1 : lines.length - 1,
+    label: entry.label,
+  }));
+}
+
+function takeSplitId(base, used) {
+  let number = 2;
+  let id = `${base}-${number}`;
+  while (used.has(id)) {
+    number += 1;
+    id = `${base}-${number}`;
+  }
+  used.add(id);
+  return id;
+}
+
+function expandExplicitMessageItems(sourceItems) {
+  const used = new Set();
+  for (const item of sourceItems) {
+    if (item && typeof item.id === "string") used.add(item.id);
+  }
+  const expanded = [];
+  for (const item of sourceItems) {
+    const groups = explicitMessageGroups(item);
+    if (!groups) {
+      expanded.push(item);
+      continue;
+    }
+    const lines = physicalLines(item.sourceQuote);
+    const aligned = Array.isArray(item.segmentIds) && item.segmentIds.length === lines.length;
+    for (let index = 0; index < groups.length; index += 1) {
+      const group = groups[index];
+      let endLine = group.toLine;
+      while (
+        endLine > group.fromLine
+        && !hasSourceCharacter(item.sourceQuote.slice(lines[endLine].start, lines[endLine].end))
+      ) {
+        endLine -= 1;
+      }
+      const segmentIds = aligned
+        ? item.segmentIds.slice(group.fromLine, endLine + 1)
+        : (Array.isArray(item.segmentIds) ? item.segmentIds.slice() : item.segmentIds);
+      expanded.push({
+        ...item,
+        id: index === 0 ? item.id : takeSplitId(item.id, used),
+        sourceQuote: item.sourceQuote.slice(lines[group.fromLine].start, lines[endLine].end),
+        segmentIds,
+        speakerLabel: group.label,
+      });
+    }
+  }
+  return expanded;
+}
+
 function spokenText(item, slice) {
   if (item.speakerStatus !== "explicit") {
     return { ok: true, text: slice, prefixLength: 0 };
@@ -172,9 +267,10 @@ export function anchorDraft(draftText, sourceItems) {
   if (typeof draftText !== "string" || !Array.isArray(sourceItems)) {
     return settle([{ code: "invalid-anchor" }]);
   }
+  const items = expandExplicitMessageItems(sourceItems);
   const failures = [];
   const seenIds = new Set();
-  for (const item of sourceItems) {
+  for (const item of items) {
     if (!item || seenIds.has(item.id)) failures.push({ code: "duplicate-id", sourceItemId: item && item.id });
     else seenIds.add(item.id);
     if (item && item.speakerStatus === "unresolved") {
@@ -186,7 +282,7 @@ export function anchorDraft(draftText, sourceItems) {
   const separatorRanges = separators.map((separator) => [separator.draftStart, separator.draftEnd]);
   const candidates = [];
   let searchable = true;
-  for (const item of sourceItems) {
+  for (const item of items) {
     if (!item || typeof item.sourceQuote !== "string" || !/\S/u.test(item.sourceQuote)) {
       failures.push({ code: "invalid-anchor", sourceItemId: item && item.id });
       candidates.push([]);
@@ -230,8 +326,8 @@ export function anchorDraft(draftText, sourceItems) {
   if (uncovered) failures.push({ code: "invalid-coverage" });
 
   const anchored = [];
-  for (let index = 0; index < sourceItems.length; index += 1) {
-    const item = sourceItems[index];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
     const span = assignment[index];
     const slice = draftText.slice(span.start, span.end);
     const spoken = spokenText(item, slice);

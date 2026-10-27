@@ -36,17 +36,18 @@ function surfaceFormsRejected(draft, value) {
 }
 
 function anchorAcceptingUnresolved(draft, sourceItems) {
+  const unresolvedIds = new Set();
   const adjusted = sourceItems.map((item) => {
     if (!item || item.speakerStatus !== "unresolved") return item;
+    unresolvedIds.add(item.id);
     return { ...item, speakerStatus: "inferred", speakerLabel: item.speakerLabel || "speaker" };
   });
   const anchored = anchorDraft(draft, adjusted);
   if (!anchored.ok) return anchored;
   return {
     ok: true,
-    sourceItems: anchored.sourceItems.map((item, index) => {
-      const original = sourceItems[index];
-      if (!original || original.speakerStatus !== "unresolved") return item;
+    sourceItems: anchored.sourceItems.map((item) => {
+      if (!unresolvedIds.has(item.id)) return item;
       return {
         id: item.id,
         kind: item.kind,
