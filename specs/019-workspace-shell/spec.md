@@ -31,7 +31,7 @@ A locked stage can be opened. It shows **Заблокировано**, the reaso
 ## Stage contents
 
 - **История:** the draft form with autosave and conflict handling; material review with cast editing, **Подтвердить**, and **Собрать раскадровку**. Reading and staging follow **Story reading and staging** below.
-- **Раскадровка:** the structure instruction form, then the frame grid and inspector.
+- **Раскадровка:** the shared frame grid and inspector. There is no free-text structure-instruction block.
 - **Персонажи:** the character cards and the base-anchor session (`DEC-056`), unchanged.
 - **Визуал:** the visual heading and progress, the Visual approval gate as the first block (labelled as the required check before video, `DEC-044`), **Открыть последний кадр**, then the same frame grid and inspector.
 - **Видео:** the ready-for-video notice and the render panel with transitions, intro, start, status, preview, download, and errors.
@@ -48,7 +48,19 @@ While reading is pending the button reads **Разбираю черновик…
 
 ## Content-first frame cards
 
-A card shows **Кадр N**, the existing status text, the layout (or **Текстовая карточка**), the dialogue mode and speaker, the frame preview with the retained-image notice and outside-frame text, the dialogue or text-card text, one small basis label per panel, and the duration. Its only control is **Открыть**, which opens the Frame Editor. Clicking the card body, or pressing Enter or Space on the focused card, selects the frame; the selected card is outlined and has `aria-current="true"`. Double-click also opens the Frame Editor.
+An ordinary image or storyboard card shows **Кадр N**, the complete frame preview, and **Открыть**. It also shows the retained-image notice and outside-frame text when those values are present. Clicking the card body, or pressing Enter or Space on the focused card, selects the frame; the selected card is outlined and has `aria-current="true"`. Double-click also opens the Frame Editor.
+
+The card does not show a layout name, an ordinary **Реплика** badge or speaker, the ordinary **Текст** status, a panel-basis chip, a duration summary, or the spoken line repeated under the preview. A text card still shows **Текстовая карточка** and its own text.
+
+A card status appears only for an exceptional current fact:
+
+- **Молчание** when `dialogueMode` is explicitly `silent`
+- **Без реплики** when `dialogueMode` is explicitly `hidden`
+- **Ошибка генерации** when any current panel has persisted `generationStatus: "failed"`, including when a previous image is retained
+
+An ordinary spoken frame has no dialogue-mode status. A missing image without a failed generation is not labeled as an error. When both an exceptional dialogue mode and a generation failure apply, both stay visible, and the error is visually distinct from the neutral status. The timing editor stays in the inspector. Panel basis stays in the inspector and the Panel Editor.
+
+The preview is the complete 16:9 frame, including both split panels and the dialogue region. Its width is the card content box and its height keeps 16:9, on the desktop card and in the narrow layout. The preview stays inside the card border without a horizontal card scrollbar, and without cropping, clipping, or masking the frame. Resize follows the current content width. `FrameRenderer` geometry is unchanged; only the card's mounting scale follows that content box.
 
 Cards contain no assembly, generation, or asset controls.
 
@@ -56,8 +68,7 @@ Cards contain no assembly, generation, or asset controls.
 
 Selecting a card shows an inspector for that frame. With nothing selected it shows a short hint; with no frames it is hidden. Selection is in memory only.
 
-- **Header:** frame number, layout, **Открыть редактор кадра**, **Дублировать кадр**, and a clear-selection button.
-- **Диалог:** **Реплика / Молчание / Без реплики** and, for two-panel frames, **Кто говорит**. These call the same `setFrameDialogue` save path as the Frame Editor with the stored line as text and the currently pressed or dormant speaker. A spoken mode without a stored line shows **Введите текст реплики.** and sends nothing. Text editing stays in the Frame Editor.
+- **Header:** frame number, layout, **Открыть редактор кадра**, **Дублировать кадр**, and a clear-selection button. The inspector has no dialogue section.
 - **Время:** the existing duration input.
 - **Кадр:** insert image frame after, insert text card after, move earlier, move later (disabled at the ends), delete frame, and the existing note for directing-beat segments.
 - **Ещё** (collapsed): add panel, swap panels, delete panel N.k with the existing speaker-transfer confirmation, the manual panel subject, the text-card text, and **Выбрать изображение…** with upload and the carry-metadata choice.
@@ -67,7 +78,7 @@ After an operation, selection follows the stable structure address. After `dupli
 
 ## Frame Editor and Panel Editor
 
-The detail dialog remains the Frame Editor with its canvas, frame dialogue section, the utterance editor (still changing the draft, a known deferred issue), next-frame navigation, and generation status.
+The detail dialog remains the Frame Editor with its canvas, frame dialogue section, the utterance editor (still changing the draft, a known deferred issue), next-frame navigation, and generation status. **Реплика**, **Молчание**, **Без реплики**, speaker selection, frame-local dialogue text, validation, Add/Remove, save, Undo, and source-draft separation stay in this editor. The grid card and the inspector are not that editor.
 
 Its per-panel controls are grouped under **Редактор панели** with one tab per panel (**Панель 2.1 · Путин**). Opening a frame shows its first panel; selecting a tab or clicking a panel in the canvas switches the visible panel. Each panel has:
 
@@ -90,13 +101,11 @@ The label is derived only from persisted data:
 | no image, frame shown with base character portraits by `presentFrameForMount` | Базовый образ персонажа, with a hint that this is not a failed generation |
 | otherwise | Нет изображения |
 
-It appears in small form on cards, in the inspector panel blocks, and in the Panel Editor. No speaking/listening state mapping is implemented. Feature 020 adds a separate neutral extraction label beside this basis label in the Panel Editor (`Фон отделён` or `Фон не отделён`); the basis label itself is unchanged.
+It appears in the inspector panel blocks and in the Panel Editor. It does not appear on overview cards. No speaking/listening state mapping is implemented. Feature 020 adds a separate neutral extraction label beside this basis label in the Panel Editor (`Фон отделён` or `Фон не отделён`); the basis label itself is unchanged.
 
-## Commands dock
+## Notes dock
 
-The dock keeps Commands, Notes, and История операций, collapse, and resize (`DEC-052`). A scope line **Область: …** sits between the toggle and the dock body and shows the actual command target: **не выбрана**, **вся раскадровка**, or **панель N.k · Имя**. It is hidden only while the dock is collapsed to its accepted 148×40 handle, when no command can be typed.
-
-Explicitly selecting a panel in the Panel Editor (tab, canvas click, or the inspector's **Изображение панели N.k…**) pre-selects the matching existing dock target. Opening the Frame Editor does not auto-select a panel, and frame selection in the grid changes nothing because the dock has no frame target. A pre-selected panel target executes exactly what choosing the same entry in the dock list executes.
+The dock is one collapsible, resizable panel titled **Заметки**. It contains **Заметки** and read-only **История операций**. It does not contain a Commands target, draft, send control, command history, or scope line. Notes and Operations stay available, including their persistence and failure behavior. Product actions performed through normal controls are still captured. Historical command events remain in the persisted research trace and can still appear in Operations; removing the command box does not delete or rewrite them.
 
 ## Protected
 
@@ -115,11 +124,11 @@ R1 speaking/listening states; R2 panel revision; R3 performance-reference behavi
 On a disposable copy of a real project, served from the Feature 019 worktree with a no-call provider:
 
 1. See the five stages with truthful statuses and open each one.
-2. Find a frame in Раскадровка or Визуал; select it and see its actions in the inspector, with no button rows on cards.
+2. Find a frame in Раскадровка or Визуал. An ordinary card shows the frame number, the full preview, and **Открыть**. Exceptional statuses appear only for silence, hidden dialogue, or a persisted generation failure. Select the card and see its actions in the inspector, with no dialogue block and no button rows on cards.
 3. Duplicate it from the inspector and see the copy selected and opened.
-4. Change dialogue mode and speaker from the inspector.
+4. Open the Frame Editor and change dialogue mode, speaker, and frame-local text there. The preview stays inside the card at a desktop width and at the narrow layout.
 5. In the Frame Editor, pick a panel and find zoom, drag-to-pan, mirror, and reset, the basis label, and the pose photo input. A panel that already has an image offers **Уточнить текущее** and **Новая вариация** instead of an immediate regenerate.
-6. See the dock scope follow the panel selection; reach Notes and История операций.
+6. Reach Notes and История операций in the dock. There is no Commands box and no Storyboard structure-instruction block.
 7. Undo the last change with the global Undo.
 8. Reach the Visual approval gate and the Video stage with render controls.
 9. Reach project rename, **Дублировать проект**, and the base-anchor session in Персонажи.

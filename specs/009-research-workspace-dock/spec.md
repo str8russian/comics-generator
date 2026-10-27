@@ -14,6 +14,7 @@
 - **Baseline observations** describe the current local web application at base `7d098bf` and are not themselves product decisions about research storage, dock architecture, or command semantics beyond reuse of already-supported product behavior.
 - **Assumptions** are explicitly labeled and may be revised only by a later owner decision or Clarify pass; they are not additional accepted product decisions.
 - **Owner observation refinements (2026-10-13)**: After the first T033 browser Happy Path observation, the owner authorized a limited corrective addendum inside feature 009 (not a new feature and not a full Specify → Plan → Tasks restart). The refinements below to FR-002, FR-004, FR-008–FR-010, FR-013, FR-016/FR-019, related acceptance scenarios, and the repeat-T033 checklist synchronize accepted behavior with reproduced owner-visible defects. Contracts, schema, data model, research API, and persistence decisions are unchanged.
+- **Current UI contract (T2B)**: The dock is one collapsible, resizable panel titled **Заметки**. It contains **Заметки** and read-only **История операций**. It does not contain a Commands target, draft, send control, command history, or scope line. Where this specification still describes a Commands input, that input is superseded by this contract. The persisted research trace, including historical `dock_commands` events, remains complete and is not deleted or rewritten. Normal product controls still capture one start and one terminal with the existing semantic action and context. Notes persistence, Operations order, failure honesty, collapse, resize, privacy, and the no-retry boundary stay in force.
 
 ## Baseline observations *(not accepted decisions)*
 
@@ -39,7 +40,7 @@ While creating or continuing a storyboard, the owner keeps one Research workspac
 **Acceptance Scenarios**:
 
 1. **Given** the application is open for storyboard creation or continuation, **When** the owner views the page, **Then** exactly one Research workspace dock is fixed at the viewport bottom-right, does not scroll with the storyboard, can collapse to a fixed-size handle, can be resized horizontally and vertically while expanded (up to safe viewport/dialog bounds), and avoids covering critical storyboard/dialog controls. Expanded size memory is open-page only; reload persistence is not required.
-2. **Given** that dock, **When** the owner inspects it, **Then** it contains three separate areas—Commands, Notes, and Operations—and no second dock appears for the frame/panel dialog or other views.
+2. **Given** that dock, **When** the owner inspects it, **Then** it contains **Заметки** and **История операций**, its title does not call it a Commands panel, and no second dock appears for the frame/panel dialog or other views.
 3. **Given** Notes has typed text, **When** the owner sends once, **Then** one separate timestamped note message appears in Notes history (Russian date plus 24-hour time in explicit UTC+3), and no AI reply is produced.
 4. **Given** an existing storyboard or image async operation is started through existing product controls, **When** the owner watches Operations, **Then** Operations shows a running state and later a truthful terminal success or failure in authoritative research `seq` order (including historical unmatched starts as interrupted/non-running), while local busy/result feedback on the affected control remains.
 5. **Given** that async operation is still running, **When** the owner uses Notes, **Then** Notes remains available to record a note without triggering a new product operation.
@@ -47,22 +48,9 @@ While creating or continuing a storyboard, the owner keeps one Research workspac
 
 ---
 
-### User Story 2 - Submit a supported command and keep Notes independent (Priority: P1)
+### User Story 2 - Commands input is not part of the current dock (Priority: P1)
 
-Commands reuses existing supported command behavior. There is no implicit default execution target: the owner must explicitly select a supported action before send. Commands visibly identifies the active storyboard/frame/panel context and the actual command target using owner-facing labels (no internal ids or 0-based indexes in the visible selector). Panel choices are explained as belonging to the currently open frame. The owner submits a supported scoped command through Commands; raw submitted text, semantic submit action, captured target/context, and result enter the ordered research trace. Commands history shows owner command submissions only; Operations owns running/terminal outcomes. Commands and Notes keep independent inputs, drafts, send actions, histories, and event types. Ambient selection must not silently select or retarget an action. Neutral/stale selection blocks product and research calls. Unsupported contexts present an honest limitation rather than inventing new scope semantics.
-
-**Why this priority**: Later analysis must reconstruct intent → command/action → result → reaction without conflating diary notes with product commands or inventing unsupported interpreters.
-
-**Independent Test**: With Notes draft/history populated, submit one existing supported scoped command through Commands, confirm the command outcome and research-trace entries, and verify the Notes draft and history remain unchanged by that send.
-
-**Acceptance Scenarios**:
-
-1. **Given** an active context that has supported commands available, **When** the owner views Commands before any explicit choice, **Then** the target selector remains in a neutral unselected state (for example `Выберите действие`), there is no implicit/default storyboard target, and Commands explains that the selection constrains execution; panel options are labeled as belonging to the currently open frame with owner-facing names only.
-2. **Given** that neutral state, **When** the owner attempts to send, **Then** no product call and no research start/terminal write occur, and a concise local explanation is shown.
-3. **Given** an explicit supported selection (storyboard Structure edit or a panel regeneration for the open frame), **When** the owner submits an existing supported scoped command through Commands, **Then** the product performs that behavior for the selected target, the ordered research trace records the raw submitted text, the semantic submit action, the captured target/context at send time, and the terminal result, and Commands history shows the submission (not the terminal outcome row).
-4. **Given** independent Notes draft text and Notes history, **When** the owner sends a Commands submission, **Then** the Notes draft and Notes history are neither consumed nor submitted, and Commands/Notes remain separate event types.
-5. **Given** an explicitly selected supported action, **When** the owner opens/refreshes a frame or otherwise changes ambient selection, **Then** ambient opening/refresh never selects or retargets the action; an explicit selection stays sticky while it remains supported, and a stale/unavailable panel selection returns to neutral and blocks send until another explicit choice.
-6. **Given** a context with no supported command for the requested action, **When** the owner views or attempts Commands for that context, **Then** the interface presents that limitation honestly and does not invent unsupported scope semantics, a general AI chat, or a new command interpreter.
+Superseded by the current UI contract. The dock does not offer a command target, draft, send action, or command history. The same frame, panel, dialogue, timing, and image actions remain available through the normal product controls, and those controls still write the research trace. Historical command events stay in that trace and remain representable in Operations.
 
 ---
 
@@ -107,21 +95,20 @@ One continuous vertical Happy Path must be acceptable end-to-end:
 2. Type a note, send it once, and immediately see its separate timestamped message.
 3. Start an existing storyboard or image operation; see running and terminal result in Operations. Notes remains available during the wait.
 4. Open a frame/panel and verify the dock reflects available context and remains accessible without blocking critical controls.
-5. Explicitly select a supported Commands action (no implicit default), submit it, and verify raw text, semantic action, captured target/context, and result enter the trace, while the Notes draft/history stays independent and Commands history shows the submission only.
+5. Perform one existing product action through its normal control and verify its raw text when it has any, semantic action, captured target/context, and result enter the trace. Notes draft and history stay independent. There is no Commands send. Historical command events, if already stored, remain in the trace.
 6. Add a reaction through Notes.
 7. Reload the page, then restart the application with the same local storage. Verify the previous Notes return and earlier ordered evidence remains intact.
 8. Obtain the local machine-readable trace and reconstruct intent → command/action → result → reaction.
 
 ### Edge Cases
 
-- Commands target is still neutral / unselected, or a previously selected panel is stale/unavailable: block send (no product call, no research write); show a concise local explanation; do not invent scopes or a chat interpreter.
-- Ambient panel/frame opening or refresh while an explicit supported command is selected: do not silently select or retarget that command; return to neutral only when the explicit selection becomes unsupported.
+- There is no command box to send from. A removed command control must not remain as hidden DOM that can still make a product call.
 - Async product operation is running: Notes remains usable and must not start a new product operation; Operations shows running then terminal truth.
 - Existing operation terminal failure with retained last-good image: show failure; do not present retention as a successful new attempt.
 - Research-save failure: do not claim success; keep unsaved note text available; no automatic retry orchestration.
 - Later navigation after an earlier note/action: earlier captured context stays as captured; missing fields stay explicitly absent.
 - Placement scrubbing/pointer movement without a committed placement action: do not flood the research trace; record meaningful committed placement actions only.
-- Keystrokes in Commands, Notes, or product fields before submit: not recorded as research events; only submitted/committed text and actions are.
+- Keystrokes in Notes or product fields before submit: not recorded as research events; only submitted/committed text and actions are.
 - Credentials, secret-bearing URLs, raw provider responses, and image bytes: excluded from the owner-research evidence path; existing sanitized operational logs and their tests remain protected and are not relaxed.
 - Application restart without the same local installation/storage: out of scope for this slice’s durability claim; the approved scenario is same-local-storage reload/restart only.
 - Interrupted product operations: research persistence does not imply cancellation, resume, retry orchestration, or recovery of those operations.
@@ -134,26 +121,23 @@ One continuous vertical Happy Path must be acceptable end-to-end:
 
 - **FR-001**: The interface MUST provide exactly one Research workspace dock fixed to the viewport bottom-right that does not scroll with the storyboard content.
 - **FR-002**: The dock MUST be collapsible to a fixed standard-size handle and, while expanded, MUST be resizable horizontally and vertically up to safe viewport/dialog bounds. Re-expanding MUST restore the last expanded size only within the current open page; reload persistence of dock size is NOT required. The dock MUST remain usable while the existing frame/panel dialog is open (same node reparented) without blocking critical storyboard or dialog controls.
-- **FR-003**: The dock MUST contain three distinct areas: Commands, Notes, and Operations. The product MUST NOT create duplicate docks for different views.
+- **FR-003**: The dock MUST contain **Заметки** and read-only **История операций**. It MUST NOT contain a Commands input, target, history, or scope line, and it MUST NOT create a second dock.
 
-#### Commands and Notes independence
+#### Notes
 
-- **FR-004**: Commands and Notes MUST have independent inputs, drafts, send actions, histories, and event types. Commands history MUST project owner command submissions (`dock_commands` `action_start` entries with localized timestamp, submitted text, and human action/target label when available). Operations MUST own running/terminal outcomes; Commands MUST NOT render terminal `action → outcome` rows. The research trace MUST still retain both starts and terminals.
-- **FR-005**: Sending Commands MUST NOT consume or submit the Notes draft, and sending Notes MUST NOT consume or submit the Commands draft.
-- **FR-006**: Persistence of unsent Commands or Notes drafts is NOT required by this slice.
-
-#### Commands behavior and context
-
-- **FR-007**: Commands MUST reuse existing supported command behavior only. It MUST NOT create unsupported scope semantics, a general AI chat, or a new command interpreter.
-- **FR-008**: Commands MUST visibly identify the active/available storyboard, frame, and/or panel context and the actual command target for the next send. There MUST be no implicit/default execution target: the initial state is truly unselected (neutral option such as `Выберите действие`). Visible labels MUST be owner-facing (for example storyboard-wide Structure edit or “Перегенерировать изображение: кадр N, панель M — name”) and MUST NOT expose internal ids, `panelIndex`, 0-based indexes, `structureFrameId`, `displayFrameId`, or segment values. Panel choices MUST be explained as belonging to the currently open frame. Captured `commandTarget` / context fields remain unchanged for the trace.
-- **FR-009**: If a context lacks a supported command, or the selection is neutral/stale/unavailable, the interface MUST present that limitation honestly and MUST block send so that no product call and no research start/terminal write occur until the owner explicitly selects a supported action.
-- **FR-010**: Ambient opening/refreshing of a frame MUST NEVER select or retarget an action. An explicitly selected supported action MAY remain sticky while it remains supported; if that selection becomes stale/unavailable, Commands MUST return to the neutral state and block send until another explicit choice.
-- **FR-011**: Captured command context MUST distinguish displayed frame numbers from underlying structure-frame identity when both are available, and MUST NOT conflate them.
+- **FR-004**: Operations MUST own running and terminal outcomes. The research trace MUST still retain both starts and terminals, including historical `dock_commands` events. The current UI does not render a separate command-history list.
+- **FR-005**: Sending a note MUST NOT start a product operation.
+- **FR-006**: Persistence of an unsent Notes draft is NOT required by this slice.
+- **FR-007**: The current UI MUST NOT expose a command interpreter, a general AI chat, or a new command scope.
+- **FR-008**: Superseded as a visible command target. Captured `commandTarget` and context fields for product-control actions remain unchanged.
+- **FR-009**: Superseded as a command-send gate. The removed command surface MUST NOT be able to make a product call.
+- **FR-010**: Superseded as command-target stickiness. Selecting a frame or panel MUST NOT reveal or retarget a command box.
+- **FR-011**: Captured context MUST distinguish displayed frame numbers from underlying structure-frame identity when both are available, and MUST NOT conflate them.
 
 #### Notes diary
 
 - **FR-012**: Notes MUST be a single-user observation diary with no AI replies.
-- **FR-013**: One Notes send action MUST create exactly one separate timestamped message. Notes, Commands, and Operations MUST render visible timestamps as Russian date plus 24-hour time (including seconds) in explicit UTC+3 (for example `13 октября 2026, 13:40:57 (UTC+3)`), using a fixed Europe/Moscow / UTC+3 interpretation rather than the browser’s ambient timezone. Stored timestamps remain unchanged.
+- **FR-013**: One Notes send action MUST create exactly one separate timestamped message. Notes and Operations MUST render visible timestamps as Russian date plus 24-hour time (including seconds) in explicit UTC+3 (for example `13 октября 2026, 13:40:57 (UTC+3)`), using a fixed Europe/Moscow / UTC+3 interpretation rather than the browser’s ambient timezone. Stored timestamps remain unchanged.
 - **FR-014**: Each saved note MUST automatically capture available workflow/storyboard/frame/panel/image-version context at send time; unavailable context MUST remain explicitly absent rather than fabricated.
 - **FR-015**: The owner MUST be able to record a note while an existing async product action is running, without triggering a new product operation.
 
@@ -165,7 +149,7 @@ One continuous vertical Happy Path must be acceptable end-to-end:
 
 #### Ordered research trace
 
-- **FR-019**: The system MUST maintain one ordered local research trace that records: raw user-submitted product text; the semantic submit action; notes; meaningful generation, approval, placement, and edit actions; outcomes; timestamps; duration where applicable; and available active context. Dock Operations projections of persisted entries MUST follow that same authoritative `seq` order (including unmatched historical starts). Commands history projection MUST use start submissions only; terminals remain in the trace and in Operations.
+- **FR-019**: The system MUST maintain one ordered local research trace that records: raw user-submitted product text; the semantic submit action; notes; meaningful generation, approval, placement, and edit actions; outcomes; timestamps; duration where applicable; and available active context. Dock Operations projections of persisted entries MUST follow that same authoritative `seq` order (including unmatched historical starts and historical command events). Terminals remain in the trace and in Operations.
 - **FR-020**: The trace MUST include meaningful actions performed through existing product controls, not only actions initiated from the dock.
 - **FR-021**: The trace MUST capture submitted/committed text and actions, not every keystroke, and MUST record meaningful committed placement actions rather than an indiscriminate stream of pointer movement.
 - **FR-022**: Ordering and action/result association MUST be sufficient to reconstruct intent → command/action → result → reaction.
@@ -201,8 +185,8 @@ One continuous vertical Happy Path must be acceptable end-to-end:
 
 ### Key Entities
 
-- **Research workspace dock**: The single fixed, collapsible owner surface containing Commands, Notes, and Operations.
-- **Command submission**: One owner send of an existing supported product command with raw text, semantic action, actual target, captured context, and terminal result.
+- **Research workspace dock**: The single fixed, collapsible owner surface titled **Заметки**, containing Notes and Operations.
+- **Historical command event**: A previously stored research-trace record. It stays in the trace and can appear in Operations. The current UI does not create a new one from a command box.
 - **Note message**: One owner observation diary entry with timestamp and automatically captured available context; no AI reply.
 - **Operation activity item**: Read-only running or terminal success/failure presentation for an existing async product action.
 - **Research trace entry**: One ordered evidence record in the local owner-research path associating submitted text and/or semantic action, available context snapshot, outcome, timestamps, and duration where applicable.
@@ -212,8 +196,8 @@ One continuous vertical Happy Path must be acceptable end-to-end:
 
 ### Measurable Outcomes
 
-- **SC-001**: In one continuous browser session following the mandatory Happy Path steps 1–6, the owner can send at least one note, observe one existing async operation through running and terminal states in Operations while Notes remains usable, open a frame/panel with the dock still accessible, submit one existing supported scoped command through Commands, and add one reaction note—without leaving the page for a second tool.
-- **SC-002**: After Happy Path step 5, a reviewer can point to distinct Commands versus Notes artifacts: the command send did not consume the Notes draft/history, and the research trace contains the command’s raw text, semantic action, captured target/context, and result as entries separable from Notes events.
+- **SC-001**: In one continuous browser session following the mandatory Happy Path steps 1–6, the owner can send at least one note, observe one existing async operation through running and terminal states in Operations while Notes remains usable, open a frame/panel with the dock still accessible, perform one existing product action through its normal control, and add one reaction note—without leaving the page for a second tool and without a Commands box.
+- **SC-002**: After Happy Path step 5, a reviewer can separate the product action from Notes: the action did not consume the Notes draft or history, and the research trace contains the action’s raw text when any was submitted, semantic action, captured target/context, and result as entries separable from Notes events. Historical command events remain obtainable in the same trace.
 - **SC-003**: After page reload and application restart with the same local storage (Happy Path steps 7–8), prior Notes reappear in the dock and the complete earlier ordered machine-readable trace remains obtainable without memory-only state.
 - **SC-004**: Using only the locally obtained machine-readable trace from SC-003, a reviewer can reconstruct the Happy Path sequence as intent → command/action → result → reaction, including at least one note, one product command/action, one terminal result, and one later reaction note, without fabricated context for fields that were unavailable at capture time.
 - **SC-005**: For an existing operation terminal failure, Operations and local control feedback both present failure, and a retained last-good image is not counted as a successful new attempt.
@@ -225,8 +209,8 @@ One continuous vertical Happy Path must be acceptable end-to-end:
 - The operator is the single local owner using one local installation; multi-user collaboration, accounts, and external-user retention/consent policy are out of scope.
 - “Same local installation and storage” means the approved Docker/local app data boundary already used for product restart continuity; exact research-storage medium is intentionally undecided here and belongs to Plan.
 - “Machine-readable trace is locally obtainable” means a verifier can extract the complete ordered evidence without a polished export UI; the extraction mechanism is not prescribed by this specification.
-- Commands in this slice expose/reuse already-supported product command paths observed on the baseline (storyboard-scoped Structure edit and panel-scoped regeneration instruction), and may honestly disable or explain unsupported contexts rather than broaden command semantics.
-- Existing product controls remain available; the dock complements them and does not require removing Structure tools, panel controls, or approval controls.
+- The current dock does not expose a command box. Supported frame, panel, dialogue, timing, and image actions stay on their normal product controls.
+- Existing product controls remain available. The dock does not replace them.
 - Unsent draft persistence across reload is intentionally not required; only submitted Notes history and the ordered trace must survive.
 - No performance/latency quota is imposed beyond ordinary local interactive use of the Happy Path.
 - Provider calls are not required to accept this specification stage; browser acceptance of the implemented feature comes in later authorized stages.
@@ -236,12 +220,12 @@ One continuous vertical Happy Path must be acceptable end-to-end:
 | Accepted contract item | Primary requirements | Happy Path / scenarios |
 | --- | --- | --- |
 | 1. One fixed collapsible/resizable bottom-right dock; fixed collapsed handle; page-session size memory only; usable with frame/panel dialog; no duplicates | FR-001, FR-002, FR-003 | HP1, HP4; US1.1–1.2, 1.6 |
-| 2. Commands, Notes, Operations areas | FR-003 | HP2–5; US1.2 |
-| 3. Independent Commands/Notes inputs, drafts, sends, histories, event types; Commands history = submissions only; Operations owns terminals; unsent-draft persistence not required | FR-004, FR-005, FR-006 | HP5; US2.3–2.4 |
-| 4. Reuse supported commands; no implicit default target; owner-facing labels; honest unsupported/neutral/stale block; no ambient select/retarget | FR-007–FR-011 | HP4–5; US2.1–2.6 |
-| 5. Notes diary, one send → one timestamped message (RU UTC+3 visible timestamps in Notes/Commands/Operations), auto context, usable during async without product op | FR-012–FR-015 | HP2–3, HP6; US1.3, 1.5 |
+| 2. Notes and Operations in one dock; no Commands input | FR-003, FR-007–FR-010 | HP2–5; US1.2; US2 |
+| 3. Notes send does not start a product operation; Operations owns terminals; unsent-draft persistence not required; historical command events stay in the trace | FR-004, FR-005, FR-006, FR-019 | HP5; US2 |
+| 4. Normal product controls capture context without a command box; display and structure identity stay distinct | FR-008, FR-011, FR-020 | HP4–5; US2 |
+| 5. Notes diary, one send → one timestamped message (RU UTC+3 visible timestamps in Notes and Operations), auto context, usable during async without product op | FR-012–FR-015 | HP2–3, HP6; US1.3, 1.5 |
 | 6. Read-only Operations; truthful running/terminal in `seq` order (unmatched starts interrupted); keep local feedback; no fake % / job system | FR-016–FR-018 | HP3; US1.4; US4.1 |
-| 7. One ordered local research trace across dock and existing controls; dock projections respect `seq` / Commands starts-only | FR-019–FR-021 | HP5–8; US3.1, 3.3 |
+| 7. One ordered local research trace across existing controls, including historical command events; dock projections respect `seq` | FR-019–FR-021 | HP5–8; US3.1, 3.3 |
 | 8. Ordering/association + capture-time context; no later relabel; no fabricated absences | FR-022, FR-023 | HP8; US3.2, 3.5 |
 | 9. Notes + trace survive reload/restart; machine-readable; not memory-only; not operation recovery | FR-024–FR-027 | HP7–8; US3.4–3.6 |
 | 10. Separate owner-research path retains raw owner text; exclude secrets/provider/image bytes; protect sanitized logs | FR-029–FR-031 | SC-007; US edge cases |

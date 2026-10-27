@@ -363,11 +363,12 @@ test("the visual adapter source makes no provider request", () => {
   }
 });
 
-test("places the base-anchor note next to the storyboard", () => {
+test("does not show the obsolete base-anchor demonstration sentence", () => {
   const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
   const appJs = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
-  assert.equal(html.includes(note), true);
-  assert.equal(html.indexOf('id="anchor-note"') < html.indexOf('id="storyboard"'), true);
+  assert.equal(html.includes(note), false);
+  assert.equal(html.includes('id="anchor-note"'), false);
+  assert.equal(html.includes('id="storyboard"'), true);
   assert.match(appJs, /from "\/visual-anchors\.mjs"/);
   assert.match(appJs, /presentFrameForMount/);
   assert.match(readFileSync(new URL("../public/visual-anchors.mjs", import.meta.url), "utf8"), /presentVisualFrame\(frame\)/);

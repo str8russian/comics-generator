@@ -885,7 +885,7 @@ export function bindResearchDock({
     }
     if (toggle) {
       setElementAttribute(toggle, "aria-expanded", collapsed ? "false" : "true");
-      toggle.textContent = collapsed ? "Команды ▴" : "Команды ▾";
+      toggle.textContent = collapsed ? "Заметки ▴" : "Заметки ▾";
     }
   }
 
@@ -916,22 +916,6 @@ export function bindResearchDock({
       }
     } catch {
       // Isolated page tests and offline boots may not expose research routes.
-    }
-
-    try {
-      const commandsResponse = await request("/api/research/trace?surface=dock_commands");
-      if (commandsResponse?.ok) {
-        const payload = await commandsResponse.json();
-        commandEvents = Array.isArray(payload?.events)
-          ? payload.events.filter((event) => (
-            event?.surface === "dock_commands"
-            && event?.eventKind === "action_start"
-          ))
-          : [];
-        renderCommandsHistory();
-      }
-    } catch {
-      // Same offline tolerance as Notes hydrate.
     }
 
     try {
@@ -992,195 +976,6 @@ export function bindResearchDock({
     }
   }
 
-  async function sendCommand(event) {
-    if (event?.preventDefault) event.preventDefault();
-    if (!commandsDraft || sendingCommand) return;
-    if (productBusy()) {
-      setCommandsStatus("Команды недоступны, пока выполняется продуктовая операция.", "error");
-      return;
-    }
-    const instruction = String(commandsDraft.value || "");
-    if (!instruction.trim()) return;
-
-    resolveStickyAgainstAvailable();
-    if (!stickyTarget || targetUnsupported) {
-      setCommandsStatus(
-        "Выберите действие — продуктовый вызов и запись исследования не выполнены.",
-        "error",
-      );
-      return;
-    }
-    if (typeof executeDockCommand !== "function") {
-      setCommandsStatus("Команды ещё не подключены к продукту.", "error");
-      return;
-    }
-
-    const commandTarget = createEmptyCommandTarget(stickyTarget.kind, stickyTarget);
-    const semanticAction = commandTarget.kind === "panel"
-      ? (typeof panelCommandAction === "function" ? panelCommandAction(commandTarget) : "panel_generate")
-      : "structure_edit";
-    const correlationId = newCorrelationId();
-    const context = snapshotContext();
-    const startSnapshot = {
-      semanticAction,
-      surface: "dock_commands",
-      submittedText: instruction,
-      commandTarget,
-      editTarget: null,
-      context,
-    };
-
-    sendingCommand = true;
-    setCommandsStatus("");
-    let startSaved = false;
-    try {
-      const startEvent = await postResearchEvent({
-        eventKind: "action_start",
-        correlationId,
-        ...startSnapshot,
-      });
-      startSaved = Boolean(startEvent);
-      if (startEvent) {
-        commandEvents = [...commandEvents, startEvent];
-        terminalEvents = [...terminalEvents, startEvent];
-        renderCommandsHistory();
-        renderOperations();
-      }
-    } catch {
-      startSaved = false;
-    }
-    if (!startSaved) {
-      reportEvidenceSaveFailure({
-        correlationId,
-        semanticAction,
-        surface: "dock_commands",
-        phase: "start",
-      });
-    }
-
-    live = {
-      correlationId,
-      semanticAction,
-      surface: "dock_commands",
-    };
-    renderOperations();
-
-    let productOk = false;
-    let productError = null;
-    try {
-      const result = await executeDockCommand({
-        instruction,
-        commandTarget,
-        correlationId,
-        semanticAction,
-        context,
-      });
-      productOk = Boolean(result?.ok);
-      productError = result?.error ?? null;
-      if (result?.blocked) {
-        setCommandsStatus("Команды недоступны, пока выполняется продуктовая операция.", "error");
-      } else if (!productOk) {
-        setCommandsStatus("Команда не выполнена.", "error");
-      }
-    } catch (error) {
-      productOk = false;
-      productError = error;
-      setCommandsStatus("Команда не выполнена.", "error");
-    }
-
-    const terminalBody = {
-      eventKind: "action_terminal",
-      correlationId,
-      outcome: productOk ? "success" : "failure",
-      outcomeKind: productOk
-        ? null
-        : (typeof productError?.kind === "string" ? productError.kind : "request-failed"),
-      outcomeFlags: {},
-    };
-    if (!startSaved) terminalBody.startSnapshot = startSnapshot;
-    const terminalEvent = await postResearchEvent(terminalBody);
-    if (terminalEvent) {
-      clearEvidenceSaveFailure(correlationId);
-      terminalEvents = [...terminalEvents, terminalEvent];
-      renderOperations();
-    } else if (productOk) {
-      reportEvidenceSaveFailure({
-        correlationId,
-        semanticAction,
-        surface: "dock_commands",
-        phase: "terminal",
-      });
-    } else if (!startSaved) {
-      reportEvidenceSaveFailure({
-        correlationId,
-        semanticAction,
-        surface: "dock_commands",
-        phase: "start",
-      });
-    }
-
-    live = null;
-    renderOperations();
-    if (productOk) {
-      commandsDraft.value = "";
-      if (!terminalEvent) {
-        setCommandsStatus(EVIDENCE_SAVE_FAILURE_LABEL, "error");
-      } else {
-        setCommandsStatus("");
-      }
-    }
-    sendingCommand = false;
-  }
-
-  function selectCommandTarget(next) {
-    if (!next || typeof next !== "object") return;
-    if (next.kind === "storyboard") {
-      stickyTarget = createEmptyCommandTarget("storyboard");
-      resolveStickyAgainstAvailable();
-      renderTargetControls();
-      return;
-    }
-    if (next.kind === "panel") {
-      stickyTarget = createEmptyCommandTarget("panel", next);
-      resolveStickyAgainstAvailable();
-      renderTargetControls();
-    }
-  }
-
-  function setAvailableTargets(next = {}) {
-    availableTargets = {
-      storyboardAvailable: Boolean(next.storyboardAvailable),
-      panels: Array.isArray(next.panels) ? next.panels.map((panel) => ({
-        displayFrameNumber: panel.displayFrameNumber ?? null,
-        displayFrameId: panel.displayFrameId ?? null,
-        structureFrameId: panel.structureFrameId ?? null,
-        structureSegmentIndex: Number.isInteger(panel.structureSegmentIndex)
-          ? panel.structureSegmentIndex
-          : null,
-        panelIndex: Number.isInteger(panel.panelIndex) ? panel.panelIndex : null,
-        panelSubject: typeof panel.panelSubject === "string" ? panel.panelSubject : null,
-      })).filter((panel) => panel.displayFrameId && Number.isInteger(panel.panelIndex)) : [],
-    };
-    resolveStickyAgainstAvailable();
-    renderTargetControls();
-  }
-
-  function onTargetSelectChange() {
-    if (!commandsTarget) return;
-    const value = commandsTarget.value;
-    if (!value) {
-      clearCommandSelection();
-      renderTargetControls();
-      return;
-    }
-    if (value === "storyboard") {
-      selectCommandTarget({ kind: "storyboard" });
-      return;
-    }
-    const panel = (availableTargets.panels || []).find((entry) => panelTargetKey(entry) === value);
-    if (panel) selectCommandTarget({ kind: "panel", ...panel });
-  }
-
   function enterDetail() {
     reparentDockIntoDetail({ dock: root, detail, host });
   }
@@ -1193,28 +988,6 @@ export function bindResearchDock({
     setElementAttribute(notesSend, "data-research-allow", "notes-send");
     notesSend.addEventListener("click", () => {
       void sendNote();
-    });
-  }
-  if (commandsForm) {
-    commandsForm.addEventListener("submit", (event) => {
-      void sendCommand(event);
-    });
-  }
-  if (commandsSend) {
-    commandsSend.addEventListener("click", () => {
-      void sendCommand();
-    });
-  }
-  if (commandsDraft) {
-    commandsDraft.addEventListener("keydown", (event) => {
-      if (event?.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-        void sendCommand(event);
-      }
-    });
-  }
-  if (commandsTarget) {
-    commandsTarget.addEventListener("change", () => {
-      onTargetSelectChange();
     });
   }
   if (toggle) {
@@ -1236,9 +1009,7 @@ export function bindResearchDock({
 
   setCollapsed(false);
   renderNotes();
-  renderCommandsHistory();
   renderOperations();
-  renderTargetControls();
   const ready = hydrate();
 
   return {
@@ -1274,12 +1045,6 @@ export function bindResearchDock({
     },
     captureContext: snapshotContext,
     createEmptyCommandTarget,
-    setAvailableTargets,
-    selectCommandTarget,
-    getCommandTarget: () => (stickyTarget
-      ? createEmptyCommandTarget(stickyTarget.kind, stickyTarget)
-      : null),
-    isCommandTargetUnsupported: () => !stickyTarget || targetUnsupported,
     rememberExpandedSizeFromDom,
     recordExpandedSize(size) {
       if (!size || typeof size !== "object") return;

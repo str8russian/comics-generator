@@ -1,5 +1,3 @@
-const MODE_LABELS = { spoken: "Реплика", silent: "Молчание", hidden: "Без реплики" };
-
 function el(document, tag, className = "", text = null) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -49,57 +47,6 @@ function headerSection(document, model, actions) {
   header.append(titleRow, row);
   if (model.statusText) header.append(el(document, "p", "card-status", model.statusText));
   return header;
-}
-
-function dialogueSection(document, model, actions) {
-  const node = section(document, "dialogue", "Диалог");
-  if (model.frameKind === "text") {
-    node.append(el(document, "p", "helper", "У текстовой карточки нет реплики."));
-    return node;
-  }
-  const dialogue = model.dialogue;
-  node.append(el(document, "p", "helper", `Сейчас: ${MODE_LABELS[dialogue.mode]}${dialogue.mode === "spoken" && dialogue.speakerName ? ` · ${dialogue.speakerName}` : ""}`));
-  const modes = el(document, "div", "segmented inspector-modes");
-  modes.setAttribute?.("role", "group");
-  modes.setAttribute?.("aria-label", "Состояние диалога");
-  for (const mode of ["spoken", "silent", "hidden"]) {
-    const node = button(document, MODE_LABELS[mode], () => {
-      if (mode === dialogue.mode) return;
-      actions.setDialogue({ mode });
-    });
-    node.dataset.dialogueMode = mode;
-    node.setAttribute?.("aria-pressed", mode === dialogue.mode ? "true" : "false");
-    modes.append(node);
-  }
-  node.append(modes);
-  if (dialogue.speakers.length > 1) {
-    const group = el(document, "div", "inspector-speakers");
-    group.setAttribute?.("role", "group");
-    group.setAttribute?.("aria-label", "Кто говорит");
-    group.append(el(document, "p", "inspector-label", "Кто говорит"));
-    for (const speaker of dialogue.speakers) {
-      const pressed = dialogue.mode === "spoken" && speaker.panelId === dialogue.speakerPanelId;
-      const node = button(document, speaker.label, () => {
-        if (pressed) return;
-        actions.setDialogue({ mode: "spoken", speakerPanelId: speaker.panelId });
-      });
-      node.dataset.speakerPanelId = speaker.panelId || "";
-      node.setAttribute?.("aria-pressed", pressed ? "true" : "false");
-      group.append(node);
-    }
-    node.append(group);
-  }
-  if (dialogue.storedText) {
-    const quote = el(document, "blockquote", `inspector-line${dialogue.mode === "spoken" ? "" : " is-dormant"}`, dialogue.storedText);
-    node.append(quote);
-  }
-  node.append(el(document, "p", "helper", "Текст реплики меняется в редакторе кадра. Черновик диалога не меняется."));
-  if (model.dialogueError) {
-    const error = el(document, "p", "inspector-error", model.dialogueError);
-    error.setAttribute?.("role", "alert");
-    node.append(error);
-  }
-  return node;
 }
 
 function timingSection(document, model, actions) {
@@ -235,7 +182,6 @@ export function renderFrameInspector(root, model, actions, { document = globalTh
     return;
   }
   root.append(
-    dialogueSection(document, model, actions),
     timingSection(document, model, actions),
     frameSection(document, model, actions),
     moreSection(document, model, actions, moreOpen),

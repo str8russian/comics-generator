@@ -16,7 +16,7 @@ import { presentFrameForMount } from "/visual-anchors.mjs";
 import { bindWorkspaceStages, STAGES } from "./workspace-stages.mjs";
 import { renderFrameInspector } from "./frame-inspector.mjs";
 import { basisChip, foregroundChip, panelBasis } from "./panel-basis.mjs";
-import { REVISION_COPY, deterministicRevisionControl, renderRevisionSummary } from "./panel-revision-view.mjs";
+import { REVISION_COPY, renderRevisionSummary } from "./panel-revision-view.mjs";
 export { presentFrameForMount };
 
 const draftCompiler = typeof globalThis.window === "undefined"
@@ -68,10 +68,6 @@ const materialCastStatus = document.querySelector("#material-cast-status");
 const closeDetail = document.querySelector("#close-detail");
 const detailPanelControls = document.querySelector("#detail-panel-controls");
 const nextFrame = document.querySelector("#next-frame");
-const structureTools = document.querySelector("#structure-tools");
-const structureEditForm = document.querySelector("#structure-edit-form");
-const structureInstruction = document.querySelector("#structure-instruction");
-const structureResult = document.querySelector("#structure-result");
 const actionStatus = document.querySelector("#action-status");
 const detailFrameNumber = document.querySelector("#detail-frame-number");
 const detailGenerationStatus = document.querySelector("#detail-generation-status");
@@ -121,7 +117,6 @@ const revisionConfirmDo = document.querySelector("#revision-confirm-do");
 
 let workspaceStages = null;
 let selection = null;
-let inspectorDialogueError = null;
 let detailPanelIndex = 0;
 let detailView = "frame";
 let revisionPreflightEpoch = 0;
@@ -151,17 +146,14 @@ export function setResearchVisualState(next, index = -1) {
     visual = null;
     readyFrames = [];
     detailIndex = -1;
-    if (structureTools) structureTools.hidden = true;
     if (charactersWorkspace) charactersWorkspace.hidden = true;
     if (characterCards) characterCards.replaceChildren();
     if (detailPanelControls) detailPanelControls.replaceChildren();
-    syncResearchCommandTargets();
     return;
   }
   visual = next;
   readyFrames = withVisualReady(next.frames || []);
   detailIndex = Number.isInteger(index) ? index : -1;
-  if (structureTools) structureTools.hidden = false;
   if (charactersWorkspace) charactersWorkspace.hidden = false;
   if (visualHeading) visualHeading.hidden = !next.allAnchorsApproved;
   if (visualApproval) visualApproval.hidden = !next.complete;
@@ -190,7 +182,6 @@ export function setResearchVisualState(next, index = -1) {
   } else if (detailPanelControls) {
     detailPanelControls.replaceChildren();
   }
-  syncResearchCommandTargets();
 }
 
 export function setResearchReviewState(documentState, mode) {
@@ -257,36 +248,6 @@ function characterActionContextOverrides(character, {
     imageAssetId: typeof imageAssetId === "string" ? imageAssetId : null,
     anchorVersionId: typeof anchorVersionId === "string" ? anchorVersionId : null,
   };
-}
-
-function isResearchDetailOpen() {
-  return Boolean(detail?.open);
-}
-
-function collectResearchCommandTargets() {
-  const storyboardAvailable = Boolean(visual) && structureTools && !structureTools.hidden;
-  const panels = [];
-  // Panel actions belong only to an actually open #detail, not a retained detailIndex.
-  const frame = isResearchDetailOpen() && detailIndex >= 0 ? readyFrames[detailIndex] : null;
-  if (frame && Array.isArray(frame.panels)) {
-    frame.panels.forEach((panel, panelIndex) => {
-      panels.push({
-        displayFrameNumber: detailIndex + 1,
-        displayFrameId: typeof frame.id === "string" ? frame.id : null,
-        structureFrameId: typeof frame.structureFrameId === "string" ? frame.structureFrameId : null,
-        structureSegmentIndex: Number.isInteger(frame.structureSegmentIndex)
-          ? frame.structureSegmentIndex
-          : null,
-        panelIndex,
-        panelSubject: typeof panel?.subject === "string" ? panel.subject : null,
-      });
-    });
-  }
-  return { storyboardAvailable, panels };
-}
-
-function syncResearchCommandTargets() {
-  researchDock?.setAvailableTargets?.(collectResearchCommandTargets());
 }
 
 async function postResearchEvent(body) {
@@ -469,145 +430,18 @@ async function runProductResearchAction({
   }
 }
 
-async function runStructureEditProduct(instruction, { clearProductForm = false } = {}) {
-  const next = await fetchJson("/api/visual/storyboard/edit", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ instruction }),
-  });
-  applyVisual(next);
-  if (clearProductForm && structureInstruction) {
-    structureInstruction.value = "";
-    if (structureResult) {
-      structureResult.hidden = false;
-      structureResult.textContent = "Правка применена. Предыдущую структуру можно вернуть.";
-    }
-  }
-  showActionNotice("Раскадровка обновлена.");
-  return next;
-}
-
-async function runPanelGenerateProduct({
-  frameId,
-  panelIndex,
-  instruction,
-  displayFrameNumber = null,
-  correlationId = null,
-}) {
-  const payload = { instruction };
-  if (typeof correlationId === "string" && correlationId) payload.correlationId = correlationId;
-  const next = await fetchJson(
-    `/api/visual/frames/${encodeURIComponent(frameId)}/panels/${panelIndex}/generate`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
-  applyVisual(next);
-  const frameLabel = displayFrameNumber == null ? "" : ` кадра ${displayFrameNumber}`;
-  showActionNotice(`Панель ${panelIndex + 1}${frameLabel} готова.`);
-  return next;
-}
-
-async function executeDockCommand({ instruction, commandTarget, correlationId = null }) {
-  if (busy) return { ok: false, blocked: true };
-  if (!commandTarget || (commandTarget.kind !== "storyboard" && commandTarget.kind !== "panel")) {
-    return { ok: false, unsupported: true };
-  }
-
-  let outcome = { ok: false };
-  if (commandTarget.kind === "storyboard") {
-    await runBusy("Применяю структурную правку к раскадровке…", async () => {
-      try {
-        await runStructureEditProduct(instruction, { clearProductForm: false });
-        outcome = { ok: true };
-      } catch (error) {
-        outcome = { ok: false, error };
-        throw error;
-      }
-    });
-    return outcome;
-  }
-
-  const frameId = commandTarget.displayFrameId;
-  const panelIndex = commandTarget.panelIndex;
-  if (typeof frameId !== "string" || !Number.isInteger(panelIndex)) {
-    return { ok: false, unsupported: true };
-  }
-  const frame = readyFrames.find((entry) => entry.id === frameId);
-  const panel = frame?.panels?.[panelIndex];
-  if (panel?.assetId) {
-    const control = deterministicRevisionControl(instruction);
-    const framePosition = readyFrames.findIndex((entry) => entry.id === frameId);
-    if (control) {
-      if (framePosition >= 0) openDetail(framePosition, { panelIndex });
-      if (control === "reuse") openPanelAssetPicker(frame, panel, panelIndex);
-      else focusDeterministicControl(panelIndex, control);
-      showActionNotice("Это действие без генерации. Используйте кадрирование или выбор изображения.");
-      return { ok: true, deterministic: true };
-    }
-    await runBusy("Открываю черновик правки…", async () => {
-      const next = await fetchJson(
-        `/api/visual/frames/${encodeURIComponent(frameId)}/panels/${panelIndex}/revision`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ mode: "refine", instruction, correlationId }),
-        },
-      );
-      applyVisual(next);
-      const position = readyFrames.findIndex((entry) => entry.id === frameId);
-      if (position >= 0) openDetail(position, { panelIndex });
-      showActionNotice("Черновик открыт. Генерация начнётся только после явного действия.");
-      outcome = { ok: true };
-    });
-    return outcome;
-  }
-  await runBusy(
-    `Создаю панель ${panelIndex + 1}${
-      commandTarget.displayFrameNumber == null ? "" : ` кадра ${commandTarget.displayFrameNumber}`
-    }…`,
-    async () => {
-      try {
-        await runPanelGenerateProduct({
-          frameId,
-          panelIndex,
-          instruction,
-          displayFrameNumber: commandTarget.displayFrameNumber,
-          correlationId,
-        });
-        outcome = { ok: true };
-      } catch (error) {
-        outcome = { ok: false, error };
-        throw error;
-      }
-    },
-  );
-  return outcome;
-}
-
   const researchDock = researchDockRoot
   ? bindResearchDock({
     root: researchDockRoot,
     host: researchDockHost,
     detail,
     getContext: captureResearchContext,
-    isProductBusy: () => busy,
-    executeDockCommand,
-    panelCommandAction(commandTarget) {
-      const frame = readyFrames.find((entry) => entry.id === commandTarget?.displayFrameId);
-      const panel = frame?.panels?.[commandTarget?.panelIndex];
-      return panel?.assetId ? "panel_revision_open" : "panel_generate";
-    },
   })
   : null;
 
 export function getResearchDock() {
   return researchDock;
 }
-
-syncResearchCommandTargets();
 
 workspaceStages = stageNav
   ? bindWorkspaceStages({
@@ -637,7 +471,6 @@ function clearBoard() {
   visual = null;
   grid.replaceChildren();
   openLast.hidden = true;
-  structureTools.hidden = true;
   charactersWorkspace.hidden = true;
   visualHeading.hidden = true;
   visualApproval.hidden = true;
@@ -647,7 +480,6 @@ function clearBoard() {
   document.body.dataset.state = "";
   selection = null;
   renderInspector();
-  syncResearchCommandTargets();
   refreshStages();
 }
 
@@ -698,6 +530,82 @@ function showTerminal(view) {
   refreshStages();
 }
 
+export const STORY_CARD_CHROME = Object.freeze({
+  desktopBorderBox: 384,
+  padding: 12,
+  border: 1,
+});
+
+export function cardContentWidth(borderBoxWidth, chrome = STORY_CARD_CHROME) {
+  const width = Number(borderBoxWidth);
+  if (!Number.isFinite(width)) return 0;
+  return Math.max(0, width - chrome.padding * 2 - chrome.border * 2);
+}
+
+export function framePreviewGeometry(contentWidth) {
+  const width = Number(contentWidth);
+  const frameWidth = FrameRenderer.FRAME_GEOMETRY.width;
+  const frameHeight = FrameRenderer.FRAME_GEOMETRY.height;
+  if (!Number.isFinite(width) || width <= 0 || !(frameWidth > 0)) return null;
+  const scale = width / frameWidth;
+  return {
+    contentWidth: width,
+    scale,
+    width,
+    height: width * (frameHeight / frameWidth),
+  };
+}
+
+function previewContentWidth(host) {
+  const measured = Number(host?.clientWidth);
+  if (Number.isFinite(measured) && measured > 0) return measured;
+  return cardContentWidth(STORY_CARD_CHROME.desktopBorderBox);
+}
+
+function applyFramePreviewBox(stage, contentWidth) {
+  const box = framePreviewGeometry(contentWidth);
+  if (!box || !stage?.style) return null;
+  stage.style.width = `${box.width}px`;
+  stage.style.height = `${box.height}px`;
+  stage.style.setProperty("--frame-scale", String(box.scale));
+  if (stage.dataset) stage.dataset.frameScale = String(box.scale);
+  return box;
+}
+
+const cardPreviewObservers = new WeakMap();
+
+function fitCardPreview(host) {
+  const stage = host?.querySelector?.(".frame-stage");
+  if (!stage) return null;
+  return applyFramePreviewBox(stage, previewContentWidth(host));
+}
+
+function watchCardPreview(host) {
+  fitCardPreview(host);
+  if (!host || typeof ResizeObserver !== "function") return;
+  cardPreviewObservers.get(host)?.disconnect?.();
+  const observer = new ResizeObserver(() => fitCardPreview(host));
+  cardPreviewObservers.set(host, observer);
+  observer.observe(host);
+}
+
+export function refitFramePreviews(root = grid) {
+  const cards = root?.querySelectorAll?.(".story-card") || [];
+  for (const card of cards) {
+    const host = card.querySelector?.(".frame-host");
+    if (host) fitCardPreview(host);
+  }
+}
+
+function scheduleCardPreviewRefit() {
+  refitFramePreviews();
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(() => refitFramePreviews());
+  }
+}
+
+globalThis.addEventListener?.("resize", () => refitFramePreviews());
+
 function mountFrame(host, frame, scale, mode) {
   host.replaceChildren();
   const stage = document.createElement("div");
@@ -743,6 +651,7 @@ function showReady(frames, state = "ready") {
   notice.textContent = state === "ready" ? "" : state;
   grid.replaceChildren();
   frames.forEach((frame, index) => grid.append(frameCard(frame, index)));
+  scheduleCardPreviewRefit();
   resolveSelection();
   markSelectedCards();
   renderInspector();
@@ -759,6 +668,40 @@ function textElement(tag, className, text) {
   return node;
 }
 
+const OVERVIEW_DIALOGUE_STATUS = { silent: "Молчание", hidden: "Без реплики" };
+const GENERATION_ERROR_STATUS = "Ошибка генерации";
+
+function overviewStatuses(frame) {
+  if (frame?.frameKind === "text") return [];
+  const statuses = [];
+  const dialogue = OVERVIEW_DIALOGUE_STATUS[frame?.dialogueMode];
+  if (dialogue) statuses.push({ text: dialogue, error: false });
+  const failed = (frame?.panels || []).some((entry) => entry?.generationStatus === "failed");
+  if (failed) statuses.push({ text: GENERATION_ERROR_STATUS, error: true });
+  return statuses;
+}
+
+function appendOverviewStatuses(top, frame) {
+  if (frame.frameKind === "text") {
+    top.append(textElement("span", "card-status", "Текстовая карточка"));
+    return;
+  }
+  const statuses = overviewStatuses(frame);
+  if (!statuses.length) return;
+  const row = document.createElement("span");
+  row.className = "card-statuses";
+  for (const status of statuses) {
+    const node = textElement(
+      "span",
+      status.error ? "card-status card-status-error" : "card-status",
+      status.text,
+    );
+    if (status.error && node.dataset) node.dataset.status = "generation-error";
+    row.append(node);
+  }
+  top.append(row);
+}
+
 function frameCard(frame, index) {
   const card = document.createElement("article");
   card.className = "story-card";
@@ -769,44 +712,31 @@ function frameCard(frame, index) {
   card.setAttribute?.("aria-label", `Кадр ${index + 1}`);
   const top = document.createElement("div");
   top.className = "card-heading";
-  top.append(textElement("span", "", `Кадр ${index + 1}`), textElement("span", "card-status", frameStatus(frame)));
-  const meta = document.createElement("p");
-  meta.className = "card-meta";
-  const metaParts = [frame.frameKind === "text" ? "Текстовая карточка" : (frame.layout || "")];
-  if (frame.frameKind !== "text") {
-    const mode = persistedDialogueMode(frame);
-    metaParts.push(DIALOGUE_LABELS[mode]);
-    const speaker = mode === "spoken" ? frame.panels?.[frame.speakerPanel]?.subject : null;
-    if (speaker) metaParts.push(speaker);
-  }
-  meta.textContent = metaParts.filter(Boolean).join(" · ");
+  top.append(textElement("span", "", `Кадр ${index + 1}`));
+  appendOverviewStatuses(top, frame);
   const preview = document.createElement("div");
   preview.className = "frame-preview";
   const host = document.createElement("div");
   host.className = "frame-host";
-  mountFrame(host, frame, 0.2);
+  mountFrame(host, frame, 1);
+  watchCardPreview(host);
   preview.append(host);
   if (frame.retainedImageNotice) preview.append(textElement("p", "retained-image-notice", frame.retainedImageNotice));
   if (frame.outsideFrameText) preview.append(textElement("p", "outside-frame", frame.outsideFrameText));
-  card.append(top, meta, preview);
-  const line = frame.frameKind === "text"
-    ? String(frame.textCard || "")
-    : (persistedDialogueMode(frame) === "spoken" ? String(frame.dialogue || "") : "");
-  if (line.trim()) card.append(textElement("p", "card-line", line));
-  const bases = (frame.panels || [])
-    .map((panel, panelIndex) => basisChip(frame, panelIndex, { prefix: `${index + 1}.${panelIndex + 1}` }))
-    .filter(Boolean);
-  if (bases.length) {
-    const row = document.createElement("div");
-    row.className = "card-bases";
-    row.append(...bases);
-    card.append(row);
+  if (frame.frameKind === "text") {
+    card.append(top, textElement("p", "card-meta", "Текстовая карточка"), preview);
+    const line = String(frame.textCard || "");
+    if (line.trim()) card.append(textElement("p", "card-line", line));
+  } else {
+    card.append(top, preview);
   }
   const foot = document.createElement("div");
   foot.className = "card-foot";
-  const seconds = formatSeconds(frame.durationSeconds);
-  if (seconds && Number.isInteger(frame.durationFrames)) {
-    foot.append(textElement("span", "card-duration", `${seconds} с · ${frame.durationFrames} кадров`));
+  if (frame.frameKind === "text") {
+    const seconds = formatSeconds(frame.durationSeconds);
+    if (seconds && Number.isInteger(frame.durationFrames)) {
+      foot.append(textElement("span", "card-duration", `${seconds} с · ${frame.durationFrames} кадров`));
+    }
   }
   const open = document.createElement("button");
   open.type = "button";
@@ -847,9 +777,7 @@ function setSelectionTo(index) {
     selection = null;
     return;
   }
-  const previous = selectionKey(selection);
   selection = { ...frameAddress(frame), index };
-  if (selectionKey(selection) !== previous) inspectorDialogueError = null;
 }
 
 function resolveSelection() {
@@ -887,7 +815,6 @@ function selectFrameAt(index) {
 
 export function clearFrameSelection() {
   selection = null;
-  inspectorDialogueError = null;
   markSelectedCards();
   renderInspector();
 }
@@ -915,8 +842,6 @@ function inspectorModel(frame, index) {
     carryChoice: Boolean(manualMetadataChoice(frame, panel)),
     basisChip: basisChip(frame, panelIndex),
   }));
-  const mode = persistedDialogueMode(frame);
-  const speakerPanelId = mode === "spoken" ? framePanels[frame.speakerPanel]?.id : frame.dormantSpeakerPanelId;
   return {
     key,
     displayNumber: index + 1,
@@ -926,17 +851,6 @@ function inspectorModel(frame, index) {
       : [frame.layout, frame.frameKind === "image" ? "кадр с изображением" : null].filter(Boolean).join(" · "),
     statusText: frameStatus(frame),
     assembly: Boolean(visual),
-    dialogue: {
-      mode,
-      speakerPanelId: speakerPanelId || null,
-      speakerName: mode === "spoken" ? framePanels[frame.speakerPanel]?.subject || null : null,
-      speakers: framePanels.map((panel, panelIndex) => ({
-        panelId: panel.id || null,
-        label: panel.subject || `Панель ${index + 1}.${panelIndex + 1}`,
-      })),
-      storedText: storedDialogueLine(frame),
-    },
-    dialogueError: inspectorDialogueError?.key === key ? inspectorDialogueError.message : null,
     timing: {
       label: `${formatSeconds(frame.durationSeconds)} с · ${frame.durationFrames} кадров`,
       frames: frame.durationFrames || 36,
@@ -959,13 +873,12 @@ function inspectorModel(frame, index) {
 
 function inspectorActions(frame, index) {
   const address = frameAddress(frame);
-  const key = selectionKey(address);
   const panels = frame.panels || [];
   return {
     openEditor: () => openDetail(index),
     openPanel: (panelIndex) => {
       openDetail(index, { panelIndex });
-      selectDetailPanel(panelIndex, { explicit: true });
+      selectDetailPanel(panelIndex);
     },
     clearSelection: () => clearFrameSelection(),
     duplicate: () => runAssembly({
@@ -973,14 +886,6 @@ function inspectorActions(frame, index) {
       structureFrameId: address.structureFrameId,
       structureSegmentIndex: address.structureSegmentIndex,
     }, "Дублирую кадр…", { frame }),
-    setDialogue: ({ mode, speakerPanelId = null }) => submitFrameDialogue(frame, mode, {
-      text: mode === "spoken" ? storedDialogueLine(frame) : null,
-      speakerPanelId: speakerPanelId || frame.dormantSpeakerPanelId || null,
-      showError: (message) => {
-        inspectorDialogueError = message ? { key, message } : null;
-        renderInspector();
-      },
-    }),
     setDuration: (value) => runAssembly({
       op: "setDuration",
       ...address,
@@ -1555,15 +1460,13 @@ function openDetail(index, { panelIndex = null } = {}) {
   const leftPanel = wasOpen && previousView === "panel" && detailView !== "panel";
   if (stayingInPanel) placeDetailScroll(preservedScroll);
   else if (enteredPanel || leftPanel) placeDetailScroll(0);
-  // Sync after the modal is open so panel options depend on actual open state.
-  syncResearchCommandTargets();
 }
 
 export function openResearchDetail(index) {
   openDetail(index);
 }
 
-function selectDetailPanel(panelIndex, { explicit = false } = {}) {
+function selectDetailPanel(panelIndex) {
   const sections = [...(detailPanelControls?.children || [])];
   if (!sections[panelIndex]) return;
   detailPanelIndex = panelIndex;
@@ -1578,9 +1481,6 @@ function selectDetailPanel(panelIndex, { explicit = false } = {}) {
     if (Number(column.dataset?.panelIndex) === panelIndex) classes.push("panel-selected");
     column.className = classes.join(" ");
   }
-  if (!explicit) return;
-  const descriptor = collectResearchCommandTargets().panels.find((panel) => panel.panelIndex === panelIndex);
-  if (descriptor) researchDock?.selectCommandTarget?.({ kind: "panel", ...descriptor });
 }
 
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
@@ -1694,7 +1594,6 @@ detail.addEventListener("close", () => {
     detailGenerationStatus.textContent = "";
     delete detailGenerationStatus.dataset.kind;
   }
-  syncResearchCommandTargets();
 });
 nextFrame.addEventListener("click", async () => {
   const index = detailIndex + 1;
@@ -1971,7 +1870,6 @@ export function applyVisual(next) {
   visual = next;
   const fitted = fitFrames(next.frames || []);
   showReady(fitted, "ready");
-  structureTools.hidden = false;
   charactersWorkspace.hidden = false;
   visualHeading.hidden = !next.allAnchorsApproved;
   renderCharacterCards();
@@ -1986,7 +1884,6 @@ export function applyVisual(next) {
     : "Просмотрите все кадры и утвердите текущую версию.";
   readyForVideo.hidden = !next.readyForVideo;
   syncGlobalUndo(next);
-  syncResearchCommandTargets();
   syncExportRuntime();
   refreshIntroTemplates();
   refreshStages();
@@ -2396,16 +2293,9 @@ function renderPanelTabs(frame) {
     tab.dataset.panelIndex = String(panelIndex);
     tab.textContent = `Панель ${panelAddress(panelIndex)}${panel.subject ? ` · ${panel.subject}` : ""}`;
     tab.setAttribute?.("aria-pressed", panelIndex === detailPanelIndex ? "true" : "false");
-    tab.addEventListener("click", () => selectDetailPanel(panelIndex, { explicit: true }));
+    tab.addEventListener("click", () => selectDetailPanel(panelIndex));
     panelEditorTabs.append(tab);
   });
-}
-
-function focusDeterministicControl(panelIndex, control) {
-  const section = [...(detailPanelControls?.children || [])].find((node) => Number(node.dataset?.panelIndex) === panelIndex);
-  if (!section) return;
-  if (control === "zoom" || control === "pan") section.querySelector('input[type="range"]')?.focus?.();
-  else section.querySelector(`[data-placement-action="${control}"]`)?.focus?.();
 }
 
 function panelRevisionAddress(frame, panel, panelIndex) {
@@ -2584,7 +2474,7 @@ function renderFramePanelActions(frame) {
     button.addEventListener("click", () => {
       const enteredPanel = detailView !== "panel";
       detailView = "panel";
-      selectDetailPanel(panelIndex, { explicit: true });
+      selectDetailPanel(panelIndex);
       applyDetailView();
       if (enteredPanel) placeDetailScroll(0);
     });
@@ -3026,28 +2916,12 @@ function renderPanelControls(frame) {
   for (const column of detailPanels()) {
     const panelIndex = Number(column.dataset?.panelIndex);
     if (!Number.isInteger(panelIndex)) continue;
-    column.addEventListener("click", () => selectDetailPanel(panelIndex, { explicit: true }));
+    column.addEventListener("click", () => selectDetailPanel(panelIndex));
   }
   selectDetailPanel(detailPanelIndex);
   renderFramePanelActions(frame);
   applyDetailView();
 }
-
-structureEditForm?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const submittedTextExact = structureInstruction.value;
-  const instruction = submittedTextExact.trim();
-  if (!instruction) return;
-  await runProductResearchAction({
-    semanticAction: "structure_edit",
-    submittedText: submittedTextExact,
-    commandTarget: createEmptyCommandTarget("storyboard"),
-    busyMessage: "Применяю структурную правку к раскадровке…",
-    async operation() {
-      return runStructureEditProduct(instruction, { clearProductForm: true });
-    },
-  });
-});
 
 approveVisual?.addEventListener("click", async () => {
   await runProductResearchAction({

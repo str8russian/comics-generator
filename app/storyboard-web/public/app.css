@@ -221,11 +221,6 @@ button.is-pending:disabled {
   font-weight: 700;
 }
 
-.anchor-note {
-  margin: 0 0 16px;
-  font-size: 16px;
-}
-
 .grid {
   display: flex;
   flex-wrap: wrap;
@@ -253,6 +248,11 @@ button.is-pending:disabled {
   border-color: #557c6a;
 }
 
+.story-card .frame-host {
+  width: 100%;
+  min-width: 0;
+}
+
 .frame-preview {
   display: block;
   padding: 0 !important;
@@ -274,11 +274,22 @@ button.is-pending:disabled {
   font-weight: 700;
 }
 
+.card-statuses {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .card-status,
 .status-badge {
   color: #496257;
   font-size: 12px;
   font-weight: 700;
+}
+
+.card-status-error {
+  color: #8f2828;
 }
 
 .generate-frame {
@@ -721,7 +732,7 @@ button.is-pending:disabled {
 
   .story-card {
     width: 100%;
-    overflow: auto;
+    overflow: visible;
   }
 
   .approval-panel {
@@ -837,8 +848,7 @@ button.is-pending:disabled {
   line-height: 1.35;
 }
 
-.research-notes-draft,
-.research-commands-draft {
+.research-notes-draft {
   width: 100%;
   min-height: 72px;
   box-sizing: border-box;
@@ -848,22 +858,7 @@ button.is-pending:disabled {
   resize: vertical;
 }
 
-.research-commands-form {
-  display: grid;
-  gap: 8px;
-}
-
-.research-commands-target {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px 8px;
-  border: 1px solid #9aa3a8;
-  font: 13px/1.3 Arial, Helvetica, sans-serif;
-  background: #fff;
-}
-
-#research-notes-send,
-#research-commands-send {
+#research-notes-send {
   justify-self: start;
   padding: 6px 12px;
   border: 1px solid #1d2428;
@@ -1873,25 +1868,6 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
   inset: 0;
   border: 8px solid #4da3e0;
   pointer-events: none;
-}
-
-.research-commands-scope {
-  margin: 0;
-  padding: 6px 12px;
-  border-bottom: 1px solid #c7c2b8;
-  background: #dce9f3;
-  color: #1f4f72;
-  font: 13px/1.3 Arial, Helvetica, sans-serif;
-  font-weight: 700;
-}
-
-.research-commands-scope[data-scope="none"] {
-  background: #f1eee7;
-  color: #5d665f;
-}
-
-#research-dock.research-dock--collapsed .research-commands-scope {
-  display: none;
 }
 
 @media (max-width: 1100px) {

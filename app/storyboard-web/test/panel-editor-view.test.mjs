@@ -109,7 +109,7 @@ function permittedRefineVisual() {
   return visual;
 }
 
-test("panel shortcut and dock command open focused Panel view without frame dialogue", async () => {
+test("panel shortcut opens focused Panel view without frame dialogue", async () => {
   await reset();
   cards()[0].dispatchEvent({ type: "click" });
   openPanelFromInspector();
@@ -126,38 +126,8 @@ test("panel shortcut and dock command open focused Panel view without frame dial
   assert.equal($("#detail").dataset.view, "frame");
   assert.equal($("#frame-dialogue").hidden, false);
   assert.equal(mutatingRequests().length, 0);
-
-  const dock = page.getResearchDock();
-  const option = $("#research-commands-target").children.find((node) => String(node.value).startsWith("panel:display-1:0"));
-  $("#research-commands-target").value = option.value;
-  $("#research-commands-target").dispatchEvent({ type: "change" });
-  $("#research-commands-draft").value = "смотрит влево";
-  harness.script = [{
-    path: `${API}/visual/frames/display-1/panels/0/revision`,
-    body: (payload) => {
-      const next = readyVisual();
-      next.frames[0].panels[0].revision = {
-        draftMode: payload.mode,
-        draftInstruction: payload.instruction,
-        candidates: [],
-        summary: {
-          basis: { kind: "current-panel" },
-          changes: [{ property: "gaze", value: "screen-left" }],
-          preserved: [{ property: "expression", value: "calm" }],
-          notApplied: [],
-          providerCall: true,
-        },
-      };
-      return next;
-    },
-  }];
-  $("#research-commands-send").click();
-  await flush(16);
-  assert.equal($("#detail").dataset.view, "panel");
-  assert.equal($("#frame-dialogue").hidden, true);
-  assert.equal(panelSection(0).querySelector("textarea").value, "смотрит влево");
-  assert.equal(productRequests().some((entry) => /revision-candidate$|\/generate$/.test(entry.path)), false);
-  assert.equal(dock.getCommandTarget()?.panelIndex, 0);
+  assert.equal($("#research-commands-send"), null);
+  assert.equal(typeof page.getResearchDock().executeDockCommand, "undefined");
 });
 
 test("mode selection does not call the provider and the summary stays short", async () => {
@@ -358,34 +328,9 @@ test("scrolled Frame view enters Panel view at the top, including direct entry",
 
   panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
   $("#detail-scroll").scrollTop = 220;
-  const option = $("#research-commands-target").children.find((node) => String(node.value).startsWith("panel:display-1:0"));
-  $("#research-commands-target").value = option.value;
-  $("#research-commands-target").dispatchEvent({ type: "change" });
-  $("#research-commands-draft").value = "смотрит влево";
-  harness.script = [{
-    path: `${API}/visual/frames/display-1/panels/0/revision`,
-    body: (payload) => {
-      const next = readyVisual();
-      next.frames[0].panels[0].revision = {
-        draftMode: payload.mode,
-        draftInstruction: payload.instruction,
-        candidates: [],
-        summary: {
-          basis: { kind: "current-panel" },
-          changes: [{ property: "gaze", value: "screen-left" }],
-          preserved: [],
-          notApplied: [],
-          providerCall: true,
-        },
-      };
-      return next;
-    },
-  }];
-  $("#research-commands-send").click();
-  await flush(16);
-  assert.equal($("#detail").dataset.view, "panel");
-  assert.equal($("#detail-scroll").scrollTop, 0);
+  assert.equal($("#research-commands-send"), null);
   assert.equal(providerAttempts().length, 0);
+  assert.equal($("#detail").dataset.view, "frame");
 });
 
 test("candidate generation stays in Panel view without jumping the detail scroll", async () => {

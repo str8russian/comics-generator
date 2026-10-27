@@ -576,18 +576,18 @@ test("confirm_material and stage_storyboard capture without submitted text", asy
   assert.equal(stagePair.terminal.outcome, "success");
 });
 
-test("structure_edit and global undo capture storyboard targets on product controls", async () => {
+function clickGlobalUndo() {
+  const undo = document.querySelector("#global-undo");
+  undo.disabled = false;
+  undo.hidden = false;
+  undo.dispatchEvent({ type: "click" });
+}
+
+test("global undo captures a storyboard target on the product control", async () => {
   await ensurePage();
   page.setResearchVisualState(readyVisual());
-  document.querySelector("#structure-instruction").value = "сделай кадры плотнее";
-  document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const edit = researchPair("structure_edit");
-  assert.equal(edit.start.submittedText, "сделай кадры плотнее");
-  assert.equal(edit.start.commandTarget.kind, "storyboard");
-  assert.equal(edit.start.surface, "product_control");
-  assert.equal(edit.terminal.outcome, "success");
-
+  assert.equal(document.querySelector("#structure-instruction"), null);
+  assert.equal(document.querySelector("#structure-edit-form"), null);
   researchPosts.length = 0;
   assert.equal(document.querySelector("#undo-structure"), null);
   document.querySelector("#global-undo").disabled = false;
@@ -893,29 +893,16 @@ test("cast_edit covers all editKind × castPhase combinations with value-only ed
   await runSpeaker("material", "Дуров");
 });
 
-test("structure_edit research text keeps exact whitespace while product still receives trimmed instruction", async () => {
+test("removed structure instruction cannot submit a storyboard edit", async () => {
   await ensurePage();
-  productPosts.length = 0;
-  researchPosts.length = 0;
   page.setResearchVisualState(readyVisual());
-  const exact = "  сделай кадры плотнее\n  ";
-  document.querySelector("#structure-instruction").value = exact;
-  document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const edit = researchPair("structure_edit");
-  assert.equal(edit.start.submittedText, exact);
-  assert.notEqual(edit.start.submittedText, exact.trim());
-  const product = productPosts.find((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit");
-  assert.ok(product);
-  assert.equal(product.body.instruction, exact.trim());
-
-  researchPosts.length = 0;
   productPosts.length = 0;
-  document.querySelector("#structure-instruction").value = "   \n\t  ";
-  document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(researchPosts.length, 0);
-  assert.equal(productPosts.filter((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit").length, 0);
+  researchPosts.length = 0;
+  assert.equal(document.querySelector("#structure-tools"), null);
+  assert.equal(document.querySelector("#structure-instruction"), null);
+  assert.equal(document.querySelector("#structure-edit-form"), null);
+  assert.equal(productPosts.some((entry) => String(entry.path).endsWith("/visual/storyboard/edit")), false);
+  assert.equal(researchStarts("structure_edit").length, 0);
 });
 
 test("failed cast save never claims cast_edit success terminal", async () => {
@@ -976,8 +963,7 @@ test("navigation after start does not relabel terminal; incomplete startSnapshot
     }
     return original(url, init);
   };
-  document.querySelector("#structure-instruction").value = "snapshotted instruction";
-  document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+  clickGlobalUndo();
   page.setResearchDetailState([{
     id: "display-99",
     structureFrameId: "structure-99",
@@ -987,8 +973,8 @@ test("navigation after start does not relabel terminal; incomplete startSnapshot
   const terminal = researchPosts.find((event) => event.eventKind === "action_terminal");
   assert.ok(terminal);
   assert.ok(terminal.startSnapshot);
-  assert.equal(terminal.startSnapshot.submittedText, "snapshotted instruction");
-  assert.equal(terminal.startSnapshot.semanticAction, "structure_edit");
+  assert.equal(terminal.startSnapshot.submittedText, null);
+  assert.equal(terminal.startSnapshot.semanticAction, "storyboard_undo");
   assert.equal(terminal.startSnapshot.commandTarget.kind, "storyboard");
   assert.notEqual(terminal.startSnapshot.context?.displayFrameId, "display-99");
   fetchImpl = original;
@@ -1087,10 +1073,9 @@ test("T028 product success with failed terminal research write reports local evi
       }
       return original(url, init);
     };
-    document.querySelector("#structure-instruction").value = "правка при сбое evidence";
-    document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    clickGlobalUndo();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit"));
+    assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo"));
     assert.equal(startPosts, 1);
     assert.equal(terminalPosts, 1);
     assert.equal(researchPosts.some((event) => (
@@ -1296,8 +1281,7 @@ test("T028 incomplete startSnapshot terminal carries evidenceIncomplete and null
       }
       return original(url, init);
     };
-    document.querySelector("#structure-instruction").value = "incomplete evidence path";
-    document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    clickGlobalUndo();
     await new Promise((resolve) => setTimeout(resolve, 20));
     const terminal = researchPosts.find((event) => event.eventKind === "action_terminal");
     assert.ok(terminal?.startSnapshot);
@@ -1347,15 +1331,14 @@ test("product_control start evidence save failure while product pending uses sta
           },
         });
       }
-      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit") {
+      if (path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo") {
         productPosts.push({ path, method: init.method ?? "POST", body: init.body ? JSON.parse(init.body) : null });
         await editPending;
         return jsonResponse(200, readyVisual({ canUndo: true }));
       }
       return original(url, init);
     };
-    document.querySelector("#structure-instruction").value = "правка при сбое start";
-    document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    clickGlobalUndo();
 
     let pending = null;
     let running = null;
@@ -1377,7 +1360,7 @@ test("product_control start evidence save failure while product pending uses sta
     assert.equal(/выполнен|успех/i.test(startFail.label), false);
     assert.equal(startPosts, 1);
     assert.equal(terminalPosts, 0);
-    assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit"));
+    assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo"));
 
     resolveEdit();
     for (let i = 0; i < 40; i += 1) {
@@ -1435,10 +1418,9 @@ test("product_control terminal evidence save failure after product success keeps
       }
       return original(url, init);
     };
-    document.querySelector("#structure-instruction").value = "правка при сбое terminal";
-    document.querySelector("#structure-edit-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    clickGlobalUndo();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/edit"));
+    assert.ok(productPosts.some((entry) => entry.path === "/api/projects/00000000-0000-4000-8000-000000000001/visual/storyboard/undo"));
     assert.equal(startPosts, 1);
     assert.equal(terminalPosts, 1);
     assert.ok(correlationId);
@@ -1456,162 +1438,30 @@ test("product_control terminal evidence save failure after product success keeps
   }
 });
 
-function commandSelectOptions() {
-  const select = document.querySelector("#research-commands-target");
-  return [...(select?.children || [])].map((child) => ({
-    value: child.value,
-    text: child.textContent,
-  }));
-}
-
-function panelCommandOptions() {
-  return commandSelectOptions().filter((option) => String(option.value || "").startsWith("panel:"));
-}
-
-async function openReadyDetailViaUi(page, frameIndex = 0) {
-  page.setResearchVisualState(readyVisual({
-    frames: readyVisual().frames.map((frame, index) => ({
-      ...frame,
-      id: `display-${index + 1}`,
-      visualReady: true,
-    })),
-  }), -1);
-  // Prefer explicit open seam when present; otherwise use open-last for sole frame.
-  if (typeof page.openResearchDetail === "function") {
-    page.openResearchDetail(frameIndex);
-  } else {
-    document.querySelector("#open-last").hidden = false;
-    document.querySelector("#open-last").dispatchEvent({ type: "click" });
+test("removed command surface cannot send a product or research call", async () => {
+  const page = await ensurePage();
+  const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  for (const id of [
+    "research-commands",
+    "research-commands-target",
+    "research-commands-draft",
+    "research-commands-send",
+    "research-commands-history",
+    "structure-instruction",
+  ]) {
+    assert.equal(html.includes(`id="${id}"`), false, id);
+    assert.equal(document.querySelector(`#${id}`), null, id);
   }
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(document.querySelector("#detail").open, true);
-}
-
-test("detail close clears last-open-frame panel options and selected panel target", async () => {
-  const page = await ensurePage();
-  await openReadyDetailViaUi(page, 0);
-  const dock = page.getResearchDock();
-  assert.ok(panelCommandOptions().length >= 1, "open detail should expose panel options");
-
-  const panel = panelCommandOptions()[0];
-  document.querySelector("#research-commands-target").value = panel.value;
-  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
-  assert.equal(dock.getCommandTarget()?.kind, "panel");
-  document.querySelector("#research-commands-draft").value = "черновик команды остаётся";
-
-  document.querySelector("#close-detail").dispatchEvent({ type: "click" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(document.querySelector("#detail").open, false);
-  assert.equal(panelCommandOptions().length, 0);
-  assert.equal(document.querySelector("#research-commands-target").value, "");
-  assert.equal(dock.getCommandTarget(), null);
-  assert.match(document.querySelector("#research-commands-target-label").textContent, /не выбрано|Выберите/i);
-  assert.equal(document.querySelector("#research-commands-draft").value, "черновик команды остаётся");
-  assert.ok(commandSelectOptions().some((option) => option.value === "storyboard"));
-});
-
-test("closed-detail panel send makes zero product and research calls", async () => {
-  const page = await ensurePage();
-  await openReadyDetailViaUi(page, 0);
-  const panel = panelCommandOptions()[0];
-  document.querySelector("#research-commands-target").value = panel.value;
-  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
-  document.querySelector("#research-commands-draft").value = "после закрытия не вызывать";
-
-  document.querySelector("#close-detail").dispatchEvent({ type: "click" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  researchPosts.length = 0;
-  productPosts.length = 0;
-  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.equal(productPosts.filter((post) => /\/panels\/\d+\/generate$/.test(post.path)).length, 0);
-  assert.equal(researchPosts.filter((event) => event.eventKind === "action_start" || event.eventKind === "action_terminal").length, 0);
-  assert.equal(document.querySelector("#research-commands-draft").value, "после закрытия не вызывать");
-  assert.match(document.querySelector("#research-commands-status")?.textContent || "", /Выберите действие|не выполнены/i);
-});
-
-test("dock panel generation forwards only the dock correlation", async () => {
-  const page = await ensurePage();
-  await openReadyDetailViaUi(page, 0);
-  const panel = panelCommandOptions()[0];
-  document.querySelector("#research-commands-target").value = panel.value;
-  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
-  document.querySelector("#research-commands-draft").value = "переделай из дока";
-  researchPosts.length = 0;
-  productPosts.length = 0;
-  document.querySelector("#research-commands-send").dispatchEvent({ type: "click" });
-  const started = Date.now();
-  let start = null;
-  let product = null;
-  while (Date.now() - started < 1000) {
-    start = researchPosts.find((event) => event.eventKind === "action_start" && event.semanticAction === "panel_revision_open");
-    product = productPosts.find((entry) => /\/panels\/\d+\/revision$/.test(entry.path));
-    if (start && product) break;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  assert.ok(start?.correlationId);
-  assert.equal(start.surface, "dock_commands");
-  assert.equal(product.body.correlationId, start.correlationId);
-  assert.equal(product.body.instruction, "переделай из дока");
-  assert.equal(product.body.projectId, undefined);
-  assert.equal(product.body.frameId, undefined);
-  assert.equal(product.body.panelGenerationId, undefined);
-});
-
-test("closed detail stays panel-empty across visual refresh", async () => {
-  const page = await ensurePage();
-  await openReadyDetailViaUi(page, 0);
-  assert.ok(panelCommandOptions().length >= 1);
-  document.querySelector("#close-detail").dispatchEvent({ type: "click" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(panelCommandOptions().length, 0);
-
-  // Retain navigation index while dialog stays closed, then refresh visual state.
   page.setResearchVisualState(readyVisual(), 0);
-  assert.equal(document.querySelector("#detail").open, false);
-  assert.equal(panelCommandOptions().length, 0);
-});
-
-test("reopening detail repopulates current-frame panels without auto-selecting prior panel", async () => {
-  const page = await ensurePage();
-  await openReadyDetailViaUi(page, 0);
-  const firstPanel = panelCommandOptions()[0];
-  document.querySelector("#research-commands-target").value = firstPanel.value;
-  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
-  assert.equal(page.getResearchDock().getCommandTarget()?.kind, "panel");
-
+  assert.equal(typeof page.getResearchDock().executeDockCommand, "undefined");
+  assert.equal(typeof page.getResearchDock().setAvailableTargets, "undefined");
+  assert.equal(typeof page.getResearchDock().selectCommandTarget, "undefined");
+  productPosts.length = 0;
+  researchPosts.length = 0;
   document.querySelector("#close-detail").dispatchEvent({ type: "click" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(page.getResearchDock().getCommandTarget(), null);
-
-  await openReadyDetailViaUi(page, 0);
-  assert.ok(panelCommandOptions().length >= 1);
-  assert.ok(panelCommandOptions().some((option) => /панель/i.test(option.text)));
-  assert.equal(document.querySelector("#research-commands-target").value, "");
-  assert.equal(page.getResearchDock().getCommandTarget(), null);
-  assert.match(document.querySelector("#research-commands-target-label").textContent, /не выбрано|Выберите/i);
-});
-
-test("storyboard selection remains sticky across detail close and reopen", async () => {
-  const page = await ensurePage();
-  await openReadyDetailViaUi(page, 0);
-  document.querySelector("#research-commands-target").value = "storyboard";
-  document.querySelector("#research-commands-target").dispatchEvent({ type: "change" });
-  assert.equal(page.getResearchDock().getCommandTarget()?.kind, "storyboard");
-
-  document.querySelector("#close-detail").dispatchEvent({ type: "click" });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(page.getResearchDock().getCommandTarget()?.kind, "storyboard");
-  assert.equal(document.querySelector("#research-commands-target").value, "storyboard");
-  assert.equal(panelCommandOptions().length, 0);
-
-  await openReadyDetailViaUi(page, 0);
-  assert.equal(page.getResearchDock().getCommandTarget()?.kind, "storyboard");
-  assert.equal(document.querySelector("#research-commands-target").value, "storyboard");
-  assert.ok(panelCommandOptions().length >= 1);
+  assert.equal(productPosts.filter((entry) => /\/panels\/\d+\/generate$|\/revision$|\/storyboard\/edit$/.test(entry.path)).length, 0);
+  assert.equal(researchPosts.filter((event) => event.surface === "dock_commands").length, 0);
 });
 
 function placementVisual() {

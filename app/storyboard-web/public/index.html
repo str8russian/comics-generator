@@ -71,20 +71,6 @@
     <!-- /stage-view -->
     <section id="stage-view-storyboard" class="stage-view" aria-labelledby="stage-header-storyboard" hidden>
       <div id="stage-header-storyboard" class="stage-header"></div>
-      <section id="structure-tools" class="workspace-panel" hidden aria-labelledby="structure-tools-title">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Текстовая раскадровка</p>
-            <h2 id="structure-tools-title">Что изменить в кадрах?</h2>
-          </div>
-        </div>
-        <p class="helper">Укажите номера кадров обычным текстом. Замена реплики делается в Редакторе кадра. Эта команда не меняет текст источника.</p>
-        <form id="structure-edit-form" class="instruction-form">
-          <textarea id="structure-instruction" placeholder="Например: сделай кадры 8 и 9 split screen, сохрани реплики и добавь слушающего персонажа"></textarea>
-          <button type="submit">Применить к раскадровке</button>
-        </form>
-        <p id="structure-result" class="result-line" hidden></p>
-      </section>
     </section>
     <!-- /stage-view -->
     <section id="stage-view-characters" class="stage-view" aria-labelledby="stage-header-characters" hidden>
@@ -123,7 +109,6 @@
     <!-- /stage-view -->
     <div id="frames-area" class="frames-area" hidden>
       <div class="frames-main">
-        <p id="anchor-note" class="anchor-note">Демонстрация с базовыми образами персонажей; эмоции и позы пока не меняются между кадрами.</p>
         <section id="storyboard" class="grid" aria-label="Кадры раскадровки"></section>
       </div>
       <aside id="frame-inspector" class="frame-inspector" aria-label="Выбранный кадр" aria-live="polite"></aside>
@@ -167,38 +152,18 @@
     </div>
   </main>
   <div id="research-dock-host">
-    <aside id="research-dock" class="research-dock" aria-label="Панель команд">
+    <aside id="research-dock" class="research-dock" aria-label="Заметки">
       <button
         type="button"
         id="research-dock-resize"
         class="research-dock-resize"
-        aria-label="Изменить размер панели команд"
+        aria-label="Изменить размер заметок"
         title="Перетащите, чтобы изменить размер"
       ></button>
       <button type="button" id="research-dock-toggle" class="research-dock-toggle" aria-expanded="true" aria-controls="research-dock-body">
-        Команды ▾
+        Заметки ▾
       </button>
-      <p id="research-commands-scope" class="research-commands-scope" aria-live="polite">Область: не выбрана</p>
       <div id="research-dock-body" class="research-dock-body">
-        <section id="research-commands" class="research-region" aria-labelledby="research-commands-title">
-          <h2 id="research-commands-title">Команды</h2>
-          <p id="research-commands-target-label" class="research-helper">Действие не выбрано</p>
-          <label class="research-label" for="research-commands-target">Действие (ограничивает выполнение)</label>
-          <select id="research-commands-target" class="research-commands-target"></select>
-          <p id="research-commands-target-hint" class="research-helper">
-            Панели в списке относятся к открытому кадру. Выбор панели в редакторе панели выбирает её и здесь.
-          </p>
-          <form id="research-commands-form" class="research-commands-form">
-            <label class="research-label" for="research-commands-draft">Команда</label>
-            <textarea id="research-commands-draft" class="research-commands-draft" rows="3"></textarea>
-            <button type="button" id="research-commands-send">Отправить команду</button>
-          </form>
-          <p id="research-commands-status" class="research-status" hidden></p>
-          <p id="research-commands-unavailable" class="research-helper" hidden>
-            Нет поддерживаемой цели команды. Доступны только правка раскадровки и явно выбранная панель.
-          </p>
-          <ol id="research-commands-history" class="research-history" aria-live="polite"></ol>
-        </section>
         <section id="research-notes" class="research-region" aria-labelledby="research-notes-title">
           <h2 id="research-notes-title">Заметки</h2>
           <label class="research-label" for="research-notes-draft">Заметка</label>

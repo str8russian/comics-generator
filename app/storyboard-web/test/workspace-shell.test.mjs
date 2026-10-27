@@ -170,11 +170,11 @@ test("stage navigation switches the visible view and the shared frame grid", asy
   }
   const sections = {
     "stage-view-story": ["draft-form", "material-review"],
-    "stage-view-storyboard": ["structure-tools"],
+    "stage-view-storyboard": ["stage-header-storyboard"],
     "stage-view-characters": ["characters-workspace"],
     "stage-view-visual": ["visual-heading", "visual-approval", "open-last"],
     "stage-view-video": ["ready-for-video", "render-panel"],
-    "frames-area": ["anchor-note", "storyboard", "frame-inspector"],
+    "frames-area": ["storyboard", "frame-inspector"],
   };
   for (const [view, ids] of Object.entries(sections)) {
     const start = html.indexOf(`id="${view}"`);
@@ -220,12 +220,16 @@ test("cards are content-first: one Открыть, no assembly, generation or as
     assert.equal(node.getAttribute("tabindex"), "0");
   }
   const first = textOf(card(0));
-  for (const piece of ["Кадр 1", "split2", "Реплика", "Путин", "Привет", "2.4 с"]) assert.ok(first.includes(piece), piece);
+  assert.match(first, /Кадр 1/);
+  assert.equal(card(0).querySelector(".card-meta"), null);
+  assert.equal(card(0).querySelector(".card-line"), null);
+  assert.equal(card(0).querySelector(".card-status"), null);
+  assert.equal(card(0).querySelector(".card-duration"), null);
+  assert.equal(card(0).querySelector(".panel-basis"), null);
   assert.match(textOf(card(1)), /Без реплики/);
+  assert.equal(card(1).querySelector(".card-line"), null);
   assert.match(textOf(card(2)), /Текстовая карточка/);
   assert.match(textOf(card(2)), /Пауза/);
-  const basis = card(0).querySelectorAll(".panel-basis").map((node) => node.dataset.basis);
-  assert.deepEqual(basis, ["generation", "upload"]);
 });
 
 test("card body selection is keyboard accessible and visibly marked", async () => {
@@ -250,7 +254,8 @@ test("card body selection is keyboard accessible and visibly marked", async () =
 test("inspector groups the frame vocabulary into the accepted sections", async () => {
   await reset();
   selectCard(0);
-  for (const name of ["header", "dialogue", "timing", "frame", "more"]) assert.ok(inspectorSection(name), name);
+  for (const name of ["header", "timing", "frame", "more"]) assert.ok(inspectorSection(name), name);
+  assert.equal(inspectorSection("dialogue"), null);
   const header = textOf(inspectorSection("header"));
   assert.match(header, /Кадр 1/);
   assert.match(header, /split2/);
@@ -265,11 +270,8 @@ test("inspector groups the frame vocabulary into the accepted sections", async (
   assert.equal(more.open, false);
   for (const label of ["Поменять панели", "Удалить панель 1.1", "Удалить панель 1.2"]) assert.ok(buttonNamed(more, label), label);
   assert.equal(more.querySelectorAll("button").filter((node) => node.textContent === "Выбрать изображение…").length, 2);
-  const modes = inspectorSection("dialogue").querySelectorAll("button").filter((node) => node.dataset.dialogueMode);
-  assert.deepEqual(modes.map((node) => node.textContent), ["Реплика", "Молчание", "Без реплики"]);
-  assert.equal(modes[0].getAttribute("aria-pressed"), "true");
   selectCard(2);
-  assert.match(textOf(inspectorSection("dialogue")), /нет реплики/i);
+  assert.equal(inspectorSection("dialogue"), null);
   assert.ok(inspectorSection("more").querySelector("textarea"));
 });
 
@@ -322,22 +324,6 @@ for (const [name, run] of Object.entries({
     const input = document.created.filter((node) => node.tagName === "INPUT" && node.type === "file").at(-1);
     input.files = [{ name: "x.png", type: "image/png", size: 10 }];
     input.dispatchEvent({ type: "change" });
-  },
-  "setFrameDialogue.silent": () => {
-    selectCard(0);
-    inspectorSection("dialogue").querySelectorAll("button").find((node) => node.dataset.dialogueMode === "silent").click();
-  },
-  "setFrameDialogue.speaker": () => {
-    selectCard(0);
-    inspectorSection("dialogue").querySelectorAll("button").find((node) => node.dataset.speakerPanelId === "p-1b").click();
-  },
-  "setFrameDialogue.hidden": () => {
-    selectCard(0);
-    inspectorSection("dialogue").querySelectorAll("button").find((node) => node.dataset.dialogueMode === "hidden").click();
-  },
-  "setFrameDialogue.singleSilent": () => {
-    selectCard(3);
-    inspectorSection("dialogue").querySelectorAll("button").find((node) => node.dataset.dialogueMode === "silent").click();
   },
   "frameGenerate": () => { selectCard(3); inspectorButton("Создать изображения кадра").click(); },
 })) {
@@ -423,13 +409,15 @@ test("parity · inspector panel shortcut opens the Panel Editor on that panel fo
   });
 });
 
-test("inspector spoken mode without a stored line asks for the Frame Editor and sends nothing", async () => {
+test("Frame Editor spoken mode without a stored line asks for text and sends nothing", async () => {
   await reset();
-  selectCard(1);
-  inspectorSection("dialogue").querySelectorAll("button").find((node) => node.dataset.dialogueMode === "spoken").click();
+  openCard(1);
+  resetRecorder();
+  setEditorMode("spoken");
+  $("#frame-dialogue-save").click();
   await flush(8);
   assert.deepEqual(mutatingRequests(), []);
-  assert.match(textOf(inspectorSection("dialogue")), /Введите текст реплики/);
+  assert.match($("#frame-dialogue-error").textContent, /Введите текст реплики/);
 });
 
 test("visual-only frame generation appears only under the existing conditions", async () => {
@@ -568,68 +556,38 @@ test("basis label marks a base character portrait as intentional", async () => {
   const frames = parityFrames();
   const demo = { ...frames[3], panels: [{ id: "p-4", description: "Путин говорит", subject: "Путин", assetId: null }] };
   await reset(readyVisual({ frames: [demo] }));
-  const chip = card(0).querySelector(".panel-basis");
-  assert.equal(chip.dataset.basis, "base-portrait");
-  assert.match(chip.textContent, /Базовый образ/);
+  assert.equal(card(0).querySelector(".panel-basis"), null);
+  selectCard(0);
+  const inspectorChip = inspectorSection("more").querySelector(".panel-basis");
+  assert.equal(inspectorChip.dataset.basis, "base-portrait");
+  assert.match(inspectorChip.textContent, /Базовый образ/);
   openCard(0);
   assert.match(textOf(panelSection(0)), /Базовый образ персонажа/);
 });
 
-test("dock Commands scope is always visible and follows explicit panel selection only", async () => {
+test("the dock is Notes and Operations, and selecting a panel does not expose a command target", async () => {
   await reset();
-  const scopeAt = html.indexOf('id="research-commands-scope"');
-  assert.ok(scopeAt > html.indexOf('id="research-dock-toggle"'));
-  assert.ok(scopeAt < html.indexOf('id="research-dock-body"'));
-  const scope = $("#research-commands-scope");
+  assert.equal($("#research-commands"), null);
+  assert.equal($("#research-commands-send"), null);
+  assert.equal(html.includes('id="research-commands"'), false);
   const dock = page.getResearchDock();
-  assert.equal(scope.textContent, "Область: не выбрана");
+  assert.equal(typeof dock.getCommandTarget, "undefined");
+  assert.equal(typeof dock.setAvailableTargets, "undefined");
   selectCard(0);
-  assert.equal(dock.getCommandTarget(), null);
-  assert.equal(scope.textContent, "Область: не выбрана");
-  $("#research-commands-target").value = "storyboard";
-  $("#research-commands-target").dispatchEvent({ type: "change" });
-  assert.equal(scope.textContent, "Область: вся раскадровка");
-
   openCard(0);
-  assert.equal(dock.getCommandTarget()?.kind, "storyboard");
   $("#frame-panel-actions").querySelectorAll("button")[1].click();
-  assert.equal(dock.getCommandTarget()?.kind, "panel");
-  assert.equal(dock.getCommandTarget()?.panelIndex, 1);
-  assert.equal(dock.getCommandTarget()?.displayFrameId, "display-1");
-  assert.equal(scope.textContent, "Область: панель 1.2 · Дуров");
-  assert.equal($("#research-commands-target").value.startsWith("panel:display-1:1"), true);
-
-  resetRecorder();
-  $("#research-commands-draft").value = "сделай светлее";
-  $("#research-commands-send").click();
-  await flush(16);
-  const viaScope = productRequests().filter((entry) => entry.method !== "GET");
-  assert.equal(viaScope.length, 1);
-
+  await flush(4);
+  assert.equal(productRequests().some((entry) => entry.path.includes("/revision") && entry.method !== "GET"), false);
+  assert.equal($("#research-commands-send"), null);
   $("#detail").close();
-  await reset();
-  openCard(0);
-  const option = $("#research-commands-target").children.find((node) => String(node.value).startsWith("panel:display-1:1"));
-  $("#research-commands-target").value = option.value;
-  $("#research-commands-target").dispatchEvent({ type: "change" });
-  $("#research-commands-draft").value = "сделай светлее";
-  $("#research-commands-send").click();
-  await flush(16);
-  const viaSelect = productRequests().filter((entry) => entry.method !== "GET");
-  assert.deepEqual(viaScope.map(requestSignature), viaSelect.map(requestSignature));
-  assert.notEqual(viaScope[0].body.correlationId, viaSelect[0].body.correlationId);
-  assert.equal(viaSelect[0].body.correlationId, researchStarts().find((event) => event.semanticAction === "panel_revision_open")?.correlationId);
-
-  $("#detail").close();
-  await flush(2);
-  assert.equal(scope.textContent, "Область: не выбрана");
 });
 
 test("Notes and Operations stay separate dock parts", () => {
-  for (const id of ["research-commands", "research-notes", "research-operations", "research-notes-send", "research-commands-send", "research-dock-toggle", "research-dock-resize"]) {
+  for (const id of ["research-notes", "research-operations", "research-notes-send", "research-dock-toggle", "research-dock-resize"]) {
     assert.ok($(`#${id}`), id);
   }
-  assert.notEqual($("#research-notes-draft"), $("#research-commands-draft"));
+  assert.equal($("#research-commands-draft"), null);
+  assert.match($("#research-dock-toggle").textContent, /Заметки/);
 });
 
 test("navigation, selection, inspector and editors make no mutation or provider call", async () => {
