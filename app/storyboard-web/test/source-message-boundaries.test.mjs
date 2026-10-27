@@ -39,6 +39,10 @@ const env = {
   CONTEST_MODEL: "test-model",
 };
 
+function speakerSurface(quote) {
+  return [{ id: "speaker-surface", quote, role: "speaker-label" }];
+}
+
 function explicit(id, label, quote, segmentIds) {
   return {
     id,
@@ -158,12 +162,36 @@ test("keeps each labelled source line when interpretation groups the final three
 });
 
 test("keeps adjacent explicit messages distinct for both speakers and ellipses", () => {
-  const different = anchorDraft("Аня: да\nБорис: нет", [
-    explicit("merged", "Аня", "Аня: да\nБорис: нет", ["seg-0", "seg-1"]),
-  ]);
+  const differentDraft = "Аня: да\nБорис: нет";
+  const differentItem = [explicit("merged", "Аня", differentDraft, ["seg-0", "seg-1"])];
+  const unevidenced = anchorDraft(differentDraft, differentItem);
+  assert.equal(unevidenced.ok, true);
+  assert.equal(unevidenced.sourceItems.length, 1);
+  assert.equal(unevidenced.sourceItems[0].speakerLabel, "Аня");
+  assert.equal(unevidenced.sourceItems[0].text, "да\nБорис: нет");
+
+  const different = anchorDraft(differentDraft, differentItem, speakerSurface("Борис"));
   assert.equal(different.ok, true);
   assert.deepEqual(different.sourceItems.map((item) => item.text), ["да", "нет"]);
   assert.deepEqual(different.sourceItems.map((item) => item.speakerLabel), ["Аня", "Борис"]);
+  const differentStaged = buildChecked(differentDraft, different.sourceItems, {
+    frames: different.sourceItems.map((item, index) => ({
+      id: `d${index}`,
+      layout: "single",
+      origin: "source",
+      panels: [{ description: `Кадр ${index + 1}` }],
+      sourceItemId: item.id,
+      sourceRole: "utterance",
+      speakerPanel: 0,
+    })),
+    review: [],
+  });
+  assert.equal(differentStaged.ok, true);
+  assert.deepEqual(differentStaged.body.frames.map((frame) => frame.dialogue), ["да", "нет"]);
+  assert.deepEqual(
+    differentStaged.body.frames.map((frame) => frame.sourceItemId),
+    different.sourceItems.map((item) => item.id),
+  );
 
   const same = anchorDraft("Аня: первый\nАня: второй", [
     explicit("merged", "Аня", "Аня: первый\nАня: второй", ["seg-0", "seg-1"]),
@@ -181,14 +209,14 @@ test("keeps adjacent explicit messages distinct for both speakers and ellipses",
 
   const tight = anchorDraft("Аня:да\r\nБорис:нет", [
     explicit("merged", "Аня", "Аня:да\r\nБорис:нет", ["seg-0", "seg-1"]),
-  ]);
+  ], speakerSurface("Борис"));
   assert.equal(tight.ok, true);
   assert.deepEqual(tight.sourceItems.map((item) => item.text), ["да", "нет"]);
   assert.deepEqual(tight.sourceItems.map((item) => item.speakerLabel), ["Аня", "Борис"]);
 
   const carried = anchorDraft("Аня: первая\nБорис: вторая\nещё", [
     explicit("merged", "Аня", "Аня: первая\nБорис: вторая\nещё", ["seg-0", "seg-1", "seg-2"]),
-  ]);
+  ], speakerSurface("Борис"));
   assert.equal(carried.ok, true);
   assert.deepEqual(carried.sourceItems.map((item) => item.text), ["первая", "вторая\nещё"]);
   assert.deepEqual(carried.sourceItems.map((item) => item.speakerLabel), ["Аня", "Борис"]);
@@ -310,5 +338,25 @@ test("keeps grouped explicit messages distinct when the label has punctuation or
       anchored.sourceItems.map((item) => item.id),
       label,
     );
+  }
+});
+
+test("keeps a colon inside a continuation when that prefix is not a speaker label", () => {
+  const cases = [
+    ["Аня: вот список", "первое: хлеб", "вот список\nпервое: хлеб"],
+    ["Аня: ссылка ниже", "https://example.com", "ссылка ниже\nhttps://example.com"],
+    ["Аня: уточнение", "время: 12:30", "уточнение\nвремя: 12:30"],
+  ];
+  for (const [first, second, spoken] of cases) {
+    const draft = `${first}\n${second}`;
+    const anchored = anchorDraft(draft, [
+      explicit("anya", "Аня", draft, ["seg-0", "seg-1"]),
+    ]);
+    assert.equal(anchored.ok, true, second);
+    assert.equal(anchored.sourceItems.length, 1, second);
+    assert.equal(anchored.sourceItems[0].speakerLabel, "Аня", second);
+    assert.equal(anchored.sourceItems[0].text, spoken, second);
+    assert.equal(draft.slice(anchored.sourceItems[0].draftStart, anchored.sourceItems[0].draftEnd), draft, second);
+    assert.equal(anchored.sourceItems.some((item) => ["первое", "https", "время"].includes(item.speakerLabel)), false);
   }
 });

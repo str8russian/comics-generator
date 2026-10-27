@@ -168,25 +168,67 @@ function physicalLines(text) {
   return lines;
 }
 
-function explicitMessageLabel(line) {
-  const colon = line.indexOf(":");
-  if (colon <= 0) return null;
-  const label = line.slice(0, colon);
-  if (!hasSourceCharacter(label)) return null;
-  let message = line.slice(colon + 1);
-  if (message.startsWith(" ")) message = message.slice(1);
-  if (!hasSourceCharacter(message)) return null;
-  return label;
+function quoteOccurs(text, quote) {
+  if (typeof text !== "string" || typeof quote !== "string" || quote.length === 0 || quote.length > text.length) return false;
+  let from = 0;
+  while (from <= text.length - quote.length) {
+    const index = text.indexOf(quote, from);
+    if (index < 0) return false;
+    const end = index + quote.length;
+    if (isScalarBoundary(text, index) && isScalarBoundary(text, end)) return true;
+    from = index + 1;
+  }
+  return false;
 }
 
-function explicitMessageGroups(item) {
+function evidencedSpeakerLabels(draft, sourceItems, surfaceForms) {
+  const labels = [];
+  const seen = new Set();
+  const add = (label) => {
+    if (typeof label !== "string" || seen.has(label) || !hasSourceCharacter(label)) return;
+    seen.add(label);
+    labels.push(label);
+  };
+  if (Array.isArray(sourceItems)) {
+    for (const item of sourceItems) {
+      if (item && item.speakerStatus === "explicit") add(item.speakerLabel);
+    }
+  }
+  if (Array.isArray(surfaceForms)) {
+    for (const form of surfaceForms) {
+      if (!form || form.role !== "speaker-label" || !quoteOccurs(draft, form.quote)) continue;
+      add(form.quote);
+    }
+  }
+  labels.sort((left, right) => right.length - left.length);
+  return labels;
+}
+
+function messageAfterLabel(line, label) {
+  const spaced = `${label}: `;
+  if (line.startsWith(spaced)) return line.slice(spaced.length);
+  const bare = `${label}:`;
+  if (line.startsWith(bare)) return line.slice(bare.length);
+  return null;
+}
+
+function explicitMessageLabel(line, labels) {
+  for (const label of labels) {
+    const message = messageAfterLabel(line, label);
+    if (message == null || !hasSourceCharacter(message)) continue;
+    return label;
+  }
+  return null;
+}
+
+function explicitMessageGroups(item, labels) {
   if (!item || item.kind !== "utterance" || item.speakerStatus !== "explicit") return null;
   if (typeof item.sourceQuote !== "string") return null;
   if (!item.sourceQuote.includes("\n") && !item.sourceQuote.includes("\r")) return null;
   const lines = physicalLines(item.sourceQuote);
   const explicit = [];
   for (let index = 0; index < lines.length; index += 1) {
-    const label = explicitMessageLabel(item.sourceQuote.slice(lines[index].start, lines[index].end));
+    const label = explicitMessageLabel(item.sourceQuote.slice(lines[index].start, lines[index].end), labels);
     if (label) explicit.push({ index, label });
   }
   if (explicit.length < 2 || explicit[0].index !== 0) return null;
@@ -208,14 +250,14 @@ function takeSplitId(base, used) {
   return id;
 }
 
-function expandExplicitMessageItems(sourceItems) {
+function expandExplicitMessageItems(sourceItems, labels) {
   const used = new Set();
   for (const item of sourceItems) {
     if (item && typeof item.id === "string") used.add(item.id);
   }
   const expanded = [];
   for (const item of sourceItems) {
-    const groups = explicitMessageGroups(item);
+    const groups = explicitMessageGroups(item, labels);
     if (!groups) {
       expanded.push(item);
       continue;
@@ -265,11 +307,11 @@ function spokenText(item, slice) {
   return { ok: true, text, prefixLength };
 }
 
-export function anchorDraft(draftText, sourceItems) {
+export function anchorDraft(draftText, sourceItems, surfaceForms) {
   if (typeof draftText !== "string" || !Array.isArray(sourceItems)) {
     return settle([{ code: "invalid-anchor" }]);
   }
-  const items = expandExplicitMessageItems(sourceItems);
+  const items = expandExplicitMessageItems(sourceItems, evidencedSpeakerLabels(draftText, sourceItems, surfaceForms));
   const failures = [];
   const seenIds = new Set();
   for (const item of items) {

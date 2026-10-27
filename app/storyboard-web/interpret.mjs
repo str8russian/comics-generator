@@ -35,14 +35,14 @@ function surfaceFormsRejected(draft, value) {
   return false;
 }
 
-function anchorAcceptingUnresolved(draft, sourceItems) {
+function anchorAcceptingUnresolved(draft, sourceItems, surfaceForms) {
   const unresolvedIds = new Set();
   const adjusted = sourceItems.map((item) => {
     if (!item || item.speakerStatus !== "unresolved") return item;
     unresolvedIds.add(item.id);
     return { ...item, speakerStatus: "inferred", speakerLabel: item.speakerLabel || "speaker" };
   });
-  const anchored = anchorDraft(draft, adjusted);
+  const anchored = anchorDraft(draft, adjusted, surfaceForms);
   if (!anchored.ok) return anchored;
   return {
     ok: true,
@@ -95,8 +95,8 @@ export async function interpretDraft({ draft, env, fetchImpl, acceptUnresolved =
     };
   }
   const anchored = acceptUnresolved
-    ? anchorAcceptingUnresolved(draft, result.value.sourceItems)
-    : anchorDraft(draft, result.value.sourceItems);
+    ? anchorAcceptingUnresolved(draft, result.value.sourceItems, result.value.surfaceForms)
+    : anchorDraft(draft, result.value.sourceItems, result.value.surfaceForms);
   if (!anchored.ok) {
     return {
       ok: false,
