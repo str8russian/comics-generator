@@ -4,7 +4,7 @@
 
 Production contract for Feature 019. It brings the owner-accepted W1 information architecture (`DEC-070`) into the production storyboard page. One owner-operated browser checkpoint. This does not claim owner acceptance.
 
-The feature reorganizes the page. It adds no product capability. Every operation that was reachable before stays reachable, sends the same request to the same endpoint with the same JSON body, keeps its availability condition, research trace, provider behaviour, and Undo semantics. What changes is where controls live and how the page is navigated. Story reading and staging later gained a truthful pending boundary, described under **Story reading and staging**; that boundary does not change the request.
+The feature reorganizes the page. It adds no product capability. Every operation that was reachable before stays reachable, sends the same request to the same endpoint with the same JSON body, keeps its availability condition, research trace, provider behaviour, and Undo semantics, except the explicit metadata-replacement choice described below. What changes is where controls live and how the page is navigated. Story reading and staging later gained a truthful pending boundary, described under **Story reading and staging**; that boundary does not change the request. The current implementation still shows five stages in the order Story, Storyboard, Characters, Visual, Video. `DEC-081` is not implemented.
 
 ## Global header
 
@@ -48,9 +48,11 @@ While reading is pending the button reads **Разбираю черновик…
 
 ## Content-first frame cards
 
-An ordinary image or storyboard card shows **Кадр N**, the complete frame preview, and **Открыть**. It also shows the retained-image notice and outside-frame text when those values are present. Clicking the card body, or pressing Enter or Space on the focused card, selects the frame; the selected card is outlined and has `aria-current="true"`. Double-click also opens the Frame Editor.
+An ordinary image or storyboard card, including `single`, `split2`, and a manual image frame, keeps the complete 16:9 preview and does not show a top **Кадр N** heading. After the preview it may show one compact exceptional-status row. The card then ends with one row: **Кадр N** on the left and **Открыть** on the right. Exceptional statuses do not replace or displace either item. The card also shows the retained-image notice and outside-frame text when those values are present. Clicking the card body, or pressing Enter or Space on the focused card, selects the frame; the selected card is outlined and has `aria-current="true"`. Double-click and **Открыть** both open the Frame Editor.
 
-The card does not show a layout name, an ordinary **Реплика** badge or speaker, the ordinary **Текст** status, a panel-basis chip, a duration summary, or the spoken line repeated under the preview. A text card still shows **Текстовая карточка** and its own text.
+The card does not show a layout name, an ordinary **Реплика** badge or speaker, the ordinary **Текст** status, a panel-basis chip, a duration summary, or the spoken line repeated under the preview.
+
+A text card keeps its current content: the frame-number heading, **Текстовая карточка**, its stored text, its duration, and **Открыть**. This pass does not redesign text cards. Creating a new text card stays hidden; **Текстовая карточка после** is not in the reachable UI. Existing text-card data and operations stay.
 
 A card status appears only for an exceptional current fact:
 
@@ -58,7 +60,7 @@ A card status appears only for an exceptional current fact:
 - **Без реплики** when `dialogueMode` is explicitly `hidden`
 - **Ошибка генерации** when any current panel has persisted `generationStatus: "failed"`, including when a previous image is retained
 
-An ordinary spoken frame has no dialogue-mode status. A missing image without a failed generation is not labeled as an error. When both an exceptional dialogue mode and a generation failure apply, both stay visible, and the error is visually distinct from the neutral status. The timing editor stays in the inspector. Panel basis stays in the inspector and the Panel Editor.
+An ordinary spoken frame has no dialogue-mode status. A missing image without a failed generation is not labeled as an error. When both an exceptional dialogue mode and a generation failure apply, both stay visible on the status row, and the error is visually distinct from the neutral status. Duration for an ordinary image frame stays on the Frame Editor **Кадр** tab. Panel basis stays on that frame's panel tab.
 
 The preview is the complete 16:9 frame, including both split panels and the dialogue region. Its width is the card content box and its height keeps 16:9, on the desktop card and in the narrow layout. The preview stays inside the card border without a horizontal card scrollbar, and without cropping, clipping, or masking the frame. Resize follows the current content width. `FrameRenderer` geometry is unchanged; only the card's mounting scale follows that content box.
 
@@ -66,13 +68,21 @@ Cards contain no assembly, generation, or asset controls.
 
 ## Selection-driven inspector
 
-Selecting a card shows an inspector for that frame. With nothing selected it shows a short hint; with no frames it is hidden. Selection is in memory only.
+Selecting a card shows an inspector for that frame. With nothing selected it shows a short hint; with no frames it is hidden. Selection is in memory only. Selecting or clearing a frame makes no mutation and no provider call.
 
-- **Header:** frame number, layout, **Открыть редактор кадра**, **Дублировать кадр**, and a clear-selection button. The inspector has no dialogue section.
-- **Время:** the existing duration input.
-- **Кадр:** insert image frame after, insert text card after, move earlier, move later (disabled at the ends), delete frame, and the existing note for directing-beat segments.
-- **Ещё** (collapsed): add panel, swap panels, delete panel N.k with the existing speaker-transfer confirmation, the manual panel subject, the text-card text, and **Выбрать изображение…** with upload and the carry-metadata choice.
-- **Изображения:** **Создать изображения кадра** only under the former card condition (`allAnchorsApproved`, frame not ready, not a text or manual image frame), with the same busy text; plus one **Изображение панели N.k…** per panel, which opens the Frame Editor on that panel. No confirmation is added or removed.
+An ordinary image frame inspector contains only whole-frame context and structure operations:
+
+- **Кадр N** and the clear-selection control, whose accessible name is **Снять выбор**
+- **Дублировать кадр**
+- **Кадр с изображением после**
+- **Переместить кадр раньше** and **Переместить кадр позже**, disabled at the ends
+- **Удалить кадр**
+- the existing directing-beat segment note when those operations address the whole structural frame
+- the existing hint while the visual storyboard is still unavailable
+
+It has no dialogue section. It does not show **Выбран кадр**, a raw layout label, a generic summary status, **Открыть редактор кадра**, a **Время** section, panel add, swap, or delete, panel basis, ready-image controls, a manual subject selector, **Изображение панели N…**, or an empty **Ещё** or **Изображения** section. Duration and add, swap, and delete-panel stay on the Frame Editor **Кадр** tab. Basis, failure, lineage, framing, and the temporary image-revision entry stay on the matching panel tab. Ready-image assignment and the conditional manual subject live on that same panel tab. Opening the editor stays on every card as **Открыть**.
+
+A text card keeps its current inspector, including its header, duration, frame actions, and text. **Текстовая карточка после** stays absent. This pass does not redesign that path.
 
 After an operation, selection follows the stable structure address. After `duplicateFrame` the copy is selected and opened, as Feature 018 requires. If the selected frame disappears (delete, Undo of an insert or duplicate), the previous neighbour is selected, or nothing when the board is empty.
 
@@ -80,9 +90,11 @@ After an operation, selection follows the stable structure address. After `dupli
 
 The detail dialog remains the Frame Editor with its canvas, frame dialogue section, the utterance editor (still changing the draft, a known deferred issue), next-frame navigation, and generation status. **Реплика**, **Молчание**, **Без реплики**, speaker selection, frame-local dialogue text, validation, Add/Remove, save, Undo, and source-draft separation stay in this editor. The grid card and the inspector are not that editor.
 
-Its per-panel controls are grouped under **Редактор панели** with one tab per panel (**Панель 2.1 · Путин**). Opening a frame shows its first panel; selecting a tab or clicking a panel in the canvas switches the visible panel. Each panel has:
+Ready-image reuse and upload, and the conditional **Персонаж панели** selector, are on the matching panel tab of the Frame Editor. See Feature 023. They are not in the ordinary image-frame inspector. The explicit nonblank metadata-replacement dropdown is not shown. The reachable ready-image control sends `carryMetadata: false`. Automatic carry for a blank manual panel, and the server's explicit-carry compatibility, stay unchanged.
 
-- **Изображение:** the basis label, its lineage and failure text, the instruction field, and either **Создать эту панель** when the panel has no image or Feature 022's **Уточнить текущее** / **Новая вариация** draft when it already has one. The immediate **Переделать эту панель** action is no longer the owner path for a panel that already has an image.
+Its per-panel controls are grouped under the Frame Editor panel tab. Opening a frame can show a panel tab; selecting a tab or clicking a panel in the canvas switches the visible panel. Each panel has:
+
+- **Изображение:** the basis label, its lineage and failure text, **Выбрать изображение…**, the conditional **Персонаж панели** selector, the instruction field, and either **Создать эту панель** when the panel has no image or Feature 022's **Уточнить текущее** / **Новая вариация** draft when it already has one. The immediate **Переделать эту панель** action is no longer the owner path for a panel that already has an image.
 - **Кадрирование:** zoom, a visible drag-to-pan hint, mirror, and reset with Feature 010 semantics.
 - **Референсы:** the approved base anchor shown read-only as the identity reference, and the existing pose or expression photo input, labelled as affecting only this panel's pose, expression, and gaze (`DEC-032`). The photo is sent with the next generation of that panel, as before.
 
@@ -101,7 +113,7 @@ The label is derived only from persisted data:
 | no image, frame shown with base character portraits by `presentFrameForMount` | Базовый образ персонажа, with a hint that this is not a failed generation |
 | otherwise | Нет изображения |
 
-It appears in the inspector panel blocks and in the Panel Editor. It does not appear on overview cards. No speaking/listening state mapping is implemented. Feature 020 adds a separate neutral extraction label beside this basis label in the Panel Editor (`Фон отделён` or `Фон не отделён`); the basis label itself is unchanged.
+For an ordinary image frame it appears on that frame's panel tab. It does not appear in the ordinary image-frame inspector or on overview cards. No speaking/listening state mapping is implemented. Feature 020 adds a separate neutral extraction label beside this basis label in the Panel Editor (`Фон отделён` or `Фон не отделён`); the basis label itself is unchanged.
 
 ## Notes dock
 

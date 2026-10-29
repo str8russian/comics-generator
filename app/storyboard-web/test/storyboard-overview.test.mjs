@@ -92,6 +92,26 @@ function chromeText(node) {
   return node.children.map(chromeText).filter(Boolean).join(" ");
 }
 
+function assertImageFooter(index) {
+  const node = card(index);
+  const preview = node.querySelector(".frame-preview");
+  const foot = node.querySelector(".card-foot");
+  const children = [...node.children];
+  assert.equal(node.querySelector(".card-heading"), null, `card ${index + 1} has no top heading`);
+  assert.equal(children[0], preview, `card ${index + 1} preview is first`);
+  assert.ok(children.indexOf(preview) < children.indexOf(foot), `card ${index + 1} preview before footer`);
+  assert.equal(foot.querySelector(".card-frame-number")?.textContent, `Кадр ${index + 1}`);
+  assert.equal(foot.children.at(-1)?.textContent, "Открыть");
+  assert.equal(foot.querySelectorAll("button").length, 1);
+  assert.equal(foot.querySelector(".card-status"), null);
+  const statuses = node.querySelector(".card-statuses");
+  if (statuses) {
+    assert.ok(children.indexOf(statuses) > children.indexOf(preview));
+    assert.ok(children.indexOf(statuses) < children.indexOf(foot));
+    assert.equal(foot.contains(statuses), false);
+  }
+}
+
 function stageOf(index) {
   return card(index).querySelector(".frame-stage");
 }
@@ -145,10 +165,15 @@ test("ordinary spoken single and split2 cards keep only overview content", async
     assert.equal(node.querySelector(".panel-basis"), null, layout);
     assert.equal(node.querySelector(".card-duration"), null, layout);
     assert.equal(node.querySelector(".card-status"), null, layout);
+    assertImageFooter(index);
     for (const piece of [layout, "Реплика", "Катерина", "Илья", "Текст", "1.933", "58 кадров", "Нет изображения"]) {
       assert.equal(text.includes(piece), false, `${layout} still shows ${piece}`);
     }
   }
+  card(0).dispatchEvent({ type: "keydown", key: "Enter", target: card(0) });
+  assert.equal(card(0).getAttribute("aria-current"), "true");
+  assert.equal(card(0).classList.contains("is-selected"), true);
+  assert.equal(mutatingRequests().length, 0);
 });
 
 test("explicit silent and hidden cards show only those dialogue statuses", async () => {
@@ -162,6 +187,8 @@ test("explicit silent and hidden cards show only those dialogue statuses", async
   assert.equal(card(1).querySelector(".card-status").textContent, "Без реплики");
   assert.equal(textOf(card(1)).includes("Ещё строка"), false);
   assert.equal(textOf(card(0)).includes("Реплика"), false);
+  assertImageFooter(0);
+  assertImageFooter(1);
 });
 
 test("persisted generation failure is an overview error and a missing image is not", async () => {
@@ -200,6 +227,9 @@ test("persisted generation failure is an overview error and a missing image is n
   assert.equal(card(2).querySelector(".card-status"), null);
   assert.equal(card(2).querySelector(".card-status-error"), null);
   assert.equal(textOf(card(2)).includes("Ошибка"), false);
+  assertImageFooter(0);
+  assertImageFooter(1);
+  assertImageFooter(2);
 });
 
 test("text cards, open, selection, and outside-frame text stay available", async () => {
@@ -234,11 +264,43 @@ test("text cards, open, selection, and outside-frame text stay available", async
   card(0).dispatchEvent({ type: "dblclick" });
   assert.equal($("#detail").open, true);
   $("#detail").close();
-  const textCard = textOf(card(1));
-  assert.match(textCard, /Кадр 2/);
-  assert.match(textCard, /Текстовая карточка/);
-  assert.match(textCard, /Пауза на экране/);
-  assert.equal(buttonNamed(card(1), "Открыть") != null, true);
+  assertImageFooter(0);
+  const textNode = card(1);
+  assert.deepEqual([...textNode.children].map((node) => node.className), [
+    "card-heading",
+    "card-meta",
+    "frame-preview",
+    "card-line",
+    "card-foot",
+  ]);
+  assert.match(textOf(textNode.querySelector(".card-heading")), /Кадр 2/);
+  assert.match(textOf(textNode.querySelector(".card-heading")), /Текстовая карточка/);
+  assert.equal(textNode.querySelector(".card-frame-number"), null);
+  assert.match(textNode.querySelector(".card-meta").textContent, /Текстовая карточка/);
+  assert.match(textNode.querySelector(".card-line").textContent, /Пауза на экране/);
+  assert.match(textNode.querySelector(".card-duration").textContent, /1\.2 с · 36 кадров/);
+  assert.equal(buttonNamed(textNode, "Открыть") != null, true);
+  buttonNamed(textNode, "Открыть").dispatchEvent({ type: "click", stopPropagation() {} });
+  assert.equal($("#detail").open, true);
+  assert.equal($("#detail-frame-number").textContent, "Кадр 2");
+  $("#detail").close();
+  card(1).dispatchEvent({ type: "click" });
+  assert.match(textOf(inspector()), /Выбран кадр/);
+  assert.ok(buttonNamed(inspector(), "Открыть редактор кадра"));
+  assert.ok(inspector().querySelector("input.inspector-duration"));
+  assert.ok(inspector().querySelector("textarea.inspector-text-card"));
+  assert.equal(buttonNamed(inspector(), "Текстовая карточка после"), null);
+  assert.equal(mutatingRequests().length, 0);
+});
+
+test("a directing-beat image frame keeps the whole-frame segment note", async () => {
+  await show([imageFrame({ structureSegmentIndex: 1 })]);
+  card(0).dispatchEvent({ type: "click" });
+  assert.match(textOf(inspector()), /Это часть структурного кадра/);
+  assert.equal(inspector().querySelector("[data-inspector-section='more']"), null);
+  assert.equal(inspector().querySelector("[data-inspector-section='images']"), null);
+  assertImageFooter(0);
+  assert.equal(mutatingRequests().length, 0);
 });
 
 test("preview width and height follow the card content box for single and split2", async () => {
@@ -289,11 +351,19 @@ test("inspector has no dialogue block and the frame editor keeps dialogue save",
   assert.equal(textOf(inspector()).includes("Кто говорит"), false);
   assert.equal(textOf(inspector()).includes("Сохранённая реплика"), false);
   assert.equal(textOf(inspector()).includes("Черновик диалога не меняется"), false);
-  assert.ok(buttonNamed(inspector(), "Открыть редактор кадра"));
+  assert.equal(buttonNamed(inspector(), "Открыть редактор кадра"), null);
+  assert.equal(textOf(inspector()).includes("Выбран кадр"), false);
+  assert.equal(textOf(inspector()).includes("split2"), false);
+  assert.equal(inspector().querySelector("[data-inspector-section='timing']"), null);
+  assert.equal(inspector().querySelector("[data-inspector-section='more']"), null);
+  assert.equal(inspector().querySelector("[data-inspector-section='images']"), null);
+  assert.equal(inspector().querySelector("input"), null);
+  assert.equal(inspector().querySelector("select"), null);
+  assert.ok(buttonNamed(inspector(), "Дублировать кадр"));
   assert.equal(mutatingRequests().length, 0);
   assert.equal(researchStarts().length, 0);
 
-  buttonNamed(inspector(), "Открыть редактор кадра").dispatchEvent({ type: "click", stopPropagation() {} });
+  buttonNamed(card(0), "Открыть").dispatchEvent({ type: "click", stopPropagation() {} });
   buttonNamed($("#frame-editor-tabs"), "Диалог").dispatchEvent({ type: "click" });
   const editor = $("#frame-dialogue");
   assert.equal(editor.hidden, false);
@@ -398,7 +468,9 @@ test("historical command events stay in the operations projection and product co
 
   await show([imageFrame({ durationFrames: 36, minimumDurationFrames: 1 })]);
   card(0).dispatchEvent({ type: "click" });
-  const input = inspector().querySelector("input.inspector-duration");
+  assert.equal(inspector().querySelector("input.inspector-duration"), null);
+  buttonNamed(card(0), "Открыть").dispatchEvent({ type: "click", stopPropagation() {} });
+  const input = $("#frame-editor-frame").querySelector("#frame-duration-frames");
   input.value = "40";
   input.dispatchEvent({ type: "change" });
   await flush(8);

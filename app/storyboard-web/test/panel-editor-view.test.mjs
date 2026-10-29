@@ -61,8 +61,8 @@ async function reset(visual = readyVisual()) {
 }
 
 function openPanelFromInspector() {
-  const inspector = $("#frame-inspector");
-  buttonNamed(inspector, "Изображение панели 1.1…").click();
+  buttonNamed(cards()[0], "Открыть").dispatchEvent({ type: "click", stopPropagation() {} });
+  buttonNamed($("#frame-editor-tabs"), "Панель 1").click();
 }
 
 function createButton(section = panelSection(0)) {
@@ -109,7 +109,7 @@ function permittedRefineVisual() {
   return visual;
 }
 
-test("panel shortcut opens focused Panel view without frame dialogue", async () => {
+test("panel tab opens the panel view without frame dialogue", async () => {
   await reset();
   cards()[0].dispatchEvent({ type: "click" });
   openPanelFromInspector();

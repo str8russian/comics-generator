@@ -48,6 +48,10 @@ function inspectorSection(name) {
   return inspector().querySelectorAll("[data-inspector-section]").find((node) => node.dataset.inspectorSection === name) ?? null;
 }
 
+function panelChoose(index) {
+  return [...(panelSection(index)?.querySelectorAll("button") || [])].find((node) => node.textContent === "Выбрать изображение…") ?? null;
+}
+
 function setEditorMode(mode) {
   for (const radio of $("#frame-dialogue").querySelectorAll("input[name='frame-dialogue-mode']")) {
     radio.checked = radio.value === mode;
@@ -229,6 +233,27 @@ test("cards are content-first: one Открыть, no assembly, generation or as
     assert.equal(node.querySelectorAll("textarea").length, 0, `card ${index + 1} textareas`);
     assert.equal(node.querySelectorAll(".assembly").length, 0);
     assert.equal(node.getAttribute("tabindex"), "0");
+    if (index === 2) {
+      assert.ok(node.querySelector(".card-heading"));
+      assert.match(textOf(node.querySelector(".card-heading")), /Кадр 3/);
+      assert.equal(node.querySelector(".card-frame-number"), null);
+      assert.match(node.querySelector(".card-duration").textContent, /1\.2/);
+    } else {
+      const foot = node.querySelector(".card-foot");
+      const children = [...node.children];
+      const preview = node.querySelector(".frame-preview");
+      assert.equal(node.querySelector(".card-heading"), null, `card ${index + 1}`);
+      assert.equal(children[0], preview, `card ${index + 1}`);
+      assert.ok(children.indexOf(preview) < children.indexOf(foot));
+      assert.equal(foot.querySelector(".card-frame-number").textContent, `Кадр ${index + 1}`);
+      assert.equal(foot.children.at(-1).textContent, "Открыть");
+      const statuses = node.querySelector(".card-statuses");
+      if (statuses) {
+        assert.ok(children.indexOf(statuses) > children.indexOf(preview));
+        assert.ok(children.indexOf(statuses) < children.indexOf(foot));
+        assert.equal(foot.contains(statuses), false);
+      }
+    }
   }
   const first = textOf(card(0));
   assert.match(first, /Кадр 1/);
@@ -262,29 +287,60 @@ test("card body selection is keyboard accessible and visibly marked", async () =
   assert.equal($("#detail-frame-number").textContent, "Кадр 1");
 });
 
-test("inspector groups the frame vocabulary into the accepted sections", async () => {
+test("an ordinary image inspector keeps only whole-frame actions", async () => {
   await reset();
   selectCard(0);
-  for (const name of ["header", "timing", "frame", "more"]) assert.ok(inspectorSection(name), name);
   assert.equal(inspectorSection("dialogue"), null);
+  assert.equal(inspectorSection("timing"), null);
+  assert.equal(inspectorSection("more"), null);
+  assert.equal(inspectorSection("images"), null);
   const header = textOf(inspectorSection("header"));
   assert.match(header, /Кадр 1/);
-  assert.match(header, /split2/);
-  assert.ok(buttonNamed(inspectorSection("header"), "Открыть редактор кадра"));
-  assert.ok(buttonNamed(inspectorSection("header"), "Дублировать кадр"));
-  for (const label of ["Кадр с изображением после", "Переместить кадр раньше", "Переместить кадр позже", "Удалить кадр"]) {
+  assert.equal(header.includes("Выбран кадр"), false);
+  assert.equal(header.includes("split2"), false);
+  assert.equal(header.includes("кадр с изображением"), false);
+  assert.equal(buttonNamed(inspector(), "Открыть редактор кадра"), null);
+  assert.equal(inspector().querySelector(".card-status"), null);
+  assert.equal(inspector().querySelector("input"), null);
+  assert.equal(inspector().querySelector("select"), null);
+  assert.equal(inspector().querySelector(".panel-basis"), null);
+  for (const label of [
+    "Дублировать кадр",
+    "Кадр с изображением после",
+    "Переместить кадр раньше",
+    "Переместить кадр позже",
+    "Удалить кадр",
+  ]) {
     assert.ok(buttonNamed(inspectorSection("frame"), label), label);
   }
-  assert.equal(buttonNamed(inspectorSection("frame"), "Текстовая карточка после"), null);
+  assert.equal(buttonNamed(inspector(), "Текстовая карточка после"), null);
   assert.equal(buttonNamed(inspectorSection("frame"), "Переместить кадр раньше").disabled, true);
-  const more = inspectorSection("more");
-  assert.equal(more.tagName, "DETAILS");
-  assert.equal(more.open, false);
-  for (const label of ["Поменять панели", "Удалить панель 1.1", "Удалить панель 1.2"]) assert.ok(buttonNamed(more, label), label);
-  assert.equal(more.querySelectorAll("button").filter((node) => node.textContent === "Выбрать изображение…").length, 2);
+  assert.equal(buttonNamed(inspectorSection("frame"), "Переместить кадр позже").disabled, false);
+  for (const label of ["Добавить панель", "Поменять панели", "Поменять панели местами", "Удалить панель 1.1", "Выбрать изображение…", "Изображение панели 1.1…"]) {
+    assert.equal(buttonNamed(inspector(), label), null, label);
+  }
+  assert.equal(textOf(inspector()).includes("Только изображение"), false);
+  assert.equal(textOf(inspector()).includes("Изображение, персонаж и описание"), false);
+  assert.equal(textOf(inspector()).includes("Кадрирование и изображение панели"), false);
+  const clear = inspector().querySelector("[aria-label='Снять выбор']");
+  clear.click();
+  assert.match(textOf(inspector()), /Выберите кадр/);
+  assert.equal(mutatingRequests().length, 0);
+  assert.equal(researchStarts().length, 0);
+
+  selectCard(4);
+  assert.equal(buttonNamed(inspectorSection("frame"), "Переместить кадр позже").disabled, true);
+  assert.equal(buttonNamed(inspectorSection("frame"), "Переместить кадр раньше").disabled, false);
+  assert.match(textOf(inspectorSection("header")), /Кадр 5/);
+
   selectCard(2);
   assert.equal(inspectorSection("dialogue"), null);
+  assert.match(textOf(inspectorSection("header")), /Выбран кадр/);
+  assert.match(textOf(inspectorSection("header")), /Текстовая карточка/);
+  assert.ok(buttonNamed(inspectorSection("header"), "Открыть редактор кадра"));
+  assert.ok(inspectorSection("timing").querySelector("input"));
   assert.ok(inspectorSection("more").querySelector("textarea"));
+  assert.equal(buttonNamed(inspector(), "Текстовая карточка после"), null);
 });
 
 for (const [name, run] of Object.entries({
@@ -293,48 +349,11 @@ for (const [name, run] of Object.entries({
   "reorderFrames.earlier": () => { selectCard(1); inspectorButton("Переместить кадр раньше").click(); },
   "reorderFrames.later": () => { selectCard(1); inspectorButton("Переместить кадр позже").click(); },
   "deleteFrame": () => { selectCard(1); inspectorButton("Удалить кадр").click(); },
-  "setDuration": () => {
-    selectCard(0);
-    const input = inspectorSection("timing").querySelector("input");
-    input.value = "90";
-    input.dispatchEvent({ type: "change" });
-  },
   "setTextCard": () => {
     selectCard(2);
     const text = inspectorSection("more").querySelector("textarea");
     text.value = "Новый текст";
     text.dispatchEvent({ type: "change" });
-  },
-  "addPanel": () => { selectCard(1); inspectorButton("Добавить панель").click(); },
-  "reorderPanels": () => { selectCard(0); inspectorButton("Поменять панели").click(); },
-  "deletePanel.listener": () => { selectCard(0); inspectorButton("Удалить панель 1.2").click(); },
-  "deletePanel.speaker": () => { selectCard(0); inspectorButton("Удалить панель 1.1").click(); },
-  "setManualSubject": () => {
-    selectCard(1);
-    const select = inspectorSection("more").querySelectorAll("select").find((node) => node.getAttribute("aria-label") === "Персонаж панели 2.1");
-    select.value = "Путин";
-    select.dispatchEvent({ type: "change" });
-  },
-  "assignAsset.imageOnly": () => {
-    selectCard(1);
-    inspectorSection("more").querySelectorAll("button").find((node) => node.textContent === "Выбрать изображение…").click();
-    pickerPopover().querySelectorAll("button").find((node) => node.dataset.assetId === "asset-1").click();
-  },
-  "assignAsset.carryMetadata": () => {
-    selectCard(4);
-    const mode = inspectorSection("more").querySelectorAll("select").find((node) => node.getAttribute("aria-label") === "Что перенести с изображением");
-    mode.value = "metadata";
-    mode.dispatchEvent({ type: "change" });
-    inspectorSection("more").querySelectorAll("button").find((node) => node.textContent === "Выбрать изображение…").click();
-    pickerPopover().querySelectorAll("button").find((node) => node.dataset.assetId === "asset-1").click();
-  },
-  "uploadAsset": () => {
-    selectCard(1);
-    inspectorSection("more").querySelectorAll("button").find((node) => node.textContent === "Выбрать изображение…").click();
-    pickerPopover().querySelector(".asset-picker-upload").click();
-    const input = document.created.filter((node) => node.tagName === "INPUT" && node.type === "file").at(-1);
-    input.files = [{ name: "x.png", type: "image/png", size: 10 }];
-    input.dispatchEvent({ type: "change" });
   },
 })) {
   test(`parity · inspector · ${name}`, async () => {
@@ -402,22 +421,80 @@ for (const [name, run] of Object.entries({
     await typeSupportedRevision(section);
     section.querySelectorAll("button").find((node) => node.textContent === "Создать кандидат").click();
   },
+  "setDuration": () => {
+    openCard(0);
+    resetRecorder();
+    const input = $("#frame-editor-frame").querySelector("#frame-duration-frames");
+    input.value = "90";
+    input.dispatchEvent({ type: "change" });
+  },
+  "addPanel": () => {
+    openCard(1);
+    buttonNamed($("#frame-editor-frame"), "Добавить панель").click();
+  },
+  "reorderPanels": () => {
+    openCard(0);
+    buttonNamed($("#frame-editor-frame"), "Поменять панели местами").click();
+  },
+  "deletePanel.listener": () => {
+    openCard(0);
+    buttonNamed($("#frame-editor-frame"), "Удалить панель 2").click();
+  },
+  "deletePanel.speaker": () => {
+    openCard(0);
+    buttonNamed($("#frame-editor-frame"), "Удалить панель 1").click();
+  },
+  "setManualSubject": () => {
+    openCard(1);
+    buttonNamed($("#frame-editor-tabs"), "Панель").click();
+    const select = panelSection(0).querySelector("[aria-label='Персонаж панели']");
+    assert.ok(select, "Персонаж панели");
+    assert.equal(panelSection(0).querySelector("[data-panel-section='references']").querySelector("select"), null);
+    select.value = "Путин";
+    select.dispatchEvent({ type: "change" });
+  },
+  "assignAsset.imageOnly": () => {
+    openCard(1);
+    buttonNamed($("#frame-editor-tabs"), "Панель").click();
+    assert.ok(panelChoose(0), "Выбрать изображение…");
+    panelChoose(0).click();
+    pickerPopover().querySelectorAll("button").find((node) => node.dataset.assetId === "asset-1").click();
+  },
+  "assignAsset.nonblankImageOnly": () => {
+    openCard(4);
+    buttonNamed($("#frame-editor-tabs"), "Панель").click();
+    assert.equal(document.body.textContent.includes("Только изображение"), false);
+    assert.equal(document.body.textContent.includes("Изображение, персонаж и описание"), false);
+    assert.equal(panelSection(0).querySelector("[aria-label='Персонаж панели']"), null);
+    assert.ok(panelChoose(0));
+    panelChoose(0).click();
+    pickerPopover().querySelectorAll("button").find((node) => node.dataset.assetId === "asset-1").click();
+  },
+  "uploadAsset": () => {
+    openCard(1);
+    buttonNamed($("#frame-editor-tabs"), "Панель").click();
+    panelChoose(0).click();
+    pickerPopover().querySelector(".asset-picker-upload").click();
+    const input = document.created.filter((node) => node.tagName === "INPUT" && node.type === "file").at(-1);
+    input.files = [{ name: "x.png", type: "image/png", size: 10 }];
+    input.dispatchEvent({ type: "change" });
+  },
 })) {
   test(`parity · Frame Editor · ${name}`, async () => {
     await assertParity(name, run);
   });
 }
 
-test("parity · inspector panel shortcut opens the Panel Editor on that panel for the existing regenerate", async () => {
-  await assertParity("panelGenerate", async () => {
-    selectCard(0);
-    inspectorButton("Изображение панели 1.1…").click();
-    assert.equal($("#detail").open, true);
-    assert.equal(panelSection(0).hidden, false);
-    resetRecorder();
-    await typeSupportedRevision(panelSection(0));
-    panelSection(0).querySelectorAll("button").find((node) => node.textContent === "Создать кандидат").click();
-  });
+test("the inspector no longer opens a panel, and the panel tab still reaches revision", async () => {
+  await reset();
+  selectCard(0);
+  assert.equal(inspectorButton("Изображение панели 1.1…"), null);
+  openCard(0);
+  buttonNamed($("#frame-editor-tabs"), "Панель 1").click();
+  assert.equal($("#detail").dataset.editorTab, "panel-0");
+  assert.equal(panelSection(0).hidden, false);
+  assert.ok(panelSection(0).querySelectorAll("button").find((node) => node.textContent === "Создать кандидат"));
+  assert.equal(mutatingRequests().length, 0);
 });
 
 test("Frame Editor spoken mode without a stored line asks for text and sends nothing", async () => {
@@ -432,17 +509,65 @@ test("Frame Editor spoken mode without a stored line asks for text and sends not
   assert.match($("#frame-dialogue-error").textContent, /Введите текст реплики/);
 });
 
-test("batch frame generation is absent from the inspector while panel image access remains", async () => {
+test("batch frame generation and panel shortcuts stay out of the inspector", async () => {
   await reset();
   selectCard(3);
   assert.equal(inspectorButton("Создать изображения кадра"), null);
+  assert.equal(inspectorButton("Изображение панели 4.1…"), null);
   selectCard(0);
   assert.equal(inspectorButton("Создать изображения кадра"), null);
-  assert.ok(inspectorButton("Изображение панели 1.1…"));
+  assert.equal(inspectorButton("Изображение панели 1.1…"), null);
+  openCard(0);
+  buttonNamed($("#frame-editor-tabs"), "Панель 1").click();
+  assert.equal(panelChoose(0)?.dataset.panelIndex, "0");
+  buttonNamed($("#frame-editor-tabs"), "Панель 2").click();
+  assert.equal(panelChoose(1)?.dataset.panelIndex, "1");
   await reset(readyVisual({ allAnchorsApproved: false }));
   selectCard(3);
   assert.equal(inspectorButton("Создать изображения кадра"), null);
-  assert.ok(inspectorButton("Изображение панели 4.1…"));
+  assert.equal(inspectorButton("Изображение панели 4.1…"), null);
+  openCard(3);
+  buttonNamed($("#frame-editor-tabs"), "Панель").click();
+  assert.ok(panelChoose(0));
+});
+
+test("each panel tab assigns a ready image only to that panel", async () => {
+  await reset();
+  openCard(0);
+  buttonNamed($("#frame-editor-tabs"), "Панель 1").click();
+  const firstImage = panelSection(0).querySelector("[data-panel-section='image']");
+  assert.equal(panelChoose(0)?.dataset.panelIndex, "0");
+  assert.equal(firstImage.contains(panelChoose(0)), true);
+  assert.equal(panelSection(0).querySelector("[aria-label='Персонаж панели']"), null);
+  assert.ok(firstImage.querySelectorAll("button").find((node) => node.textContent === "Создать кандидат" || node.textContent === "Уточнить текущее" || node.dataset.revisionAction));
+  buttonNamed($("#frame-editor-tabs"), "Панель 2").click();
+  assert.equal(panelChoose(1)?.dataset.panelIndex, "1");
+  assert.equal(panelSection(1).querySelector("[data-panel-section='image']").contains(panelChoose(1)), true);
+  assert.equal(document.body.textContent.includes("Только изображение"), false);
+  assert.equal(document.body.textContent.includes("Изображение, персонаж и описание"), false);
+  panelChoose(1).click();
+  assert.ok(pickerPopover().querySelector(".asset-picker-upload"));
+  pickerPopover().querySelectorAll("button").find((node) => node.dataset.assetId === "asset-2").click();
+  await flush(12);
+  const posted = productRequests().filter((entry) => entry.method !== "GET");
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].body.op, "assignAsset");
+  assert.equal(posted[0].body.carryMetadata, false);
+  assert.deepEqual(posted[0].body.targets, [{ panelId: "p-1b" }]);
+  assert.equal(posted[0].body.panelIndex, 1);
+  assert.equal(posted[0].body.assetId, "asset-2");
+  assert.equal(harness.requests.some((entry) => /generate|revision/.test(entry.path)), false);
+
+  await reset();
+  openCard(1);
+  buttonNamed($("#frame-editor-tabs"), "Панель").click();
+  const subject = panelSection(0).querySelector("[aria-label='Персонаж панели']");
+  assert.ok(subject);
+  assert.deepEqual([...subject.querySelectorAll("option")].map((node) => node.textContent), ["Выберите персонажа", "Путин", "Дуров"]);
+  const identity = panelSection(0).querySelector("[data-panel-section='references']");
+  assert.equal(identity.contains(subject), false);
+  assert.equal(identity.querySelector("select"), null);
+  assert.equal(identity.querySelector("input"), null);
 });
 
 test("duplicate selects and opens the copy, and Undo does not leave a stale inspector", async () => {
@@ -564,11 +689,17 @@ test("basis label marks a base character portrait as intentional", async () => {
   await reset(readyVisual({ frames: [demo] }));
   assert.equal(card(0).querySelector(".panel-basis"), null);
   selectCard(0);
-  const inspectorChip = inspectorSection("more").querySelector(".panel-basis");
-  assert.equal(inspectorChip.dataset.basis, "base-portrait");
-  assert.match(inspectorChip.textContent, /Базовый образ/);
+  assert.equal(inspector().querySelector(".panel-basis"), null);
   openCard(0);
+  buttonNamed($("#frame-editor-tabs"), "Панель").click();
+  const chip = panelSection(0).querySelector(".panel-basis");
+  assert.equal(chip.dataset.basis, "base-portrait");
+  assert.match(chip.textContent, /Базовый образ/);
   assert.match(textOf(panelSection(0)), /Базовый образ персонажа/);
+  const identity = panelSection(0).querySelector("[data-panel-section='references']");
+  assert.equal(identity.querySelector("input"), null);
+  assert.equal(identity.querySelector("select"), null);
+  assert.equal(identity.querySelector("textarea"), null);
 });
 
 test("the dock is Notes and Operations, and selecting a panel does not expose a command target", async () => {
@@ -603,14 +734,13 @@ test("navigation, selection, inspector and editors make no mutation or provider 
     selectCard(index);
     card(index).dispatchEvent({ type: "keydown", key: "Enter", target: card(index) });
   }
-  const more = inspectorSection("more");
-  if (more) more.open = true;
   selectCard(0);
-  inspectorButton("Открыть редактор кадра").click();
+  openCard(0);
   for (const button of $("#frame-editor-tabs").querySelectorAll("button")) button.click();
   $("#detail").close();
   selectCard(0);
-  inspectorButton("Изображение панели 1.2…").click();
+  openCard(0);
+  buttonNamed($("#frame-editor-tabs"), "Панель 2").click();
   $("#detail").close();
   openCard(3);
   $("#detail").close();

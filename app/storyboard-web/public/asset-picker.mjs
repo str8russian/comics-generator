@@ -48,6 +48,9 @@ export function anchorIntersectsViewport(rect, viewport) {
 export function closeAssetPicker() {
   if (!active) return;
   const { popover, document, window, onKey, onPointer, onGeometry, anchor } = active;
+  if (typeof popover.hidePopover === "function") {
+    try { popover.hidePopover(); } catch { /* already hidden */ }
+  }
   popover.remove?.();
   document?.removeEventListener?.("keydown", onKey);
   document?.removeEventListener?.("pointerdown", onPointer);
@@ -172,13 +175,26 @@ export function openAssetPicker(options = {}) {
       popover.style.position = "fixed";
       popover.style.top = `${placed.top}px`;
       popover.style.left = `${placed.left}px`;
+      popover.style.right = "auto";
+      popover.style.bottom = "auto";
+      popover.style.margin = "0";
       popover.style.width = `${placed.width}px`;
       popover.style.zIndex = "40";
     }
     popover.dataset.placement = placed.placement;
   };
   if (anchor?.getBoundingClientRect && popover.style) applyPlace();
-  document.body?.append?.(popover);
+  const dialog = anchor?.closest?.("dialog");
+  const host = dialog || document.body;
+  host?.append?.(popover);
+  if (!dialog && typeof popover.showPopover === "function") {
+    try {
+      popover.popover = "manual";
+      popover.showPopover();
+    } catch {
+      // Keep the appended picker when the top layer is unavailable.
+    }
+  }
   focusInitial(popover, options.currentAssetId);
   const onKey = (event) => {
     if (event.key === "Escape") {

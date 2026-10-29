@@ -277,7 +277,7 @@ button.is-pending:disabled {
 .card-statuses {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
 }
 
@@ -1654,7 +1654,18 @@ legend.visually-hidden {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: nowrap;
   gap: 10px;
+}
+
+.card-frame-number {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.card-foot .card-open {
+  flex: 0 0 auto;
 }
 
 .card-duration {
@@ -2025,6 +2036,20 @@ body:has(#research-dock-host > #research-dock:not(.research-dock--collapsed)) .f
 
 .panel-control[hidden] {
   display: none;
+}
+
+.panel-asset-assign {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.panel-subject-field {
+  display: grid;
+  gap: 4px;
+  color: #1d2428;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .panel-subsection {

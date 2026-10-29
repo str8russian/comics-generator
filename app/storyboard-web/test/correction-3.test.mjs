@@ -125,6 +125,120 @@ test("the picker focuses the current asset, closes on select, and restores the a
   closeAssetPicker();
 });
 
+test("the picker enters the top layer so a dialog cannot cover it", () => {
+  const shown = [];
+  function element(tag) {
+    const node = {
+      tag,
+      className: "",
+      textContent: "",
+      type: "",
+      dataset: {},
+      style: {},
+      children: [],
+      parentNode: null,
+      isConnected: true,
+      popover: "",
+      append(...items) {
+        for (const item of items) {
+          item.parentNode = node;
+          node.children.push(item);
+        }
+      },
+      addEventListener() {},
+      setAttribute() {},
+      focus() {},
+      querySelectorAll() { return []; },
+      contains() { return false; },
+      remove() { node.parentNode = null; },
+      showPopover() { shown.push(node.popover); },
+      hidePopover() { shown.push("hidden"); },
+    };
+    return node;
+  }
+  const body = element("body");
+  const anchor = element("button");
+  anchor.getBoundingClientRect = () => ({ top: 40, bottom: 70, left: 20, right: 160, width: 140, height: 30 });
+  const document = {
+    body,
+    activeElement: null,
+    createElement: element,
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const popover = openAssetPicker({
+    document,
+    window: { innerWidth: 1000, innerHeight: 700, addEventListener() {}, removeEventListener() {} },
+    anchor,
+    assets: [{ id: "asset-1", url: "/a", provenance: { origin: "upload" } }],
+    onSelect() {},
+  });
+  assert.equal(popover.popover, "manual");
+  assert.deepEqual(shown, ["manual"]);
+  assert.equal(popover.parentNode, body);
+  assert.equal(popover.style.position, "fixed");
+  assert.equal(popover.style.right, "auto");
+  assert.equal(popover.style.bottom, "auto");
+  closeAssetPicker();
+  assert.deepEqual(shown, ["manual", "hidden"]);
+});
+
+test("a picker opened from a dialog stays inside that dialog", () => {
+  function element(tag) {
+    const node = {
+      tag,
+      className: "",
+      textContent: "",
+      type: "",
+      dataset: {},
+      style: {},
+      children: [],
+      parentNode: null,
+      isConnected: true,
+      append(...items) {
+        for (const item of items) {
+          item.parentNode = node;
+          node.children.push(item);
+        }
+      },
+      addEventListener() {},
+      setAttribute() {},
+      focus() {},
+      querySelectorAll() { return []; },
+      contains(target) {
+        if (target === node) return true;
+        return node.children.some((child) => child === target || child.contains?.(target));
+      },
+      closest(selector) {
+        return selector === "dialog" && node.tag === "dialog" ? node : node.parentNode?.closest?.(selector) || null;
+      },
+      remove() { node.parentNode = null; },
+      showPopover() { throw new Error("dialog picker must not leave the dialog top layer"); },
+    };
+    return node;
+  }
+  const dialog = element("dialog");
+  const anchor = element("button");
+  anchor.parentNode = dialog;
+  dialog.children.push(anchor);
+  anchor.getBoundingClientRect = () => ({ top: 40, bottom: 70, left: 20, right: 160, width: 140, height: 30 });
+  const popover = openAssetPicker({
+    document: {
+      body: element("body"),
+      activeElement: null,
+      createElement: element,
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    window: { innerWidth: 1000, innerHeight: 700, addEventListener() {}, removeEventListener() {} },
+    anchor,
+    assets: [{ id: "asset-1", url: "/a" }],
+    onSelect() {},
+  });
+  assert.equal(popover.parentNode, dialog);
+  closeAssetPicker();
+});
+
 test("operations distinguish the same action on two panels and keep revision text", () => {
   const events = [1, 2].flatMap((panel) => ([
     {

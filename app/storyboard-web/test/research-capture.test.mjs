@@ -1796,9 +1796,8 @@ test("action status stays visible when the edited card is offscreen", async () =
     path: "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
     body: readyVisual({ changed: false }),
   }];
-  selectFrameCard(0);
-  const duration = [...document.querySelector("#frame-inspector").querySelectorAll("input")]
-    .find((input) => input.type === "number");
+  openFrameCard(0);
+  const duration = document.querySelector("#frame-editor-frame").querySelector("#frame-duration-frames");
   duration.value = "36";
   duration.dispatchEvent({ type: "change" });
   await new Promise((resolve) => setTimeout(resolve, 0));

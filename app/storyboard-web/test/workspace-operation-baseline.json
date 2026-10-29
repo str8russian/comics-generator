@@ -739,14 +739,14 @@
         }
       }
     },
-    "assignAsset.carryMetadata": {
+    "assignAsset.nonblankImageOnly": {
       "request": {
         "method": "POST",
         "path": "/api/projects/00000000-0000-4000-8000-000000000001/visual/operations",
         "body": {
           "op": "assignAsset",
           "assetId": "asset-1",
-          "carryMetadata": true,
+          "carryMetadata": false,
           "targets": [
             {
               "panelId": "p-5"

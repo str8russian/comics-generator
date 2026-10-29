@@ -683,14 +683,10 @@ function overviewStatuses(frame) {
   return statuses;
 }
 
-function appendOverviewStatuses(top, frame) {
-  if (frame.frameKind === "text") {
-    top.append(textElement("span", "card-status", "Текстовая карточка"));
-    return;
-  }
+function overviewStatusRow(frame) {
   const statuses = overviewStatuses(frame);
-  if (!statuses.length) return;
-  const row = document.createElement("span");
+  if (!statuses.length) return null;
+  const row = document.createElement("div");
   row.className = "card-statuses";
   for (const status of statuses) {
     const node = textElement(
@@ -701,7 +697,7 @@ function appendOverviewStatuses(top, frame) {
     if (status.error && node.dataset) node.dataset.status = "generation-error";
     row.append(node);
   }
-  top.append(row);
+  return row;
 }
 
 function frameCard(frame, index) {
@@ -712,10 +708,6 @@ function frameCard(frame, index) {
   card.dataset.frameIndex = String(index);
   card.setAttribute?.("tabindex", "0");
   card.setAttribute?.("aria-label", `Кадр ${index + 1}`);
-  const top = document.createElement("div");
-  top.className = "card-heading";
-  top.append(textElement("span", "", `Кадр ${index + 1}`));
-  appendOverviewStatuses(top, frame);
   const preview = document.createElement("div");
   preview.className = "frame-preview";
   const host = document.createElement("div");
@@ -725,20 +717,25 @@ function frameCard(frame, index) {
   preview.append(host);
   if (frame.retainedImageNotice) preview.append(textElement("p", "retained-image-notice", frame.retainedImageNotice));
   if (frame.outsideFrameText) preview.append(textElement("p", "outside-frame", frame.outsideFrameText));
-  if (frame.frameKind === "text") {
-    card.append(top, textElement("p", "card-meta", "Текстовая карточка"), preview);
-    const line = String(frame.textCard || "");
-    if (line.trim()) card.append(textElement("p", "card-line", line));
-  } else {
-    card.append(top, preview);
-  }
   const foot = document.createElement("div");
   foot.className = "card-foot";
   if (frame.frameKind === "text") {
+    const top = document.createElement("div");
+    top.className = "card-heading";
+    top.append(textElement("span", "", `Кадр ${index + 1}`));
+    top.append(textElement("span", "card-status", "Текстовая карточка"));
+    card.append(top, textElement("p", "card-meta", "Текстовая карточка"), preview);
+    const line = String(frame.textCard || "");
+    if (line.trim()) card.append(textElement("p", "card-line", line));
     const seconds = formatSeconds(frame.durationSeconds);
     if (seconds && Number.isInteger(frame.durationFrames)) {
       foot.append(textElement("span", "card-duration", `${seconds} с · ${frame.durationFrames} кадров`));
     }
+  } else {
+    card.append(preview);
+    const statuses = overviewStatusRow(frame);
+    if (statuses) card.append(statuses);
+    foot.append(textElement("span", "card-frame-number", `Кадр ${index + 1}`));
   }
   const open = document.createElement("button");
   open.type = "button";
@@ -841,7 +838,6 @@ function inspectorModel(frame, index) {
     subject: panel.subject || null,
     manualSubject: panel.manualSubject || null,
     subjectEditable: Boolean(panel.subjectEditable),
-    carryChoice: Boolean(manualMetadataChoice(frame, panel)),
     basisChip: basisChip(frame, panelIndex),
   }));
   return {
@@ -1120,14 +1116,6 @@ function panelAssets() {
         : (provenance?.origin === "generation" ? "Генерация" : null),
     };
   });
-}
-
-function manualMetadataChoice(frame, panel) {
-  const manual = frame?.origin === "derived" || frame?.frameKind === "image";
-  if (!manual) return null;
-  const blank = !String(panel?.description || "").trim() && !String(panel?.manualSubject || "").trim();
-  if (blank) return null;
-  return true;
 }
 
 function openPanelAssetPicker(frame, panel, panelIndex, anchor, readCarryMetadata) {
@@ -2302,6 +2290,53 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
   if (review.childNodes?.length || review.children?.length) imagePart.append(review);
 }
 
+function panelReadyImageControls(frame, panel, panelIndex) {
+  const assign = document.createElement("div");
+  assign.className = "panel-asset-assign";
+  const choose = document.createElement("button");
+  choose.type = "button";
+  choose.dataset.panelIndex = String(panelIndex);
+  choose.textContent = "Выбрать изображение…";
+  choose.addEventListener("click", () => {
+    openPanelAssetPicker(frame, panel, panelIndex, choose, false);
+  });
+  assign.append(choose);
+  if (!panel.subjectEditable) return assign;
+  const field = document.createElement("label");
+  field.className = "panel-subject-field";
+  const caption = document.createElement("span");
+  caption.textContent = "Персонаж панели";
+  const subject = document.createElement("select");
+  subject.className = "inspector-select";
+  subject.setAttribute("aria-label", "Персонаж панели");
+  const blank = document.createElement("option");
+  blank.value = "";
+  blank.textContent = "Выберите персонажа";
+  subject.append(blank);
+  const names = [];
+  for (const character of visual?.characters || []) {
+    if (character?.name && !names.includes(character.name)) names.push(character.name);
+  }
+  for (const name of names) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    if (panel.manualSubject === name || panel.subject === name) option.selected = true;
+    subject.append(option);
+  }
+  subject.addEventListener("change", () => {
+    if (!subject.value) return;
+    runAssembly({
+      op: "setManualSubject",
+      panelId: panel.id,
+      characterName: subject.value,
+    }, "Сохраняю персонажа панели…", { submittedText: subject.value, frame, panel, panelIndex });
+  });
+  field.append(caption, subject);
+  assign.append(field);
+  return assign;
+}
+
 function renderPanelControls(frame) {
   const epoch = ++revisionPreflightEpoch;
   detailPanelControls.replaceChildren();
@@ -2349,6 +2384,7 @@ function renderPanelControls(frame) {
     }
     if (lineageCopy) imagePart.append(lineageCopy);
     if (failure) imagePart.append(failure);
+    imagePart.append(panelReadyImageControls(frame, panel, panelIndex));
     if (panel.assetId) bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart, epoch });
     else bindInitialPanelCreate({ frame, panel, panelIndex, instruction, performance, imagePart });
     const framingPart = panelOpenSection("framing", "Кадрирование");

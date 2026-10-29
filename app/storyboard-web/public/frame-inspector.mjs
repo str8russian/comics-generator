@@ -87,21 +87,7 @@ function panelBlock(document, model, panel, actions) {
   const title = el(document, "p", "inspector-panel-title", `Панель ${panel.address}${panel.subject ? ` · ${panel.subject}` : ""}`);
   block.append(title);
   if (panel.basisChip) block.append(panel.basisChip);
-  let carryMetadata = false;
-  if (panel.carryChoice) {
-    const mode = el(document, "select", "inspector-select");
-    mode.setAttribute?.("aria-label", "Что перенести с изображением");
-    const imageOnly = el(document, "option", "", "Только изображение");
-    imageOnly.value = "image";
-    const withMetadata = el(document, "option", "", "Изображение, персонаж и описание");
-    withMetadata.value = "metadata";
-    mode.append(imageOnly, withMetadata);
-    mode.addEventListener("change", () => {
-      carryMetadata = mode.value === "metadata";
-    });
-    block.append(mode);
-  }
-  const choose = button(document, "Выбрать изображение…", (event, node) => actions.chooseAsset(panel.index, node, () => carryMetadata));
+  const choose = button(document, "Выбрать изображение…", (event, node) => actions.chooseAsset(panel.index, node, false));
   choose.dataset.panelIndex = String(panel.index);
   block.append(choose);
   if (panel.subjectEditable) {
@@ -163,6 +149,52 @@ function imagesSection(document, model, actions) {
   return node;
 }
 
+function unavailableState(document) {
+  return el(document, "p", "helper", "Действия с кадром появятся, когда визуальная раскадровка загрузится.");
+}
+
+function renderTextCardInspector(root, model, actions, document, moreOpen) {
+  root.append(headerSection(document, model, actions));
+  if (!model.assembly) {
+    root.append(unavailableState(document));
+    return;
+  }
+  root.append(
+    timingSection(document, model, actions),
+    frameSection(document, model, actions),
+    moreSection(document, model, actions, moreOpen),
+  );
+  const images = imagesSection(document, model, actions);
+  if (images) root.append(images);
+}
+
+function imageHeaderSection(document, model, actions) {
+  const header = section(document, "header", null, "header");
+  const titleRow = el(document, "div", "inspector-title-row");
+  const copy = el(document, "div");
+  copy.append(el(document, "h3", "inspector-title", `Кадр ${model.displayNumber}`));
+  const clear = button(document, "×", () => actions.clearSelection?.(), { className: "inspector-clear secondary" });
+  clear.setAttribute?.("aria-label", "Снять выбор");
+  titleRow.append(copy, clear);
+  header.append(titleRow);
+  return header;
+}
+
+function imageActionsSection(document, model, actions) {
+  const node = section(document, "frame", null);
+  const list = el(document, "div", "inspector-actions");
+  list.append(
+    button(document, "Дублировать кадр", () => actions.duplicate()),
+    button(document, "Кадр с изображением после", () => actions.insertImageAfter()),
+    button(document, "Переместить кадр раньше", () => actions.moveEarlier(), { disabled: !model.canMoveEarlier }),
+    button(document, "Переместить кадр позже", () => actions.moveLater(), { disabled: !model.canMoveLater }),
+    button(document, "Удалить кадр", () => actions.deleteFrame(), { className: "destructive" }),
+  );
+  node.append(list);
+  if (model.segmentNote) node.append(el(document, "p", "assembly-note", model.segmentNote));
+  return node;
+}
+
 export function renderFrameInspector(root, model, actions, { document = globalThis.document } = {}) {
   if (!root) return;
   const previousMore = root.querySelector?.("details");
@@ -174,18 +206,16 @@ export function renderFrameInspector(root, model, actions, { document = globalTh
     return;
   }
   if (root.dataset) root.dataset.frameKey = model.key;
-  root.append(headerSection(document, model, actions));
-  if (!model.assembly) {
-    root.append(el(document, "p", "helper", "Действия с кадром появятся, когда визуальная раскадровка загрузится."));
+  if (model.frameKind === "text") {
+    renderTextCardInspector(root, model, actions, document, moreOpen);
     return;
   }
-  root.append(
-    timingSection(document, model, actions),
-    frameSection(document, model, actions),
-    moreSection(document, model, actions, moreOpen),
-  );
-  const images = imagesSection(document, model, actions);
-  if (images) root.append(images);
+  root.append(imageHeaderSection(document, model, actions));
+  if (!model.assembly) {
+    root.append(unavailableState(document));
+    return;
+  }
+  root.append(imageActionsSection(document, model, actions));
 }
 
 export function createFrameEditor({

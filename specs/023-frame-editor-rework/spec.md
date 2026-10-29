@@ -66,6 +66,20 @@ Each panel tab keeps pan, zoom, horizontal mirror, reset, image basis, human-rea
 
 That image-revision entry is temporary continuity. It reuses the current server behavior and provider semantics unchanged. This feature does not polish, expand, or accept it.
 
+Each current visual panel tab also offers ready-image assignment for exactly that panel, in the existing **Изображение** area, without replacing the revision entry:
+
+- one **Выбрать изображение…** action opens the existing anchored asset picker
+- the picker keeps reusable stored images, the current-image indication, and disk upload
+- reuse and upload call the existing `assignAsset` and `uploadAsset` operations for the active panel only
+- validation, asset ids, research capture, persisted Undo, rejected-assignment behavior, and zero provider calls stay as they are
+- the picker stays available whether or not the panel already has an image
+
+This control is separate from the temporary image-revision entry. Neither path replaces or silently triggers the other.
+
+When the active panel is `subjectEditable`, that same **Изображение** area shows a separate **Персонаж панели** selector. It lists the current accepted cast and sends `setManualSubject`. It assigns the semantic character of a manually assembled panel. It does not edit, replace, upload, or select the approved identity anchor. That anchor stays read-only here and is managed in **Персонажи**. The selector is absent when `subjectEditable` is false.
+
+The explicit metadata-replacement dropdown (**Только изображение** / **Изображение, персонаж и описание**) is hidden. Ready-image selection or upload from this control uses the image-only path (`carryMetadata: false`) and keeps the panel's current `manualSubject` and `description`. A blank manual panel may still receive an accepted subject and supported description through the existing server decision when the stored asset has that provenance. Explicit `carryMetadata: true` remains backend compatibility and has no replacement control in this pass.
+
 ## Hidden, retained
 
 These controls leave the reachable Stage A UI. Their stored data, server operations, schemas, and compatibility stay:

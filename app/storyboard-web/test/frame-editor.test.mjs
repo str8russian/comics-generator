@@ -405,6 +405,24 @@ test("the editor shows one global Undo and no Redo", async () => {
   assert.equal($("#workspace-undo-slot").contains($("#global-undo")), true);
 });
 
+test("each panel tab keeps ready-image assignment separate from the manual subject", async () => {
+  await reset();
+  openCard(0);
+  buttonNamed($("#frame-editor-tabs"), "Панель 1").click();
+  const image = panelSection(0).querySelector("[data-panel-section='image']");
+  const choose = [...image.querySelectorAll("button")].find((node) => node.textContent === "Выбрать изображение…");
+  assert.equal(choose?.dataset.panelIndex, "0");
+  assert.equal(image.querySelector("[aria-label='Персонаж панели']"), null);
+  assert.equal(textOf(image).includes("Только изображение"), false);
+  assert.ok([...image.querySelectorAll("button")].find((node) => node.textContent === "Создать кандидат"));
+  buttonNamed($("#frame-editor-tabs"), "Кадр").click();
+  assert.ok($("#frame-editor-frame").querySelector("#frame-duration-frames"));
+  assert.ok(buttonNamed($("#frame-editor-frame"), "Поменять панели местами"));
+  buttonNamed($("#frame-editor-tabs"), "Диалог").click();
+  assert.equal($("#frame-dialogue").hidden, false);
+  assert.equal($("#frame-inspector").textContent.includes("Выбрать изображение…"), false);
+});
+
 test("hidden controls are absent while text-card insert and reference data remain", async () => {
   const visual = readyVisual();
   visual.frames[0].panels[0].performanceAssetId = "pose-1";
