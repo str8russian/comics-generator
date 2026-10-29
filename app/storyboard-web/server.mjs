@@ -94,6 +94,7 @@ export const routes = [
   { method: "GET", path: "/frame-inspector.mjs", file: "app/storyboard-web/public/frame-inspector.mjs" },
   { method: "GET", path: "/panel-basis.mjs", file: "app/storyboard-web/public/panel-basis.mjs" },
   { method: "GET", path: "/panel-revision-view.mjs", file: "app/storyboard-web/public/panel-revision-view.mjs" },
+  { method: "GET", path: "/timing.mjs", file: "app/storyboard-web/timing.mjs" },
   { method: "GET", path: "/character-anchors/putin.png", file: "app/storyboard-web/public/character-anchors/putin.png" },
   { method: "GET", path: "/character-anchors/durov.png", file: "app/storyboard-web/public/character-anchors/durov.png" },
   { method: "GET", path: "/character-anchors/peskov.png", file: "app/storyboard-web/public/character-anchors/peskov.png" },

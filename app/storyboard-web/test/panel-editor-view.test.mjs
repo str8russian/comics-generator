@@ -114,16 +114,16 @@ test("panel shortcut opens focused Panel view without frame dialogue", async () 
   cards()[0].dispatchEvent({ type: "click" });
   openPanelFromInspector();
   assert.equal($("#detail").open, true);
-  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#detail").dataset.editorTab, "panel-0");
+  assert.equal($("#detail-frame").hidden, false);
   assert.equal($("#frame-dialogue").hidden, true);
-  assert.equal($("#detail-frame").hidden, true);
-  assert.match(textOf(panelSection(0).querySelector(".panel-view-header")), /← К кадру/);
-  assert.match(textOf(panelSection(0).querySelector(".panel-view-header")), /Панель 1\.1 · Путин/);
-  assert.ok(buttonNamed(panelSection(0), "Закрыть"));
+  assert.equal(panelSection(0).querySelector(".panel-view-header"), null);
   assert.equal(mutatingRequests().length, 0);
 
-  panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
-  assert.equal($("#detail").dataset.view, "frame");
+  buttonNamed($("#frame-editor-tabs"), "Кадр").click();
+  assert.equal($("#detail").dataset.editorTab, "frame");
+  assert.equal($("#detail-frame").hidden, false);
+  buttonNamed($("#frame-editor-tabs"), "Диалог").click();
   assert.equal($("#frame-dialogue").hidden, false);
   assert.equal(mutatingRequests().length, 0);
   assert.equal($("#research-commands-send"), null);
@@ -198,7 +198,8 @@ test("candidate comparison, navigation and accept sit together, and cancel confi
   $("#revision-confirm-keep").click();
   assert.equal($("#revision-confirm").hidden, true);
   assert.equal(mutatingRequests().length, 0);
-  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#detail").dataset.editorTab, "panel-0");
+  assert.equal($("#detail-frame").hidden, false);
   assert.equal(reviewAt >= 0, true);
 });
 
@@ -208,8 +209,8 @@ test("focused Panel view suspends the dock and deterministic controls stay provi
   const dock = $("#research-dock");
   assert.equal(dock.classList.contains("research-dock--suspended"), false);
   openPanelFromInspector();
-  assert.equal(dock.classList.contains("research-dock--suspended"), true);
-  assert.equal(dock.classList.contains("research-dock--collapsed"), true);
+  assert.equal($("#detail-frame").hidden, false);
+  assert.equal(dock.classList.contains("research-dock--suspended"), false);
   resetRecorder();
   const framing = panelSection(0).querySelector("[data-panel-section='framing']");
   const zoom = framing.querySelectorAll("input").find((node) => node.type === "range");
@@ -219,9 +220,9 @@ test("focused Panel view suspends the dock and deterministic controls stay provi
   await flush(8);
   assert.equal(productRequests().some((entry) => /revision-candidate$|\/generate$|\/revision$/.test(entry.path)), false);
   assert.equal(productRequests().some((entry) => /placement/.test(entry.path)), true);
-  panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
+  buttonNamed($("#frame-editor-tabs"), "Кадр").click();
+  assert.equal($("#detail-frame").hidden, false);
   assert.equal(dock.classList.contains("research-dock--suspended"), false);
-  assert.equal(dock.classList.contains("research-dock--collapsed"), false);
 });
 
 test("empty Refine disables create until a supported preflight, then clearing disables it again", async () => {
@@ -303,39 +304,38 @@ test("a failed create leaves the button disabled when that preflight blocks anot
   createButton().click();
   await flush(8);
   assert.equal(providerAttempts().length, 1);
-  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#detail").dataset.editorTab, "panel-0");
+  assert.equal($("#detail-frame").hidden, false);
 });
 
-test("scrolled Frame view enters Panel view at the top, including direct entry", async () => {
+test("panel tab keeps the final frame and does not add a second navigation shell", async () => {
   await reset();
   page.openResearchDetail(0);
-  assert.equal($("#detail").dataset.view, "frame");
+  assert.equal($("#detail").dataset.editorTab, "frame");
+  assert.equal($("#detail-frame").hidden, false);
   $("#detail-scroll").scrollTop = 480;
-  buttonNamed($("#frame-panel-actions"), "Редактировать изображение панели 1.1 · Путин").click();
-  assert.equal($("#detail").dataset.view, "panel");
-  assert.equal($("#detail-scroll").scrollTop, 0);
-  assert.match(textOf(panelSection(0).querySelector(".panel-view-header")), /Панель 1\.1 · Путин/);
+  buttonNamed($("#frame-editor-tabs"), "Панель 1").click();
+  assert.equal($("#detail").dataset.editorTab, "panel-0");
+  assert.equal($("#detail-frame").hidden, false);
+  assert.equal($("#detail-scroll").scrollTop, 480);
+  assert.equal(panelSection(0).querySelector(".panel-view-header"), null);
+  assert.equal(buttonNamed(panelSection(0), "Закрыть"), null);
 
-  panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
-  assert.equal($("#detail").dataset.view, "frame");
-  assert.equal($("#detail-scroll").scrollTop, 0);
-  $("#detail-scroll").scrollTop = 360;
+  buttonNamed($("#frame-editor-tabs"), "Кадр").click();
+  assert.equal($("#detail").dataset.editorTab, "frame");
+  assert.equal($("#detail-frame").hidden, false);
   $("#detail").close();
   cards()[0].dispatchEvent({ type: "click" });
   openPanelFromInspector();
-  assert.equal($("#detail").dataset.view, "panel");
-  assert.equal($("#detail-scroll").scrollTop, 0);
-
-  panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
-  $("#detail-scroll").scrollTop = 220;
-  assert.equal($("#research-commands-send"), null);
+  assert.equal($("#detail").dataset.editorTab, "panel-0");
+  assert.equal($("#detail-frame").hidden, false);
   assert.equal(providerAttempts().length, 0);
-  assert.equal($("#detail").dataset.view, "frame");
 });
 
 test("candidate generation stays in Panel view without jumping the detail scroll", async () => {
   await openFocusedPanel(visualWithCandidate());
-  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#detail").dataset.editorTab, "panel-0");
+  assert.equal($("#detail-frame").hidden, false);
   assert.equal(createButton().disabled, false);
   $("#detail-scroll").scrollTop = 275;
   harness.script = [{
@@ -344,7 +344,8 @@ test("candidate generation stays in Panel view without jumping the detail scroll
   }];
   createButton().click();
   await flush(16);
-  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#detail").dataset.editorTab, "panel-0");
+  assert.equal($("#detail-frame").hidden, false);
   assert.equal($("#detail-scroll").scrollTop, 275);
   assert.match(textOf(panelSection(0)), /Кандидат 2/);
   assert.equal(providerAttempts().length, 1);

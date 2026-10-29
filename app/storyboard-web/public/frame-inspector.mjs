@@ -70,7 +70,6 @@ function frameSection(document, model, actions) {
   const list = el(document, "div", "inspector-actions");
   list.append(
     button(document, "Кадр с изображением после", () => actions.insertImageAfter()),
-    button(document, "Текстовая карточка после", () => actions.insertTextAfter()),
     button(document, "Переместить кадр раньше", () => actions.moveEarlier(), { disabled: !model.canMoveEarlier }),
     button(document, "Переместить кадр позже", () => actions.moveLater(), { disabled: !model.canMoveLater }),
     button(document, "Удалить кадр", () => actions.deleteFrame(), { className: "destructive" }),
@@ -151,16 +150,13 @@ function moreSection(document, model, actions, open) {
 function imagesSection(document, model, actions) {
   if (!model.showGenerate && !model.panels.length) return null;
   const node = section(document, "images", "Изображения");
-  if (model.showGenerate) {
-    node.append(button(document, "Создать изображения кадра", (event, target) => actions.generateFrame(target), { className: "generate-frame" }));
-  }
   for (const panel of model.panels) {
     const open = button(document, `Изображение панели ${panel.address}…`, () => actions.openPanel(panel.index));
     open.dataset.panelIndex = String(panel.index);
     node.append(open);
   }
   if (model.panels.length) {
-    node.append(el(document, "p", "helper", "Переделать панель, кадрирование и фото позы — в редакторе панели."));
+    node.append(el(document, "p", "helper", "Кадрирование и изображение панели — в редакторе кадра."));
   }
   return node;
 }

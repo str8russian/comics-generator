@@ -310,9 +310,13 @@ button.is-pending:disabled {
   max-width: 100%;
 }
 
+.workspace-undo-slot {
+  display: contents;
+}
+
 #detail {
   box-sizing: border-box;
-  width: min(1080px, calc(100vw - 24px));
+  width: min(1180px, calc(100vw - 24px));
   max-width: calc(100vw - 24px);
   max-height: calc(100dvh - 24px);
   margin: auto;
@@ -321,6 +325,165 @@ button.is-pending:disabled {
   border-radius: 16px;
   padding: 12px;
   background: #f3f0e9;
+}
+
+.frame-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.frame-editor-nav,
+.frame-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.frame-editor-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.frame-editor-heading .detail-title {
+  margin: 0;
+}
+
+.frame-editor-header .global-undo {
+  min-width: 9rem;
+  font-weight: 700;
+}
+
+.frame-editor-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 390px);
+  align-items: start;
+  min-height: 0;
+}
+
+.frame-editor-stage,
+.frame-editor-inspector {
+  min-width: 0;
+}
+
+.frame-editor-stage {
+  overflow: hidden;
+}
+
+#detail-frame,
+#detail-frame .frame-stage {
+  max-width: 100%;
+}
+
+.frame-editor-inspector {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  max-height: calc(100dvh - 150px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #d8d0c2;
+  border-radius: 14px;
+  background: #fffdf8;
+}
+
+.frame-editor-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.frame-editor-tab {
+  flex: 1 0 auto;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5d665f;
+  cursor: pointer;
+}
+
+.frame-editor-tab[aria-pressed="true"] {
+  background: #d8eeee;
+  color: #186f74;
+  font-weight: 800;
+}
+
+.frame-editor-duration {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.frame-structure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#detail-frame .frame-canvas,
+#detail-frame .frame-stage,
+#detail-frame .panel,
+.revision-current {
+  overflow: hidden;
+}
+
+#detail-frame .panel,
+#detail-frame .dialogue-bar {
+  cursor: pointer;
+}
+
+#detail-frame .dialogue-bar.is-selected {
+  outline: 8px solid #4da3e0;
+  outline-offset: -8px;
+}
+
+.frame-editor-leave {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 16px;
+}
+
+.frame-editor-leave-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(16, 20, 21, 0.48);
+}
+
+.frame-editor-leave-card {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  width: min(460px, 100%);
+  padding: 22px;
+  border-radius: 14px;
+  background: #fffdf8;
+  box-shadow: 0 16px 40px rgba(29, 36, 40, 0.24);
+}
+
+.frame-editor-leave-card h3,
+.frame-editor-leave-card p {
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .frame-editor-body {
+    grid-template-columns: 1fr;
+  }
+
+  .frame-editor-header {
+    flex-wrap: wrap;
+  }
+
+  .frame-editor-inspector {
+    max-height: none;
+  }
 }
 
 #detail-scroll {
@@ -1240,9 +1403,11 @@ button.is-pending:disabled {
 #detail-frame[hidden],
 #detail-title[hidden],
 #detail-frame-number[hidden],
+#frame-editor-frame[hidden],
 .frame-dialogue[hidden],
 #utterance-edit[hidden],
 #utterance-editor[hidden],
+.frame-editor-leave[hidden],
 .revision-confirm[hidden] {
   display: none !important;
 }

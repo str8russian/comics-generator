@@ -85,14 +85,8 @@ function charactersStage({ visual, frames }) {
 }
 
 function visualNext(frames) {
-  const generatable = frames.findIndex((frame) => (
-    !frame.visualReady && frame.frameKind !== "text" && frame.frameKind !== "image"
-  ));
-  if (generatable >= 0) {
-    return { label: `Создать изображения кадра ${generatable + 1}`, action: "generate-frame", frameIndex: generatable };
-  }
-  const manual = frames.findIndex((frame) => !frame.visualReady);
-  if (manual >= 0) return { label: `Открыть кадр ${manual + 1}`, action: "open-frame", frameIndex: manual };
+  const pending = frames.findIndex((frame) => !frame.visualReady);
+  if (pending >= 0) return { label: `Открыть кадр ${pending + 1}`, action: "open-frame", frameIndex: pending };
   return null;
 }
 

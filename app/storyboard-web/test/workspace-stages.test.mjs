@@ -108,7 +108,7 @@ test("partially approved anchors name the next character still missing a base an
   assert.equal(stages.characters.next.label, "Нужен базовый образ: Дуров");
 });
 
-test("Visual in progress offers the relocated per-frame generation for the first generatable frame", () => {
+test("Visual in progress opens the first unfinished frame instead of batch generation", () => {
   const facts = {
     ...empty,
     frames: frames([{ ready: true }, { kind: "image" }, { kind: "text", ready: true }, {}]),
@@ -119,7 +119,7 @@ test("Visual in progress offers the relocated per-frame generation for the first
   assert.deepEqual(stages.characters.next, { label: "Перейти к визуалу", goto: "visual" });
   assert.equal(stages.visual.status, "2/4 готовы");
   assert.equal(stages.visual.locked, false);
-  assert.deepEqual(stages.visual.next, { label: "Создать изображения кадра 4", action: "generate-frame", frameIndex: 3 });
+  assert.deepEqual(stages.visual.next, { label: "Открыть кадр 2", action: "open-frame", frameIndex: 1 });
   assert.equal(stages.video.locked, false);
   assert.equal(stages.video.status, "Визуал не утверждён");
   assert.equal(defaultStage(facts), "visual");

@@ -422,7 +422,7 @@ describe("truthful Story long-running actions", { concurrency: false }, () => {
     page.applyVisual(readyVisual());
     assert.equal($("#stage-header-story").querySelector(".stage-next").textContent, "Перейти к раскадровке");
     assert.equal($("#stage-header-characters").querySelector(".stage-next").textContent, "Перейти к визуалу");
-    assert.equal($("#stage-header-visual").querySelector(".stage-next").textContent, "Создать изображения кадра 4");
+    assert.equal($("#stage-header-visual").querySelector(".stage-next").textContent, "Открыть кадр 2");
     assert.equal($("#stage-header-video").querySelector(".stage-next").textContent, "Собрать видео");
   });
 });

@@ -294,6 +294,7 @@ test("inspector has no dialogue block and the frame editor keeps dialogue save",
   assert.equal(researchStarts().length, 0);
 
   buttonNamed(inspector(), "Открыть редактор кадра").dispatchEvent({ type: "click", stopPropagation() {} });
+  buttonNamed($("#frame-editor-tabs"), "Диалог").dispatchEvent({ type: "click" });
   const editor = $("#frame-dialogue");
   assert.equal(editor.hidden, false);
   const modes = [...editor.querySelectorAll("input[name='frame-dialogue-mode']")].map((input) => input.value);
@@ -301,22 +302,25 @@ test("inspector has no dialogue block and the frame editor keeps dialogue save",
   assert.equal($("#frame-dialogue-text").value, "Сохранённая реплика");
   const speakers = [...$("#frame-dialogue-speaker").querySelectorAll("input")].map((input) => input.value);
   assert.deepEqual(speakers, ["p-kate", "p-ilya"]);
-  assert.ok($("#frame-dialogue-save"));
-  assert.ok($("#frame-dialogue-add"));
-  assert.ok($("#frame-dialogue-remove"));
-  assert.match(html, /id="frame-dialogue-save"[^>]*>Сохранить/);
-  assert.match(html, /id="frame-dialogue-add"[^>]*>Добавить реплику/);
-  assert.match(html, /id="frame-dialogue-remove"[^>]*>Удалить реплику/);
+  assert.equal($("#frame-dialogue-save"), null);
+  assert.equal($("#frame-dialogue-add"), null);
+  assert.equal($("#frame-dialogue-remove"), null);
+  assert.match(html, /id="frame-editor-leave-save"[^>]*>Сохранить/);
+  assert.match(html, /id="frame-editor-leave-discard"[^>]*>Не сохранять/);
+  assert.match(html, /id="frame-editor-leave-stay"[^>]*>Остаться/);
 
   $("#frame-dialogue-text").value = "   ";
-  $("#frame-dialogue-save").click();
+  $("#close-detail").click();
+  $("#frame-editor-leave-save").click();
   await flush(4);
+  assert.equal($("#detail").open, true);
   assert.match($("#frame-dialogue-error").textContent, /Введите текст реплики/);
   assert.equal(mutatingRequests().length, 0);
 
   $("#frame-dialogue-text").value = "Новая реплика кадра";
   for (const input of $("#frame-dialogue-speaker").querySelectorAll("input")) input.checked = input.value === "p-ilya";
-  $("#frame-dialogue-save").click();
+  $("#close-detail").click();
+  $("#frame-editor-leave-save").click();
   await flush(8);
   const posts = productRequests().filter((entry) => entry.method !== "GET");
   assert.equal(posts.length, 1);

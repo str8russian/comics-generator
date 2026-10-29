@@ -19,7 +19,9 @@
           <button type="submit">Сохранить название</button>
         </form>
         <button id="duplicate-project" type="button">Дублировать проект</button>
-        <button id="global-undo" type="button" class="global-undo" hidden disabled>Нечего отменять</button>
+        <div id="workspace-undo-slot" class="workspace-undo-slot">
+          <button id="global-undo" type="button" class="global-undo" hidden disabled>Нечего отменять</button>
+        </div>
         <p id="build-marker" class="build-marker">Сборка …</p>
       </div>
       <nav id="stage-nav" class="stage-nav" aria-label="Этапы работы"></nav>
@@ -181,54 +183,79 @@
   </div>
   <dialog id="detail">
     <div id="detail-scroll" class="detail-scroll">
+      <header class="frame-editor-header">
+        <div class="frame-editor-nav">
+          <button id="prev-frame" type="button" aria-label="Предыдущий кадр">←</button>
+          <p id="detail-frame-number" class="detail-frame-number"></p>
+          <button id="next-frame" type="button" aria-label="Следующий кадр">→</button>
+        </div>
+        <div class="frame-editor-heading">
+          <h2 id="detail-title" class="detail-title">Редактор кадра</h2>
+        </div>
+        <div class="frame-editor-actions dialog-actions">
+          <div id="frame-editor-undo"></div>
+          <button id="close-detail" type="button" class="secondary">Закрыть</button>
+        </div>
+      </header>
+      <p id="detail-generation-status" class="detail-generation-status" role="status" aria-live="polite" hidden></p>
       <div class="detail-layout">
-        <h2 id="detail-title" class="detail-title">Редактор кадра</h2>
-        <p id="detail-frame-number" class="detail-frame-number"></p>
-        <p id="detail-generation-status" class="detail-generation-status" role="status" aria-live="polite" hidden></p>
-        <div id="detail-frame" class="frame-host"></div>
-        <p id="detail-retained-notice" class="retained-image-notice" hidden></p>
-        <p id="detail-outside" class="outside-frame"></p>
-        <button id="utterance-edit" type="button" hidden>Редактирование реплики</button>
-        <section id="utterance-editor" class="utterance-editor" hidden>
-          <h3>Редактирование реплики</h3>
-          <p id="utterance-speaker"></p>
-          <p id="utterance-source"></p>
-          <p id="utterance-scope" hidden></p>
-          <label for="utterance-text">Новая формулировка</label>
-          <textarea id="utterance-text"></textarea>
-          <p id="utterance-error" hidden></p>
-          <p class="scope-note">Меняет всю исходную реплику. Черновик диалога обновляется.</p>
-          <button id="utterance-save" type="button">Сохранить</button>
-          <button id="utterance-cancel" type="button" class="secondary">Отмена</button>
-        </section>
-        <section id="frame-dialogue" class="frame-dialogue" hidden>
-          <h3>Диалог кадра</h3>
-          <p class="scope-note">Меняет только показ этого кадра. Черновик диалога не меняется.</p>
-          <p id="frame-dialogue-state"></p>
-          <fieldset>
-            <legend>Состояние</legend>
-            <label><input type="radio" name="frame-dialogue-mode" value="spoken"> Реплика</label>
-            <label><input type="radio" name="frame-dialogue-mode" value="silent"> Молчание</label>
-            <label><input type="radio" name="frame-dialogue-mode" value="hidden"> Без реплики</label>
-          </fieldset>
-          <div id="frame-dialogue-spoken" hidden>
-            <label for="frame-dialogue-text">Текст реплики</label>
-            <textarea id="frame-dialogue-text"></textarea>
-            <div id="frame-dialogue-speaker"></div>
-          </div>
-          <p id="frame-dialogue-error" hidden></p>
-          <button id="frame-dialogue-save" type="button">Сохранить</button>
-          <button id="frame-dialogue-add" type="button">Добавить реплику</button>
-          <button id="frame-dialogue-remove" type="button">Удалить реплику</button>
-        </section>
-        <div id="frame-panel-actions" class="frame-panel-actions"></div>
-        <section id="panel-editor" class="panel-editor" hidden>
-          <div id="detail-panel-controls" class="panel-controls"></div>
-        </section>
+      <div class="frame-editor-body">
+        <div class="frame-editor-stage">
+          <div id="detail-frame" class="frame-host"></div>
+          <p id="detail-retained-notice" class="retained-image-notice" hidden></p>
+          <p id="detail-outside" class="outside-frame"></p>
+        </div>
+        <aside class="frame-editor-inspector" aria-label="Разделы кадра">
+          <div id="frame-editor-tabs" class="frame-editor-tabs" role="tablist"></div>
+          <div id="frame-editor-frame"></div>
+          <button id="utterance-edit" type="button" hidden>Редактирование реплики</button>
+          <section id="utterance-editor" class="utterance-editor" hidden>
+            <h3>Редактирование реплики</h3>
+            <p id="utterance-speaker"></p>
+            <p id="utterance-source"></p>
+            <p id="utterance-scope" hidden></p>
+            <label for="utterance-text">Новая формулировка</label>
+            <textarea id="utterance-text"></textarea>
+            <p id="utterance-error" hidden></p>
+            <p class="scope-note">Меняет всю исходную реплику. Черновик диалога обновляется.</p>
+            <button id="utterance-save" type="button">Сохранить</button>
+            <button id="utterance-cancel" type="button" class="secondary">Отмена</button>
+          </section>
+          <section id="frame-dialogue" class="frame-dialogue" hidden>
+            <h3>Диалог кадра</h3>
+            <p class="scope-note">Меняет только показ этого кадра. Черновик диалога не меняется.</p>
+            <p id="frame-dialogue-state"></p>
+            <fieldset>
+              <legend>Состояние</legend>
+              <label><input type="radio" name="frame-dialogue-mode" value="spoken"> Реплика</label>
+              <label><input type="radio" name="frame-dialogue-mode" value="silent"> Молчание</label>
+              <label><input type="radio" name="frame-dialogue-mode" value="hidden"> Без реплики</label>
+            </fieldset>
+            <div id="frame-dialogue-spoken" hidden>
+              <label for="frame-dialogue-text">Текст реплики</label>
+              <textarea id="frame-dialogue-text"></textarea>
+              <div id="frame-dialogue-speaker"></div>
+            </div>
+            <p id="frame-dialogue-error" hidden></p>
+          </section>
+          <div id="frame-panel-actions" class="frame-panel-actions" hidden></div>
+          <section id="panel-editor" class="panel-editor" hidden>
+            <div id="detail-panel-controls" class="panel-controls"></div>
+          </section>
+        </aside>
       </div>
-      <div class="dialog-actions">
-        <button id="next-frame" type="button" hidden>Продолжить к следующему кадру</button>
-        <button id="close-detail" type="button" class="secondary">Закрыть</button>
+      </div>
+    </div>
+    <div id="frame-editor-leave" class="frame-editor-leave" hidden>
+      <div class="frame-editor-leave-scrim" aria-hidden="true"></div>
+      <div class="frame-editor-leave-card" role="dialog" aria-modal="true" aria-labelledby="frame-editor-leave-title">
+        <h3 id="frame-editor-leave-title">Сохранить диалог?</h3>
+        <p id="frame-editor-leave-text">Несохранённая реплика этого кадра останется только если сохранить её.</p>
+        <div class="dialog-actions">
+          <button id="frame-editor-leave-stay" type="button" class="secondary">Остаться</button>
+          <button id="frame-editor-leave-discard" type="button">Не сохранять</button>
+          <button id="frame-editor-leave-save" type="button">Сохранить</button>
+        </div>
       </div>
     </div>
     <div id="revision-confirm" class="revision-confirm" hidden>

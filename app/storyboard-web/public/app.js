@@ -17,6 +17,7 @@ import { bindWorkspaceStages, STAGES } from "./workspace-stages.mjs";
 import { renderFrameInspector } from "./frame-inspector.mjs";
 import { basisChip, foregroundChip, panelBasis } from "./panel-basis.mjs";
 import { REVISION_COPY, renderRevisionSummary } from "./panel-revision-view.mjs";
+import { defaultDurationFrames, typedDialogue } from "../timing.mjs";
 export { presentFrameForMount };
 
 const draftCompiler = typeof globalThis.window === "undefined"
@@ -61,9 +62,6 @@ const frameDialogueSpoken = document.querySelector("#frame-dialogue-spoken");
 const frameDialogueText = document.querySelector("#frame-dialogue-text");
 const frameDialogueSpeaker = document.querySelector("#frame-dialogue-speaker");
 const frameDialogueError = document.querySelector("#frame-dialogue-error");
-const frameDialogueSave = document.querySelector("#frame-dialogue-save");
-const frameDialogueAdd = document.querySelector("#frame-dialogue-add");
-const frameDialogueRemove = document.querySelector("#frame-dialogue-remove");
 const materialCastStatus = document.querySelector("#material-cast-status");
 const closeDetail = document.querySelector("#close-detail");
 const detailPanelControls = document.querySelector("#detail-panel-controls");
@@ -85,6 +83,15 @@ const approvalCopy = document.querySelector("#approval-copy");
 const readyForVideo = document.querySelector("#ready-for-video");
 const buildMarker = document.querySelector("#build-marker");
 const globalUndo = document.querySelector("#global-undo");
+const workspaceUndoSlot = document.querySelector("#workspace-undo-slot");
+const frameEditorUndo = document.querySelector("#frame-editor-undo");
+const frameEditorTabs = document.querySelector("#frame-editor-tabs");
+const frameEditorFrame = document.querySelector("#frame-editor-frame");
+const prevFrame = document.querySelector("#prev-frame");
+const frameEditorLeave = document.querySelector("#frame-editor-leave");
+const frameEditorLeaveStay = document.querySelector("#frame-editor-leave-stay");
+const frameEditorLeaveDiscard = document.querySelector("#frame-editor-leave-discard");
+const frameEditorLeaveSave = document.querySelector("#frame-editor-leave-save");
 const renderPanel = document.querySelector("#render-panel");
 const renderStatus = document.querySelector("#render-status");
 const startRender = document.querySelector("#start-render");
@@ -118,7 +125,11 @@ const revisionConfirmDo = document.querySelector("#revision-confirm-do");
 let workspaceStages = null;
 let selection = null;
 let detailPanelIndex = 0;
-let detailView = "frame";
+let editorTab = "frame";
+let dialogueDraft = null;
+let renderedDialogue = null;
+let pendingLeave = null;
+let detailFrameObserver = null;
 let revisionPreflightEpoch = 0;
 let dockSuspended = false;
 let dockRestoreCollapsed = null;
@@ -1204,14 +1215,8 @@ function showCastStatus(message) {
   materialCastStatus.textContent = message || "";
 }
 
-function prepareUtteranceEditor(frame) {
-  const sourceItemId = sourceItemIdOf(frame);
-  const editable = Boolean(sourceItemId)
-    && String(frame?.dialogue || "").trim()
-    && frame?.sourceRole !== "action"
-    && frame?.frameKind !== "text"
-    && frame?.frameKind !== "image";
-  if (utteranceEdit) utteranceEdit.hidden = !editable;
+function prepareUtteranceEditor() {
+  if (utteranceEdit) utteranceEdit.hidden = true;
   if (utteranceEditor) {
     utteranceEditor.hidden = true;
     delete utteranceEditor.dataset.sourceId;
@@ -1224,6 +1229,74 @@ const DIALOGUE_LABELS = {
   silent: "Молчание",
   hidden: "Без реплики",
 };
+
+function frameDraftKey(frame) {
+  if (!frame) return "";
+  const segment = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : "";
+  return `${frame.structureFrameId || frame.id || ""}#${segment}`;
+}
+
+function dialogueFormSnapshot() {
+  return {
+    mode: selectedFrameDialogueMode(),
+    text: frameDialogueText?.value ?? "",
+    speakerPanelId: selectedSpeakerPanelId(),
+  };
+}
+
+function persistedDialogueSnapshot(frame) {
+  const mode = persistedDialogueMode(frame);
+  const panels = frame?.panels || [];
+  const speakerPanel = mode === "spoken" ? panels[frame.speakerPanel] : null;
+  return {
+    mode,
+    text: storedDialogueLine(frame),
+    speakerPanelId: speakerPanel?.id || null,
+  };
+}
+
+function dialogueSnapshotsMatch(left, right) {
+  if (!left || !right || left.mode !== right.mode) return false;
+  if (left.mode !== "spoken") return true;
+  return left.text === right.text && (left.speakerPanelId || null) === (right.speakerPanelId || null);
+}
+
+function dialogueDirty(frame) {
+  if (!frame || frame.frameKind === "text" || !frameDialogue || frameDialogueText == null) return false;
+  const current = dialogueFormSnapshot();
+  if (!current.mode) return false;
+  return !dialogueSnapshotsMatch(current, persistedDialogueSnapshot(frame));
+}
+
+function applyDialogueDraft(frame) {
+  if (!dialogueDraft || dialogueDraft.key !== frameDraftKey(frame)) return;
+  for (const input of namedInputs(frameDialogue, "frame-dialogue-mode")) {
+    input.checked = input.value === dialogueDraft.mode;
+  }
+  if (frameDialogueText) frameDialogueText.value = dialogueDraft.text ?? "";
+  if (dialogueDraft.speakerPanelId) {
+    for (const input of namedInputs(frameDialogueSpeaker, "frame-dialogue-speaker")) {
+      input.checked = input.value === dialogueDraft.speakerPanelId;
+    }
+  }
+}
+
+function previewFrame(frame) {
+  if (!frame || !dialogueDirty(frame)) return frame;
+  const snap = dialogueFormSnapshot();
+  const panels = frame.panels || [];
+  let speakerPanel = frame.speakerPanel;
+  if (snap.mode === "spoken" && panels.length > 1) {
+    const index = panels.findIndex((panel) => panel.id === snap.speakerPanelId);
+    if (index >= 0) speakerPanel = index;
+  }
+  return {
+    ...frame,
+    dialogueMode: snap.mode,
+    dialogue: snap.mode === "spoken" ? snap.text : frame.dialogue,
+    speakerPanel: snap.mode === "spoken" ? speakerPanel : null,
+  };
+}
 
 function persistedDialogueMode(frame) {
   if (frame?.dialogueMode === "spoken" || frame?.dialogueMode === "silent" || frame?.dialogueMode === "hidden") {
@@ -1305,18 +1378,31 @@ function renderFrameDialogue(frame) {
       frameDialogueSpeaker.append(label);
     });
   }
-  if (frameDialogueAdd) frameDialogueAdd.hidden = mode === "spoken";
-  if (frameDialogueRemove) frameDialogueRemove.hidden = mode === "hidden";
   showFrameDialogueError("");
+  applyDialogueDraft(frame);
+  if (frameDialogueState) frameDialogueState.textContent = `Сейчас: ${DIALOGUE_LABELS[selectedFrameDialogueMode()] || DIALOGUE_LABELS[mode]}`;
   syncFrameDialogueFields(frame);
+  renderedDialogue = dialogueFormSnapshot();
 }
 
 async function saveFrameDialogue(frame, mode) {
   const multiPanel = (frame?.panels || []).length > 1;
-  return submitFrameDialogue(frame, mode, {
+  if (!frame || !mode) return false;
+  if (mode === "spoken") {
+    if (!(frameDialogueText?.value ?? "").trim()) {
+      showFrameDialogueError("Введите текст реплики.");
+      return false;
+    }
+    if (multiPanel && !selectedSpeakerPanelId()) {
+      showFrameDialogueError("Выберите панель, которая говорит.");
+      return false;
+    }
+  }
+  const result = await submitFrameDialogue(frame, mode, {
     text: mode === "spoken" ? (frameDialogueText?.value ?? "") : null,
     speakerPanelId: mode === "spoken" && multiPanel ? selectedSpeakerPanelId() : null,
   });
+  return Boolean(result);
 }
 
 async function submitFrameDialogue(frame, mode, {
@@ -1343,7 +1429,7 @@ async function submitFrameDialogue(frame, mode, {
     }
   }
   showError("");
-  await runAssembly({
+  return runAssembly({
     op: "setFrameDialogue",
     ...frameAddress(frame),
     dialogueMode: mode,
@@ -1416,22 +1502,313 @@ function placeDetailScroll(top) {
   detailScroll.scrollTop = top > 0 ? top : 0;
 }
 
-function openDetail(index, { panelIndex = null } = {}) {
+function editorTabFor(frame, requested) {
+  const panels = frame?.panels || [];
+  let tab = requested || "frame";
+  if (tab === "dialogue" && frame?.frameKind === "text") tab = "frame";
+  if (String(tab).startsWith("panel-")) {
+    const index = Number(String(tab).slice("panel-".length));
+    if (!Number.isInteger(index) || index < 0 || index >= panels.length) return "frame";
+    detailPanelIndex = index;
+  }
+  return tab;
+}
+
+function placeEditorUndo(open) {
+  const slot = open ? frameEditorUndo : workspaceUndoSlot;
+  if (!slot || !globalUndo || globalUndo.parentNode === slot) return;
+  slot.append(globalUndo);
+}
+
+function syncFrameNav() {
+  if (prevFrame) prevFrame.disabled = detailIndex <= 0;
+  if (nextFrame) nextFrame.disabled = detailIndex < 0 || detailIndex >= readyFrames.length - 1;
+}
+
+function paintEditorTabs(frame) {
+  if (!frameEditorTabs) return;
+  frameEditorTabs.replaceChildren();
+  const panels = frame?.panels || [];
+  const tabs = [
+    { id: "frame", label: "Кадр" },
+    ...(frame?.frameKind === "text" ? [] : [{ id: "dialogue", label: "Диалог" }]),
+    ...panels.map((_, index) => ({
+      id: `panel-${index}`,
+      label: panels.length === 1 ? "Панель" : `Панель ${index + 1}`,
+    })),
+  ];
+  for (const tab of tabs) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "frame-editor-tab";
+    button.dataset.editorTab = tab.id;
+    if (typeof button.setAttribute === "function") {
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-pressed", tab.id === editorTab ? "true" : "false");
+    }
+    button.textContent = tab.label;
+    button.addEventListener("click", () => selectEditorTab(tab.id));
+    frameEditorTabs.append(button);
+  }
+}
+
+function applyEditorPanes(frame) {
+  const showPanel = editorTab.startsWith("panel-");
+  if (frameEditorFrame) frameEditorFrame.hidden = editorTab !== "frame";
+  if (frameDialogue) frameDialogue.hidden = editorTab !== "dialogue" || frame?.frameKind === "text";
+  if (panelEditor) panelEditor.hidden = !showPanel || !(detailPanelControls?.children?.length);
+  [...(detailPanelControls?.children || [])].forEach((section, index) => {
+    section.hidden = !showPanel || index !== detailPanelIndex;
+  });
+  if (detailHost) detailHost.hidden = false;
+  if (detailTitle) {
+    detailTitle.hidden = false;
+    detailTitle.textContent = "Редактор кадра";
+  }
+  if (detailFrameNumber) detailFrameNumber.hidden = false;
+  if (detailOutside) detailOutside.hidden = false;
+  if (closeDetail) closeDetail.hidden = false;
+  if (detail) {
+    detail.dataset.editorTab = editorTab;
+    detail.dataset.view = "frame";
+  }
+}
+
+function markFrameSelection() {
+  for (const column of detailPanels()) {
+    const classes = String(column.className || "").split(/\s+/).filter((name) => name && name !== "panel-selected");
+    if (editorTab === `panel-${column.dataset?.panelIndex}`) classes.push("panel-selected");
+    column.className = classes.join(" ");
+  }
+  const bar = detailHost?.querySelector?.(".dialogue-bar");
+  if (!bar) return;
+  const classes = String(bar.className || "").split(/\s+/).filter((name) => name && name !== "is-selected");
+  if (editorTab === "dialogue") classes.push("is-selected");
+  bar.className = classes.join(" ");
+}
+
+function selectEditorTab(tab) {
+  const frame = readyFrames[detailIndex];
+  editorTab = editorTabFor(frame, tab);
+  paintEditorTabs(frame);
+  applyEditorPanes(frame);
+  markFrameSelection();
+}
+
+function detailFrameScale() {
+  const column = detailHost?.parentElement;
+  const width = Number(column?.clientWidth) || Number(detailHost?.clientWidth) || 0;
+  const frameWidth = FrameRenderer.FRAME_GEOMETRY.width;
+  if (width > 120 && frameWidth > 0) return Math.min(0.48, Math.max(0.16, (width - 2) / frameWidth));
+  return 0.5;
+}
+
+function fitOpenDetailFrame() {
+  if (!detail?.open) return;
+  const frame = readyFrames[detailIndex];
+  if (!frame || !detailHost) return;
+  const scale = detailFrameScale();
+  const current = Number(detailHost.querySelector?.(".frame-stage")?.dataset?.frameScale);
+  if (scale === 0.5 && !(Number(detailHost.parentElement?.clientWidth) > 120)) return;
+  if (Number.isFinite(current) && Math.abs(current - scale) < 0.008) return;
+  mountDetailFrame(frame);
+  bindDetailFrameChrome(frame);
+}
+
+function watchDetailFrameColumn() {
+  const column = detailHost?.parentElement;
+  if (!column || typeof ResizeObserver !== "function") return;
+  if (!detailFrameObserver) {
+    detailFrameObserver = new ResizeObserver(() => fitOpenDetailFrame());
+  }
+  detailFrameObserver.disconnect?.();
+  detailFrameObserver.observe(column);
+}
+
+function bindDetailFrameChrome(frame) {
+  bindDetailPan(frame);
+  for (const column of detailPanels()) {
+    const panelIndex = Number(column.dataset?.panelIndex);
+    if (!Number.isInteger(panelIndex)) continue;
+    column.addEventListener("click", () => selectEditorTab(`panel-${panelIndex}`));
+  }
+  detailHost?.querySelector?.(".dialogue-bar")?.addEventListener("click", () => selectEditorTab("dialogue"));
+  markFrameSelection();
+}
+
+function mountDetailFrame(frame) {
+  if (!detailHost || !frame) return;
+  mountFrame(detailHost, previewFrame(frame), detailFrameScale());
+}
+
+function refreshDetailPreview() {
+  const frame = readyFrames[detailIndex];
+  if (!detail?.open || !frame) return;
+  mountDetailFrame(frame);
+  bindDetailFrameChrome(frame);
+}
+
+function renderFrameStructure(frame) {
+  if (!frameEditorFrame) return;
+  frameEditorFrame.replaceChildren();
+  if (!frame) return;
+  const stored = Number.isInteger(frame.durationFrames) ? frame.durationFrames : 36;
+  const resetFrames = defaultDurationFrames(typedDialogue(frame));
+  const heading = document.createElement("h3");
+  heading.textContent = "Длительность";
+  const grid = document.createElement("div");
+  grid.className = "frame-editor-duration";
+  const secondsField = document.createElement("label");
+  secondsField.className = "inspector-field";
+  const seconds = document.createElement("input");
+  seconds.id = "frame-duration-seconds";
+  seconds.type = "number";
+  seconds.min = "0.01";
+  seconds.step = "any";
+  seconds.value = formatSeconds(stored / 30);
+  if (typeof seconds.setAttribute === "function") seconds.setAttribute("aria-label", "Длительность в секундах");
+  const secondsLabel = document.createElement("span");
+  secondsLabel.textContent = "Секунды";
+  secondsField.append(secondsLabel, seconds);
+  const framesField = document.createElement("label");
+  framesField.className = "inspector-field";
+  const frames = document.createElement("input");
+  frames.id = "frame-duration-frames";
+  frames.type = "number";
+  frames.min = "1";
+  frames.step = "1";
+  frames.value = String(stored);
+  if (typeof frames.setAttribute === "function") frames.setAttribute("aria-label", "Длительность в кадрах");
+  const framesLabel = document.createElement("span");
+  framesLabel.textContent = "Кадры";
+  framesField.append(framesLabel, frames);
+  grid.append(secondsField, framesField);
+  const rate = document.createElement("p");
+  rate.className = "helper";
+  rate.textContent = "30 кадр/с";
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.dataset.frameAction = "reset-duration";
+  reset.textContent = `Сбросить длительность · ${formatSeconds(resetFrames / 30)} с`;
+  const syncSeconds = () => {
+    const count = Math.round(Number(seconds.value) * 30);
+    if (Number.isInteger(count) && count > 0) frames.value = String(count);
+  };
+  const syncFrames = () => {
+    const count = Number(frames.value);
+    if (Number.isInteger(count) && count > 0) seconds.value = formatSeconds(count / 30);
+  };
+  const commit = (count) => {
+    const current = readyFrames[detailIndex];
+    if (!current || !Number.isInteger(count) || count <= 0) return;
+    runAssembly({
+      op: "setDuration",
+      ...frameAddress(current),
+      durationFrames: count,
+    }, "Сохраняю длительность…", { submittedText: String(count), frame: current });
+  };
+  seconds.addEventListener("input", syncSeconds);
+  frames.addEventListener("input", syncFrames);
+  seconds.addEventListener("change", () => {
+    syncSeconds();
+    commit(Number(frames.value));
+  });
+  frames.addEventListener("change", () => {
+    syncFrames();
+    commit(Number(frames.value));
+  });
+  reset.addEventListener("click", () => {
+    const current = readyFrames[detailIndex];
+    if (!current) return;
+    const next = defaultDurationFrames(typedDialogue(current));
+    frames.value = String(next);
+    seconds.value = formatSeconds(next / 30);
+    commit(next);
+  });
+  frameEditorFrame.append(heading, grid, rate, reset);
+  if (frame.frameKind === "text") return;
+  const structure = document.createElement("div");
+  structure.className = "frame-structure-actions";
+  const panels = frame.panels || [];
+  if (panels.length < 2) {
+    const add = document.createElement("button");
+    add.type = "button";
+    add.dataset.frameAction = "add-panel";
+    add.textContent = "Добавить панель";
+    add.addEventListener("click", () => {
+      const current = readyFrames[detailIndex];
+      if (!current) return;
+      runAssembly({ op: "addPanel", ...frameAddress(current) }, "Добавляю панель…", { frame: current });
+    });
+    structure.append(add);
+  }
+  if (panels.length === 2) {
+    const swap = document.createElement("button");
+    swap.type = "button";
+    swap.dataset.frameAction = "swap-panels";
+    swap.textContent = "Поменять панели местами";
+    swap.addEventListener("click", () => {
+      const current = readyFrames[detailIndex];
+      const ids = current?.panels || [];
+      if (!current || ids.length < 2) return;
+      runAssembly({
+        op: "reorderPanels",
+        ...frameAddress(current),
+        panelIds: [ids[1].id, ids[0].id],
+      }, "Меняю панели местами…", { frame: current });
+    });
+    structure.append(swap);
+    panels.forEach((panel, panelIndex) => {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.dataset.frameAction = "delete-panel";
+      remove.dataset.panelIndex = String(panelIndex);
+      remove.textContent = `Удалить панель ${panelIndex + 1}`;
+      remove.addEventListener("click", () => {
+        const current = readyFrames[detailIndex];
+        const target = current?.panels?.[panelIndex];
+        if (current && target) deletePanelWithConfirmation(current, target, panelIndex);
+      });
+      structure.append(remove);
+    });
+  }
+  frameEditorFrame.append(structure);
+}
+
+function hideLeaveModal() {
+  pendingLeave = null;
+  if (frameEditorLeave) frameEditorLeave.hidden = true;
+}
+
+function requestLeave(action) {
+  const frame = readyFrames[detailIndex];
+  if (!dialogueDirty(frame)) {
+    if (dialogueDraft?.key === frameDraftKey(frame)) dialogueDraft = null;
+    action();
+    return;
+  }
+  pendingLeave = action;
+  if (frameEditorLeave) frameEditorLeave.hidden = false;
+  frameEditorLeaveSave?.focus?.();
+}
+
+function openDetail(index, { panelIndex = null, tab = null } = {}) {
   const frame = readyFrames[index];
   if (!frame) return;
   const wasOpen = Boolean(detail?.open);
-  const previousView = wasOpen ? detailView : null;
   const preservedScroll = Number(detailScroll?.scrollTop) || 0;
   const structureId = frame.structureFrameId || frame.id;
   const segmentIndex = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
   const sameFrame = wasOpen && detailStructureId === structureId && detailSegmentIndex === segmentIndex;
-  if (Number.isInteger(panelIndex)) {
-    detailPanelIndex = panelIndex;
-    detailView = "panel";
-  } else {
-    if (!sameFrame) detailPanelIndex = 0;
-    detailView = "frame";
-  }
+  if (sameFrame) {
+    const current = dialogueFormSnapshot();
+    const edited = Boolean(renderedDialogue && current.mode && !dialogueSnapshotsMatch(current, renderedDialogue));
+    dialogueDraft = edited ? { key: frameDraftKey(readyFrames[detailIndex]), ...current } : null;
+  } else dialogueDraft = null;
+  let requested = sameFrame ? editorTab : "frame";
+  if (typeof tab === "string" && tab) requested = tab;
+  if (Number.isInteger(panelIndex)) requested = `panel-${panelIndex}`;
+  editorTab = editorTabFor(frame, requested);
   detailIndex = index;
   detailStructureId = structureId;
   detailSegmentIndex = segmentIndex;
@@ -1439,27 +1816,26 @@ function openDetail(index, { panelIndex = null } = {}) {
   markSelectedCards();
   renderInspector();
   if (detailFrameNumber) detailFrameNumber.textContent = `Кадр ${index + 1}`;
-  mountFrame(detailHost, frame, 0.5);
   detailOutside.textContent = frame.outsideFrameText || "";
   if (detailRetained) {
     detailRetained.hidden = !frame.retainedImageNotice;
     detailRetained.textContent = frame.retainedImageNotice || "";
   }
-  prepareUtteranceEditor(frame);
+  prepareUtteranceEditor();
   renderFrameDialogue(frame);
+  renderFrameStructure(frame);
+  mountDetailFrame(frame);
   renderPanelControls(frame);
-  const following = readyFrames[index + 1];
-  nextFrame.hidden = !frame.visualReady || !following;
-  if (following) {
-    nextFrame.textContent = following.visualReady ? "Открыть следующий кадр" : "Создать следующий кадр";
-  }
+  syncFrameNav();
+  placeEditorUndo(true);
   researchDock?.enterDetail();
   if (!detail.open) detail.showModal();
-  const stayingInPanel = wasOpen && previousView === "panel" && detailView === "panel";
-  const enteredPanel = detailView === "panel" && (!wasOpen || previousView !== "panel");
-  const leftPanel = wasOpen && previousView === "panel" && detailView !== "panel";
-  if (stayingInPanel) placeDetailScroll(preservedScroll);
-  else if (enteredPanel || leftPanel) placeDetailScroll(0);
+  watchDetailFrameColumn();
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => requestAnimationFrame(() => fitOpenDetailFrame()));
+  } else fitOpenDetailFrame();
+  if (wasOpen && sameFrame) placeDetailScroll(preservedScroll);
+  else placeDetailScroll(0);
 }
 
 export function openResearchDetail(index) {
@@ -1467,24 +1843,16 @@ export function openResearchDetail(index) {
 }
 
 function selectDetailPanel(panelIndex) {
-  const sections = [...(detailPanelControls?.children || [])];
-  if (!sections[panelIndex]) return;
-  detailPanelIndex = panelIndex;
-  sections.forEach((section, index) => {
-    section.hidden = index !== panelIndex;
-  });
-  for (const tab of panelEditorTabs?.children || []) {
-    tab.setAttribute?.("aria-pressed", Number(tab.dataset?.panelIndex) === panelIndex ? "true" : "false");
-  }
-  for (const column of detailPanels()) {
-    const classes = String(column.className || "").split(/\s+/).filter((name) => name && name !== "panel-selected");
-    if (Number(column.dataset?.panelIndex) === panelIndex) classes.push("panel-selected");
-    column.className = classes.join(" ");
-  }
+  selectEditorTab(`panel-${panelIndex}`);
 }
 
 openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
-closeDetail.addEventListener("click", () => detail.close());
+closeDetail.addEventListener("click", () => requestLeave(() => detail.close()));
+prevFrame?.addEventListener("click", () => {
+  if (detailIndex <= 0) return;
+  const index = detailIndex - 1;
+  requestLeave(() => openDetail(index, { tab: editorTab }));
+});
 utteranceEdit?.addEventListener("click", () => {
   const frame = readyFrames[detailIndex];
   if (frame) openUtteranceEditor(frame);
@@ -1493,28 +1861,45 @@ utteranceCancel?.addEventListener("click", () => {
   if (utteranceEditor) utteranceEditor.hidden = true;
 });
 frameDialogue?.addEventListener("change", (event) => {
-  if (event.target?.name !== "frame-dialogue-mode") return;
+  const name = event.target?.name;
+  if (name !== "frame-dialogue-mode" && name !== "frame-dialogue-speaker") return;
   const frame = readyFrames[detailIndex];
   showFrameDialogueError("");
   syncFrameDialogueFields(frame);
+  if (frameDialogueState) {
+    const mode = selectedFrameDialogueMode();
+    frameDialogueState.textContent = `Сейчас: ${DIALOGUE_LABELS[mode] || ""}`;
+  }
+  refreshDetailPreview();
 });
-frameDialogueSave?.addEventListener("click", () => {
-  const frame = readyFrames[detailIndex];
-  const mode = selectedFrameDialogueMode();
-  if (!frame || !mode) return;
-  saveFrameDialogue(frame, mode);
-});
-frameDialogueAdd?.addEventListener("click", () => {
-  const spoken = frameDialogue?.querySelector("input[value='spoken']");
-  if (spoken) spoken.checked = true;
-  const frame = readyFrames[detailIndex];
+frameDialogueText?.addEventListener("input", () => {
   showFrameDialogueError("");
-  syncFrameDialogueFields(frame);
-  if (frameDialogueText && !frameDialogueText.value.trim()) frameDialogueText.focus();
+  refreshDetailPreview();
 });
-frameDialogueRemove?.addEventListener("click", () => {
+frameEditorLeaveStay?.addEventListener("click", () => hideLeaveModal());
+frameEditorLeaveDiscard?.addEventListener("click", () => {
+  const action = pendingLeave;
+  dialogueDraft = null;
   const frame = readyFrames[detailIndex];
-  if (frame) saveFrameDialogue(frame, "hidden");
+  hideLeaveModal();
+  if (frame) {
+    renderFrameDialogue(frame);
+    refreshDetailPreview();
+  }
+  action?.();
+});
+frameEditorLeaveSave?.addEventListener("click", async () => {
+  if (!pendingLeave) return;
+  const frame = readyFrames[detailIndex];
+  const action = pendingLeave;
+  const ok = await saveFrameDialogue(frame, selectedFrameDialogueMode());
+  if (!ok) {
+    hideLeaveModal();
+    selectEditorTab("dialogue");
+    return;
+  }
+  hideLeaveModal();
+  action?.();
 });
 utteranceSave?.addEventListener("click", () => {
   const frame = readyFrames[detailIndex];
@@ -1581,13 +1966,27 @@ utteranceSave?.addEventListener("click", () => {
   });
 });
 detail.addEventListener("cancel", (event) => {
-  if (!revisionConfirm || revisionConfirm.hidden) return;
-  event.preventDefault();
-  hideRevisionConfirm();
+  if (revisionConfirm && !revisionConfirm.hidden) {
+    event.preventDefault();
+    hideRevisionConfirm();
+    return;
+  }
+  if (frameEditorLeave && !frameEditorLeave.hidden) {
+    event.preventDefault();
+    hideLeaveModal();
+    return;
+  }
+  if (dialogueDirty(readyFrames[detailIndex])) {
+    event.preventDefault();
+    requestLeave(() => detail.close());
+  }
 });
 detail.addEventListener("close", () => {
-  detailView = "frame";
+  editorTab = "frame";
+  dialogueDraft = null;
+  hideLeaveModal();
   hideRevisionConfirm();
+  placeEditorUndo(false);
   resumeDockAfterPanel();
   if (detailGenerationStatus) {
     detailGenerationStatus.hidden = true;
@@ -1595,15 +1994,10 @@ detail.addEventListener("close", () => {
     delete detailGenerationStatus.dataset.kind;
   }
 });
-nextFrame.addEventListener("click", async () => {
+nextFrame.addEventListener("click", () => {
+  if (detailIndex < 0 || detailIndex >= readyFrames.length - 1) return;
   const index = detailIndex + 1;
-  const frame = readyFrames[index];
-  if (!frame) return;
-  if (frame.visualReady) {
-    openDetail(index);
-    return;
-  }
-  await generateFrame(frame.id, nextFrame, index);
+  requestLeave(() => openDetail(index, { tab: editorTab }));
 });
 
 function presentDetailGeneration(text, kind = "success") {
@@ -1893,8 +2287,8 @@ export function applyVisual(next) {
       const segment = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
       return segment === detailSegmentIndex;
     });
-    if (nextIndex >= 0) {
-      openDetail(nextIndex, detailView === "panel" ? { panelIndex: detailPanelIndex } : {});
+      if (nextIndex >= 0) {
+      openDetail(nextIndex, editorTab.startsWith("panel-") ? { panelIndex: detailPanelIndex } : { tab: editorTab });
     }
     else detail.close();
   }
@@ -2251,6 +2645,17 @@ function panelAddress(panelIndex) {
   return `${detailIndex >= 0 ? detailIndex + 1 : "?"}.${panelIndex + 1}`;
 }
 
+function panelOpenSection(name, title) {
+  const node = document.createElement("section");
+  node.className = `panel-subsection panel-subsection-${name}`;
+  node.dataset.panelSection = name;
+  const heading = document.createElement("h3");
+  heading.className = "panel-subsection-title";
+  heading.textContent = title;
+  node.append(heading);
+  return node;
+}
+
 function panelSubsection(name, title) {
   const node = document.createElement("details");
   node.className = `panel-subsection panel-subsection-${name}`;
@@ -2380,7 +2785,6 @@ function bindInitialPanelCreate({ frame, panel, panelIndex, instruction, perform
     }
   });
   imagePart.append(instruction, regenerate);
-  imagePart.append(textElement("p", "helper", "Фото позы из «Референсов» отправляется вместе с этой генерацией."));
 }
 
 function hideRevisionConfirm() {
@@ -2421,65 +2825,6 @@ function resumeDockAfterPanel() {
   if (dockRestoreCollapsed === false) researchDock?.setCollapsed?.(false);
   dockSuspended = false;
   dockRestoreCollapsed = null;
-}
-
-function applyDetailView({ restoreFrame = false } = {}) {
-  const panel = detailView === "panel";
-  if (detail) detail.dataset.view = detailView;
-  if (detailTitle) {
-    detailTitle.hidden = panel;
-    if (!panel) detailTitle.textContent = "Редактор кадра";
-  }
-  if (detailFrameNumber) detailFrameNumber.hidden = panel;
-  if (panelEditor) panelEditor.hidden = !panel || !(detailPanelControls?.children?.length);
-  if (framePanelActions) framePanelActions.hidden = panel;
-  if (panel) {
-    if (detailHost) detailHost.hidden = true;
-    if (detailOutside) detailOutside.hidden = true;
-    if (detailRetained) detailRetained.hidden = true;
-    if (frameDialogue) frameDialogue.hidden = true;
-    if (utteranceEdit) utteranceEdit.hidden = true;
-    if (utteranceEditor) utteranceEditor.hidden = true;
-    if (nextFrame) nextFrame.hidden = true;
-    if (closeDetail) closeDetail.hidden = true;
-    suspendDockForPanel();
-    return;
-  }
-  if (detailHost) detailHost.hidden = false;
-  if (detailOutside) detailOutside.hidden = false;
-  if (closeDetail) closeDetail.hidden = false;
-  const frame = readyFrames[detailIndex];
-  if (restoreFrame && frame) {
-    if (detailRetained) {
-      detailRetained.hidden = !frame.retainedImageNotice;
-      detailRetained.textContent = frame.retainedImageNotice || "";
-    }
-    prepareUtteranceEditor(frame);
-    renderFrameDialogue(frame);
-    const following = readyFrames[detailIndex + 1];
-    if (nextFrame) nextFrame.hidden = !frame.visualReady || !following;
-  }
-  resumeDockAfterPanel();
-}
-
-function renderFramePanelActions(frame) {
-  if (!framePanelActions) return;
-  framePanelActions.replaceChildren();
-  (frame?.panels || []).forEach((panel, panelIndex) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "frame-panel-edit";
-    const subject = panel.subject ? ` · ${panel.subject}` : "";
-    button.textContent = `Редактировать изображение панели ${panelAddress(panelIndex)}${subject}`;
-    button.addEventListener("click", () => {
-      const enteredPanel = detailView !== "panel";
-      detailView = "panel";
-      selectDetailPanel(panelIndex);
-      applyDetailView();
-      if (enteredPanel) placeDetailScroll(0);
-    });
-    framePanelActions.append(button);
-  });
 }
 
 function bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart, epoch }) {
@@ -2746,25 +3091,6 @@ function renderPanelControls(frame) {
     section.className = "panel-control";
     section.dataset.panelIndex = String(panelIndex);
     section.hidden = panelIndex !== detailPanelIndex;
-    const header = document.createElement("header");
-    header.className = "panel-view-header";
-    const back = document.createElement("button");
-    back.type = "button";
-    back.className = "secondary";
-    back.textContent = "← К кадру";
-    back.addEventListener("click", () => {
-      detailView = "frame";
-      applyDetailView({ restoreFrame: true });
-      placeDetailScroll(0);
-    });
-    const closePanel = document.createElement("button");
-    closePanel.type = "button";
-    closePanel.className = "secondary";
-    closePanel.textContent = "Закрыть";
-    closePanel.addEventListener("click", () => detail.close());
-    const title = document.createElement("h3");
-    title.textContent = `Панель ${panelAddress(panelIndex)}${panel.subject ? ` · ${panel.subject}` : ""}`;
-    header.append(back, title, closePanel);
     const description = document.createElement("p");
     description.className = "panel-description-copy";
     description.textContent = panel.description;
@@ -2788,15 +3114,7 @@ function renderPanelControls(frame) {
     }
     const instruction = document.createElement("textarea");
     instruction.placeholder = "Опишите, что изменить в этой панели";
-    const performanceLabel = document.createElement("label");
-    performanceLabel.textContent = panel.performanceAssetId
-      ? "Заменить фото позы или выражения (необязательно)"
-      : "Добавить фото позы или выражения (необязательно)";
-    const performance = document.createElement("input");
-    performance.type = "file";
-    performance.accept = "image/png,image/jpeg,image/webp";
-    performanceLabel.append(performance);
-    section.append(header);
+    const performance = { files: [] };
     const imagePart = document.createElement("div");
     imagePart.className = "panel-subsection panel-subsection-image";
     imagePart.dataset.panelSection = "image";
@@ -2814,24 +3132,9 @@ function renderPanelControls(frame) {
     if (failure) imagePart.append(failure);
     if (panel.assetId) bindPanelRevision({ frame, panel, panelIndex, instruction, performance, imagePart, epoch });
     else bindInitialPanelCreate({ frame, panel, panelIndex, instruction, performance, imagePart });
-    const framingPart = panelSubsection("framing", "Кадрирование");
+    const framingPart = panelOpenSection("framing", "Кадрирование");
     const referencesPart = panelSubsection("references", "Референсы");
-    const performanceBox = document.createElement("div");
-    performanceBox.className = "panel-reference panel-reference-performance";
-    if (panel.performanceAssetUrl) {
-      const image = document.createElement("img");
-      image.src = panel.performanceAssetUrl;
-      image.alt = "Текущее фото позы или выражения";
-      performanceBox.append(image);
-    }
-    const performanceCopy = document.createElement("div");
-    performanceCopy.append(
-      textElement("p", "panel-reference-title", "Поза и выражение · фото-референс"),
-      performanceLabel,
-      textElement("p", "helper", "Влияет на позу, выражение и взгляд этой панели, но не на личность персонажа."),
-    );
-    performanceBox.append(performanceCopy);
-    referencesPart.append(description, identityReference(panel), performanceBox);
+    referencesPart.append(description, identityReference(panel));
     section.append(imagePart, framingPart, referencesPart);
     if (!panel.assetId) {
       framingPart.append(textElement("p", "helper", "Кадрирование появится, когда у панели будет своё изображение."));
@@ -2912,15 +3215,9 @@ function renderPanelControls(frame) {
     }
     detailPanelControls.append(section);
   });
-  bindDetailPan(frame);
-  for (const column of detailPanels()) {
-    const panelIndex = Number(column.dataset?.panelIndex);
-    if (!Number.isInteger(panelIndex)) continue;
-    column.addEventListener("click", () => selectDetailPanel(panelIndex));
-  }
-  selectDetailPanel(detailPanelIndex);
-  renderFramePanelActions(frame);
-  applyDetailView();
+  paintEditorTabs(frame);
+  applyEditorPanes(frame);
+  bindDetailFrameChrome(frame);
 }
 
 approveVisual?.addEventListener("click", async () => {

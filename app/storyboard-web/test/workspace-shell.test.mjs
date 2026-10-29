@@ -49,7 +49,14 @@ function inspectorSection(name) {
 }
 
 function setEditorMode(mode) {
-  for (const radio of $("#frame-dialogue").children) radio.checked = radio.value === mode;
+  for (const radio of $("#frame-dialogue").querySelectorAll("input[name='frame-dialogue-mode']")) {
+    radio.checked = radio.value === mode;
+  }
+}
+
+function saveDialogueAndLeave() {
+  $("#close-detail").click();
+  $("#frame-editor-leave-save").click();
 }
 
 async function reset(visual = readyVisual()) {
@@ -196,14 +203,18 @@ test("stage statuses in the navigation come from loaded state", async () => {
   assert.match(textOf(stageButton("visual")), /3\/5 готовы/);
   stageButton("visual").dispatchEvent({ type: "click" });
   const next = $("#stage-header-visual").querySelector(".stage-next");
-  assert.equal(next.textContent, "Создать изображения кадра 4");
+  assert.equal(next.textContent, "Открыть кадр 2");
 });
 
-test("Visual next action calls the existing frame generation with the old card payload", async () => {
-  await assertParity("frameGenerate", async () => {
-    stageButton("visual").dispatchEvent({ type: "click" });
-    $("#stage-header-visual").querySelector(".stage-next").dispatchEvent({ type: "click" });
-  });
+test("Visual next action opens the frame and does not batch-generate", async () => {
+  await reset();
+  stageButton("visual").dispatchEvent({ type: "click" });
+  const next = $("#stage-header-visual").querySelector(".stage-next");
+  assert.equal(next.textContent, "Открыть кадр 2");
+  next.dispatchEvent({ type: "click" });
+  assert.equal($("#detail").open, true);
+  assert.equal($("#detail-frame-number").textContent, "Кадр 2");
+  assert.equal(harness.requests.some((entry) => /generate/.test(entry.path)), false);
 });
 
 test("cards are content-first: one Открыть, no assembly, generation or asset controls", async () => {
@@ -261,9 +272,10 @@ test("inspector groups the frame vocabulary into the accepted sections", async (
   assert.match(header, /split2/);
   assert.ok(buttonNamed(inspectorSection("header"), "Открыть редактор кадра"));
   assert.ok(buttonNamed(inspectorSection("header"), "Дублировать кадр"));
-  for (const label of ["Кадр с изображением после", "Текстовая карточка после", "Переместить кадр раньше", "Переместить кадр позже", "Удалить кадр"]) {
+  for (const label of ["Кадр с изображением после", "Переместить кадр раньше", "Переместить кадр позже", "Удалить кадр"]) {
     assert.ok(buttonNamed(inspectorSection("frame"), label), label);
   }
+  assert.equal(buttonNamed(inspectorSection("frame"), "Текстовая карточка после"), null);
   assert.equal(buttonNamed(inspectorSection("frame"), "Переместить кадр раньше").disabled, true);
   const more = inspectorSection("more");
   assert.equal(more.tagName, "DETAILS");
@@ -278,7 +290,6 @@ test("inspector groups the frame vocabulary into the accepted sections", async (
 for (const [name, run] of Object.entries({
   "duplicateFrame": () => { selectCard(0); inspectorButton("Дублировать кадр").click(); },
   "insertFrame.image": () => { selectCard(0); inspectorButton("Кадр с изображением после").click(); },
-  "insertFrame.text": () => { selectCard(0); inspectorButton("Текстовая карточка после").click(); },
   "reorderFrames.earlier": () => { selectCard(1); inspectorButton("Переместить кадр раньше").click(); },
   "reorderFrames.later": () => { selectCard(1); inspectorButton("Переместить кадр позже").click(); },
   "deleteFrame": () => { selectCard(1); inspectorButton("Удалить кадр").click(); },
@@ -325,7 +336,6 @@ for (const [name, run] of Object.entries({
     input.files = [{ name: "x.png", type: "image/png", size: 10 }];
     input.dispatchEvent({ type: "change" });
   },
-  "frameGenerate": () => { selectCard(3); inspectorButton("Создать изображения кадра").click(); },
 })) {
   test(`parity · inspector · ${name}`, async () => {
     await assertParity(name, run);
@@ -337,25 +347,26 @@ for (const [name, run] of Object.entries({
     openCard(0);
     resetRecorder();
     setEditorMode("silent");
-    $("#frame-dialogue-save").click();
+    saveDialogueAndLeave();
   },
   "setFrameDialogue.speaker": async () => {
     openCard(0);
     resetRecorder();
     setEditorMode("spoken");
     for (const radio of $("#frame-dialogue-speaker").querySelectorAll("input")) radio.checked = radio.value === "p-1b";
-    $("#frame-dialogue-save").click();
+    saveDialogueAndLeave();
   },
   "setFrameDialogue.hidden": async () => {
     openCard(0);
     resetRecorder();
-    $("#frame-dialogue-remove").click();
+    setEditorMode("hidden");
+    saveDialogueAndLeave();
   },
   "setFrameDialogue.singleSilent": async () => {
     openCard(3);
     resetRecorder();
     setEditorMode("silent");
-    $("#frame-dialogue-save").click();
+    saveDialogueAndLeave();
   },
   "placement.zoom": async () => {
     openCard(0);
@@ -386,7 +397,7 @@ for (const [name, run] of Object.entries({
   "panelGenerate": async () => {
     openCard(0);
     resetRecorder();
-    buttonNamed($("#frame-panel-actions"), "Редактировать изображение панели 1.1 · Путин").click();
+    buttonNamed($("#frame-editor-tabs"), "Панель 1").click();
     const section = panelSection(0);
     await typeSupportedRevision(section);
     section.querySelectorAll("button").find((node) => node.textContent === "Создать кандидат").click();
@@ -414,20 +425,20 @@ test("Frame Editor spoken mode without a stored line asks for text and sends not
   openCard(1);
   resetRecorder();
   setEditorMode("spoken");
-  $("#frame-dialogue-save").click();
+  $("#frame-dialogue-text").value = "";
+  saveDialogueAndLeave();
   await flush(8);
   assert.deepEqual(mutatingRequests(), []);
   assert.match($("#frame-dialogue-error").textContent, /Введите текст реплики/);
 });
 
-test("visual-only frame generation appears only under the existing conditions", async () => {
+test("batch frame generation is absent from the inspector while panel image access remains", async () => {
   await reset();
   selectCard(3);
-  assert.ok(inspectorButton("Создать изображения кадра"));
+  assert.equal(inspectorButton("Создать изображения кадра"), null);
   selectCard(0);
   assert.equal(inspectorButton("Создать изображения кадра"), null);
-  selectCard(1);
-  assert.equal(inspectorButton("Создать изображения кадра"), null);
+  assert.ok(inspectorButton("Изображение панели 1.1…"));
   await reset(readyVisual({ allAnchorsApproved: false }));
   selectCard(3);
   assert.equal(inspectorButton("Создать изображения кадра"), null);
@@ -503,22 +514,18 @@ test("delete selects a neighbour or nothing, never the deleted frame", async () 
   }
 });
 
-test("Frame Editor keeps dialogue separate and opens one focused panel image view", async () => {
+test("Frame Editor keeps the final frame visible and opens one panel tab", async () => {
   await reset();
   openCard(0);
-  assert.equal($("#detail").dataset.view, "frame");
+  assert.equal($("#detail").dataset.editorTab, "frame");
+  assert.equal($("#detail-frame").hidden, false);
   assert.equal($("#panel-editor").hidden, true);
-  assert.equal($("#frame-dialogue").hidden, false);
-  const edits = $("#frame-panel-actions").querySelectorAll("button");
-  assert.deepEqual(edits.map((node) => node.textContent), [
-    "Редактировать изображение панели 1.1 · Путин",
-    "Редактировать изображение панели 1.2 · Дуров",
-  ]);
-  edits[0].click();
-  assert.equal($("#detail").dataset.view, "panel");
+  assert.equal($("#frame-dialogue").hidden, true);
+  buttonNamed($("#frame-editor-tabs"), "Панель 1").click();
+  assert.equal($("#detail").dataset.editorTab, "panel-0");
+  assert.equal($("#detail-frame").hidden, false);
   assert.equal($("#panel-editor").hidden, false);
   assert.equal($("#frame-dialogue").hidden, true);
-  assert.equal($("#detail-frame").hidden, true);
   assert.equal(panelSection(0).hidden, false);
   assert.equal(panelSection(1).hidden, true);
   const parts = (index) => Object.fromEntries(panelSection(index).querySelectorAll("[data-panel-section]").map((node) => [node.dataset.panelSection, node]));
@@ -541,12 +548,11 @@ test("Frame Editor keeps dialogue separate and opens one focused panel image vie
   const identity = first.references.querySelector("img");
   assert.equal(identity.src, "/anchor-p.png");
   assert.match(textOf(first.references), /Базовый образ/);
-  assert.ok(first.references.querySelectorAll("input").find((node) => node.type === "file"));
-  assert.ok(panelSection(0).querySelector(".panel-view-header"));
-  assert.match(textOf(panelSection(0).querySelector(".panel-view-header")), /Панель 1\.1 · Путин/);
+  assert.equal(first.references.querySelector("input"), null);
+  assert.equal(panelSection(0).querySelector(".panel-view-header"), null);
+  assert.equal(textOf(panelSection(0)).includes("фото позы"), false);
 
-  panelSection(0).querySelectorAll("button").find((node) => node.textContent === "← К кадру").click();
-  edits[1].click();
+  buttonNamed($("#frame-editor-tabs"), "Панель 2").click();
   assert.equal(panelSection(0).hidden, true);
   assert.equal(panelSection(1).hidden, false);
   assert.equal(parts(1).image.querySelector(".panel-basis").dataset.basis, "upload");
@@ -575,7 +581,7 @@ test("the dock is Notes and Operations, and selecting a panel does not expose a 
   assert.equal(typeof dock.setAvailableTargets, "undefined");
   selectCard(0);
   openCard(0);
-  $("#frame-panel-actions").querySelectorAll("button")[1].click();
+  buttonNamed($("#frame-editor-tabs"), "Панель 2").click();
   await flush(4);
   assert.equal(productRequests().some((entry) => entry.path.includes("/revision") && entry.method !== "GET"), false);
   assert.equal($("#research-commands-send"), null);
@@ -601,7 +607,7 @@ test("navigation, selection, inspector and editors make no mutation or provider 
   if (more) more.open = true;
   selectCard(0);
   inspectorButton("Открыть редактор кадра").click();
-  for (const button of $("#frame-panel-actions").querySelectorAll("button")) button.click();
+  for (const button of $("#frame-editor-tabs").querySelectorAll("button")) button.click();
   $("#detail").close();
   selectCard(0);
   inspectorButton("Изображение панели 1.2…").click();
