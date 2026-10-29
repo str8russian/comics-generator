@@ -56,7 +56,6 @@ const utteranceError = document.querySelector("#utterance-error");
 const utteranceSave = document.querySelector("#utterance-save");
 const utteranceCancel = document.querySelector("#utterance-cancel");
 const frameDialogue = document.querySelector("#frame-dialogue");
-const frameDialogueState = document.querySelector("#frame-dialogue-state");
 const frameDialogueSpoken = document.querySelector("#frame-dialogue-spoken");
 const frameDialogueText = document.querySelector("#frame-dialogue-text");
 const frameDialogueSpeaker = document.querySelector("#frame-dialogue-speaker");
@@ -1298,7 +1297,6 @@ frameEditor = createFrameEditor({
     detailPanelControls,
     panelEditor,
     frameDialogue,
-    frameDialogueState,
     frameDialogueSpoken,
     frameDialogueText,
     frameDialogueSpeaker,

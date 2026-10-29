@@ -17,6 +17,7 @@ import {
 } from "./workspace-harness.mjs";
 
 const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
+const pageSource = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
 const frameEditorSource = readFileSync(new URL("../public/frame-inspector.mjs", import.meta.url), "utf8");
 const page = await loadWorkspacePage();
@@ -50,6 +51,19 @@ async function reset(visual = readyVisual()) {
 
 function stageBox() {
   return $("#detail-frame").querySelector(".frame-stage");
+}
+
+function dialogueSectionSource() {
+  const section = pageSource.match(/<section\b[^>]*\bid="frame-dialogue"[^>]*>[\s\S]*?<\/section>/)?.[0] || "";
+  assert.ok(section, "dialogue pane source");
+  return section;
+}
+
+function visibleDialogueText(node) {
+  if (!node || node.hidden) return "";
+  const classes = String(node.className || "").split(/\s+/);
+  if (classes.includes("visually-hidden")) return "";
+  return [node.textContent || "", ...(node.children || []).map(visibleDialogueText)].join(" ").replace(/\s+/g, " ").trim();
 }
 
 test("the Frame Editor state machine lives behind the allowlisted frontend module boundary", () => {
@@ -95,9 +109,126 @@ test("clicking the dialogue region and each visual panel selects that tab", asyn
   assert.equal(mutatingRequests().length, 0);
 });
 
+test("the dialogue pane is one segmented control without the redundant chrome", async () => {
+  const source = dialogueSectionSource();
+  for (const phrase of [
+    "Диалог кадра",
+    "Меняет только показ этого кадра. Черновик диалога не меняется.",
+    "Сейчас:",
+  ]) {
+    assert.equal(source.includes(phrase), false, phrase);
+  }
+  assert.match(source, /<legend class="visually-hidden">Состояние<\/legend>/);
+  assert.match(source, /<label class="visually-hidden" for="frame-dialogue-text">Текст реплики<\/label>/);
+  assert.match(source, /placeholder="Введите реплику"/);
+  assert.equal(source.includes('id="frame-dialogue-state"'), false);
+
+  await reset();
+  openCard(0);
+  buttonNamed($("#frame-editor-tabs"), "Диалог").click();
+  const pane = $("#frame-dialogue");
+  const visible = visibleDialogueText(pane);
+  for (const phrase of [
+    "Диалог кадра",
+    "Меняет только показ этого кадра. Черновик диалога не меняется.",
+    "Сейчас:",
+    "Состояние",
+    "Текст реплики",
+  ]) {
+    assert.equal(visible.includes(phrase), false, phrase);
+  }
+  assert.equal($("#frame-dialogue-state"), null);
+  assert.equal(textOf(pane.querySelector("legend.visually-hidden")), "Состояние");
+  const textLabel = pane.querySelector("label[for='frame-dialogue-text']");
+  assert.equal(textLabel.classList.contains("visually-hidden"), true);
+  assert.equal(textOf(textLabel), "Текст реплики");
+  assert.equal($("#frame-dialogue-text").getAttribute("placeholder"), "Введите реплику");
+  assert.equal($("#frame-dialogue-text").value, "Привет");
+
+  const group = pane.querySelector("fieldset.dialogue-mode-control");
+  const modes = [...group.querySelectorAll("input[name='frame-dialogue-mode']")];
+  assert.deepEqual(modes.map((input) => input.type), ["radio", "radio", "radio"]);
+  assert.deepEqual(modes.map((input) => input.value), ["spoken", "silent", "hidden"]);
+  assert.deepEqual(
+    modes.map((input) => textOf(input.closest(".segmented-option").querySelector(".segmented-option-text"))),
+    ["Реплика", "Молчание", "Без реплики"],
+  );
+  for (const input of modes) {
+    assert.equal(input.classList.contains("segmented-input"), true);
+    assert.equal(input.closest(".segmented-option").classList.contains("segmented-option"), true);
+  }
+  const spoken = modes.find((input) => input.value === "spoken");
+  const silent = modes.find((input) => input.value === "silent");
+  assert.equal(spoken.checked, true);
+  assert.equal(spoken.closest(".segmented-option").classList.contains("is-selected"), true);
+  assert.equal(silent.closest(".segmented-option").classList.contains("is-selected"), false);
+  silent.focus();
+  assert.equal(document.activeElement, silent);
+  for (const input of modes) input.checked = input.value === "silent";
+  pane.dispatchEvent({ type: "change", target: silent });
+  assert.equal(silent.closest(".segmented-option").classList.contains("is-selected"), true);
+  assert.equal(spoken.closest(".segmented-option").classList.contains("is-selected"), false);
+  assert.equal($("#frame-dialogue-spoken").hidden, true);
+
+  assert.match(css, /\.segmented-input\s*\{[^}]*appearance:\s*none/);
+  assert.match(css, /\.segmented-option\.is-selected\s*\{[^}]*font-weight:\s*800/);
+  assert.match(css, /\.segmented-option\.is-selected\s*\{[^}]*box-shadow:[^}]*inset/);
+  assert.match(css, /\.segmented-option:hover\s*\{/);
+  assert.match(css, /\.segmented-option:has\(\.segmented-input:focus-visible\)\s*\{[^}]*outline:/);
+  assert.match(css, /\.segmented-input:focus-visible\s*\{[^}]*outline:/);
+  assert.equal(/\.segmented-input\s*\{[^}]*display:\s*none/.test(css), false);
+  assert.match(css, /\.segmented-control\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(css, /\.segmented-control\s*\{[^}]*max-width:\s*100%/);
+  assert.match(css, /\.segmented-option\s*\{[^}]*min-width:\s*min\(100%/);
+  assert.match(css, /\.segmented-option-text\s*\{[^}]*overflow-wrap:\s*break-word/);
+  assert.match(css, /\.dialogue-mode-control,\s*\n\.dialogue-speaker-control\s*\{[^}]*min-inline-size:\s*0/);
+  assert.match(css, /#detail-scroll\s*\{[^}]*overflow-x:\s*hidden/);
+});
+
+test("a split frame shows Говорит and a single panel does not", async () => {
+  await reset();
+  openCard(0);
+  buttonNamed($("#frame-editor-tabs"), "Диалог").click();
+  const speaker = $("#frame-dialogue-speaker");
+  assert.equal(speaker.hidden, false);
+  assert.equal(textOf(speaker.querySelector("legend")), "Говорит");
+  assert.equal(speaker.querySelector("legend").classList.contains("visually-hidden"), false);
+  const choices = [...speaker.querySelectorAll(".segmented-option")];
+  assert.equal(choices.length, 2);
+  assert.deepEqual(choices.map((choice) => textOf(choice.querySelector(".segmented-option-text"))), ["Путин", "Дуров"]);
+  for (const choice of choices) {
+    const input = choice.querySelector("input");
+    assert.equal(input.type, "radio");
+    assert.equal(input.name, "frame-dialogue-speaker");
+    assert.equal(input.classList.contains("segmented-input"), true);
+  }
+  assert.equal(choices[0].querySelector("input").checked, true);
+  assert.equal(choices[0].classList.contains("is-selected"), true);
+
+  const unnamed = readyVisual();
+  unnamed.frames[0].panels[0].subject = "";
+  unnamed.frames[0].panels[1].subject = null;
+  await reset(unnamed);
+  openCard(0);
+  buttonNamed($("#frame-editor-tabs"), "Диалог").click();
+  assert.deepEqual(
+    [...$("#frame-dialogue-speaker").querySelectorAll(".segmented-option-text")].map((node) => textOf(node)),
+    ["Панель 1", "Панель 2"],
+  );
+
+  await reset();
+  openCard(3);
+  buttonNamed($("#frame-editor-tabs"), "Диалог").click();
+  assert.equal($("#frame-dialogue-speaker").hidden, true);
+  assert.equal(visibleDialogueText($("#frame-dialogue")).includes("Говорит"), false);
+  assert.equal($("#frame-dialogue-spoken").hidden, false);
+  assert.equal($("#frame-dialogue-text").value, "Ответ");
+});
+
 test("Молчание is empty and Без реплики removes the dialogue area", async () => {
   await reset();
   openCard(0);
+  assert.match(textOf($("#detail-frame").querySelector(".dialogue-bar")), /Привет/);
   setEditorMode("silent");
   const bar = $("#detail-frame").querySelector(".dialogue-bar");
   assert.ok(bar);

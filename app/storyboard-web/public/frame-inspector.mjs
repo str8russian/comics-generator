@@ -188,12 +188,6 @@ export function renderFrameInspector(root, model, actions, { document = globalTh
   if (images) root.append(images);
 }
 
-const DIALOGUE_LABELS = {
-  spoken: "Реплика",
-  silent: "Молчание",
-  hidden: "Без реплики",
-};
-
 export function createFrameEditor({
   document = globalThis.document,
   elements,
@@ -226,7 +220,6 @@ export function createFrameEditor({
     detailPanelControls,
     panelEditor,
     frameDialogue,
-    frameDialogueState,
     frameDialogueSpoken,
     frameDialogueText,
     frameDialogueSpeaker,
@@ -344,6 +337,27 @@ export function createFrameEditor({
     }
   }
 
+  function syncSegmentedSelection(root) {
+    if (!root || typeof root.querySelectorAll !== "function") return;
+    for (const input of root.querySelectorAll("input[type='radio']")) {
+      const option = input.closest?.(".segmented-option") || input.parentNode;
+      const list = option?.classList;
+      if (!list) continue;
+      if (typeof list.toggle === "function") list.toggle("is-selected", Boolean(input.checked));
+      else if (input.checked) list.add?.("is-selected");
+      else list.remove?.("is-selected");
+    }
+  }
+
+  function speakerOptionsRoot() {
+    if (!frameDialogueSpeaker) return null;
+    frameDialogueSpeaker.classList?.add?.("dialogue-speaker-control");
+    const options = frameDialogueSpeaker.querySelector?.(".dialogue-speaker-options");
+    if (options && typeof options.replaceChildren === "function") return options;
+    if (typeof frameDialogueSpeaker.replaceChildren !== "function") return null;
+    return frameDialogueSpeaker;
+  }
+
   function applyDialogueDraft(frame) {
     if (!dialogueDraft || dialogueDraft.key !== frameDraftKey(frame)) return;
     for (const input of namedInputs(frameDialogue, "frame-dialogue-mode")) {
@@ -363,35 +377,35 @@ export function createFrameEditor({
     frameDialogue.hidden = !eligible;
     if (!eligible) return;
     const mode = persistedDialogueMode(frame);
-    if (frameDialogueState) frameDialogueState.textContent = `Сейчас: ${DIALOGUE_LABELS[mode]}`;
     for (const input of namedInputs(frameDialogue, "frame-dialogue-mode")) {
       input.checked = input.value === mode;
     }
     if (frameDialogueText) frameDialogueText.value = storedDialogueLine(frame);
-    if (frameDialogueSpeaker && typeof frameDialogueSpeaker.replaceChildren === "function") {
-      frameDialogueSpeaker.replaceChildren();
-      frameDialogueSpeaker.className = "frame-dialogue-speaker";
+    const speakerOptions = speakerOptionsRoot();
+    if (speakerOptions && typeof speakerOptions.replaceChildren === "function") {
+      speakerOptions.replaceChildren();
       const panels = frame.panels || [];
       const currentId = mode === "spoken" ? panels[frame.speakerPanel]?.id : frame.dormantSpeakerPanelId;
       panels.forEach((panel, index) => {
         const label = document.createElement("label");
+        label.className = "segmented-option";
         const input = document.createElement("input");
+        input.className = "segmented-input";
         input.type = "radio";
         input.name = "frame-dialogue-speaker";
         input.value = panel.id || "";
         input.checked = Boolean(panel.id) && panel.id === currentId;
         const caption = document.createElement("span");
+        caption.className = "segmented-option-text";
         caption.textContent = panel.subject || `Панель ${index + 1}`;
         label.append(input, caption);
-        frameDialogueSpeaker.append(label);
+        speakerOptions.append(label);
       });
     }
     showDialogueError("");
     applyDialogueDraft(frame);
-    if (frameDialogueState) {
-      frameDialogueState.textContent = `Сейчас: ${DIALOGUE_LABELS[selectedDialogueMode()] || DIALOGUE_LABELS[mode]}`;
-    }
     syncDialogueFields(frame);
+    syncSegmentedSelection(frameDialogue);
     renderedDialogue = dialogueFormSnapshot();
   }
 
@@ -1094,7 +1108,7 @@ export function createFrameEditor({
     const frame = currentFrame();
     showDialogueError("");
     syncDialogueFields(frame);
-    if (frameDialogueState) frameDialogueState.textContent = `Сейчас: ${DIALOGUE_LABELS[selectedDialogueMode()] || ""}`;
+    syncSegmentedSelection(frameDialogue);
     refreshPreview();
   });
   frameDialogueText?.addEventListener("input", () => {

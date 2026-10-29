@@ -41,6 +41,14 @@ Feature 015 semantics stay exact:
 - Dormant text and speaker state behave as Feature 015 specifies.
 - The source draft is not changed.
 
+### Presentation
+
+The active **Диалог** tab is the section title. The pane starts with one segmented control for **Реплика**, **Молчание**, and **Без реплики**. The selected choice is marked by weight and a ring, not by color alone. Hover and keyboard focus are visible. All three labels stay fully readable at supported desktop and narrow widths: the control wraps or stacks instead of clipping or widening the page.
+
+The pane does not show **Диалог кадра**, **Меняет только показ этого кадра. Черновик диалога не меняется.**, a **Сейчас:** line, a visible **Состояние** legend, or a visible **Текст реплики** label. The mode group keeps an accessible name, and the text field keeps the accessible name **Текст реплики**.
+
+**Реплика** shows the text field immediately after the mode control. Its placeholder may read **Введите реплику** and is absent once text is present. A one-panel frame has no speaker selector. A two-panel frame shows a compact **Говорит** control with the current character names, or **Панель 1** and **Панель 2** when a name is missing. **Молчание** and **Без реплики** hide the text field and the speaker control and add no explanatory copy.
+
 The owner can switch Frame Editor tabs without losing or being blocked by an unsaved dialogue draft. The draft remains while this editor stays open.
 
 There is no persistent per-tab save bar. Close, previous frame, and next frame ask once, in a centered modal, only when that dialogue draft is dirty:
@@ -106,3 +114,4 @@ On a disposable project copy, with the no-call provider and zero live provider c
 8. The temporary legacy image-revision flow opens, and no generation is submitted.
 9. The hidden actions are absent. Existing image, text-card, and reference data is not destroyed.
 10. A supported narrow width and a desktop width both remain usable.
+11. The **Диалог** pane uses the segmented presentation above and does not restore the removed chrome.

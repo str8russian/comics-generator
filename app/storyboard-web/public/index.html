@@ -222,19 +222,30 @@
             <button id="utterance-cancel" type="button" class="secondary">Отмена</button>
           </section>
           <section id="frame-dialogue" class="frame-dialogue" hidden>
-            <h3>Диалог кадра</h3>
-            <p class="scope-note">Меняет только показ этого кадра. Черновик диалога не меняется.</p>
-            <p id="frame-dialogue-state"></p>
-            <fieldset>
-              <legend>Состояние</legend>
-              <label><input type="radio" name="frame-dialogue-mode" value="spoken"> Реплика</label>
-              <label><input type="radio" name="frame-dialogue-mode" value="silent"> Молчание</label>
-              <label><input type="radio" name="frame-dialogue-mode" value="hidden"> Без реплики</label>
+            <fieldset class="dialogue-mode-control">
+              <legend class="visually-hidden">Состояние</legend>
+              <div class="segmented-control">
+                <label class="segmented-option">
+                  <input class="segmented-input" type="radio" name="frame-dialogue-mode" value="spoken">
+                  <span class="segmented-option-text">Реплика</span>
+                </label>
+                <label class="segmented-option">
+                  <input class="segmented-input" type="radio" name="frame-dialogue-mode" value="silent">
+                  <span class="segmented-option-text">Молчание</span>
+                </label>
+                <label class="segmented-option">
+                  <input class="segmented-input" type="radio" name="frame-dialogue-mode" value="hidden">
+                  <span class="segmented-option-text">Без реплики</span>
+                </label>
+              </div>
             </fieldset>
             <div id="frame-dialogue-spoken" hidden>
-              <label for="frame-dialogue-text">Текст реплики</label>
-              <textarea id="frame-dialogue-text"></textarea>
-              <div id="frame-dialogue-speaker"></div>
+              <label class="visually-hidden" for="frame-dialogue-text">Текст реплики</label>
+              <textarea id="frame-dialogue-text" placeholder="Введите реплику"></textarea>
+              <fieldset id="frame-dialogue-speaker" class="dialogue-speaker-control" hidden>
+                <legend class="dialogue-speaker-legend">Говорит</legend>
+                <div class="segmented-control dialogue-speaker-options"></div>
+              </fieldset>
             </div>
             <p id="frame-dialogue-error" hidden></p>
           </section>

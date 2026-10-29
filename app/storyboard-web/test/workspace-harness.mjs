@@ -243,6 +243,69 @@ export function buttonNamed(root, text) {
   return buttons(root).find((node) => node.textContent === text) ?? null;
 }
 
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+
+function applyMarkupAttributes(element, raw) {
+  const attrRe = /([:@\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+)))?/g;
+  for (const match of raw.matchAll(attrRe)) {
+    const name = match[1];
+    const value = match[2] ?? match[3] ?? match[4] ?? "";
+    if (name === "class") {
+      element.className = value;
+      continue;
+    }
+    if (name === "id") {
+      element.id = value;
+      continue;
+    }
+    element.setAttribute(name, value);
+    if (name === "type") element.type = value;
+    if (name === "name") element.name = value;
+    if (name === "value") element.value = value;
+    if (name === "placeholder") element.placeholder = value;
+    if (name === "hidden") element.hidden = true;
+  }
+}
+
+function parseMarkup(html, elements) {
+  const root = createElement("div");
+  const stack = [root];
+  const re = /<!--[\s\S]*?-->|<\/([a-zA-Z][\w-]*)>|<([a-zA-Z][\w-]*)\b([^>]*?)(\/?)>|([^<]+)/g;
+  for (const match of html.matchAll(re)) {
+    if (match[0].startsWith("<!--")) continue;
+    if (match[1]) {
+      const tag = match[1].toUpperCase();
+      while (stack.length > 1 && stack.at(-1).tagName !== tag) stack.pop();
+      if (stack.length > 1 && stack.at(-1).tagName === tag) stack.pop();
+      continue;
+    }
+    if (match[2]) {
+      const tag = match[2].toLowerCase();
+      const id = match[3].match(/\bid="([^"]+)"/)?.[1];
+      const node = id && elements.has(id) ? elements.get(id) : createElement(tag);
+      if (id && elements.has(id)) {
+        node.children = [];
+        node.textContent = "";
+      }
+      applyMarkupAttributes(node, match[3]);
+      stack.at(-1).append(node);
+      if (match[4] !== "/" && !VOID_TAGS.has(tag)) stack.push(node);
+      continue;
+    }
+    const text = match[5].replace(/\s+/g, " ").trim();
+    if (text) stack.at(-1).append(text);
+  }
+  return root.children;
+}
+
+function hydrateFrameDialogue(html, elements) {
+  const section = html.match(/<section\b[^>]*\bid="frame-dialogue"[^>]*>[\s\S]*?<\/section>/)?.[0];
+  const frameDialogue = elements.get("frame-dialogue");
+  if (!section || !frameDialogue) return;
+  const inner = section.replace(/^<section\b[^>]*>/, "").replace(/<\/section>\s*$/, "");
+  frameDialogue.replaceChildren(...parseMarkup(inner, elements));
+}
+
 export function installDocument(html) {
   const elements = new Map();
   for (const match of html.matchAll(/<([a-zA-Z][\w-]*)\b[^>]*\bid="([^"]+)"[^>]*>/g)) {
@@ -276,16 +339,7 @@ export function installDocument(html) {
       dock.appendChild(el);
     }
   }
-  const frameDialogue = elements.get("frame-dialogue");
-  if (frameDialogue) {
-    for (const value of ["spoken", "silent", "hidden"]) {
-      const radio = createElement("input");
-      radio.type = "radio";
-      radio.name = "frame-dialogue-mode";
-      radio.value = value;
-      frameDialogue.appendChild(radio);
-    }
-  }
+  hydrateFrameDialogue(html, elements);
   globalThis.document = {
     body,
     activeElement: null,
