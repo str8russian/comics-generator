@@ -14,10 +14,9 @@ import { openAssetPicker } from "/asset-picker.mjs";
 import { compileTransitionTimeline, formatExportRuntime } from "/export-timing.mjs";
 import { presentFrameForMount } from "/visual-anchors.mjs";
 import { bindWorkspaceStages, STAGES } from "./workspace-stages.mjs";
-import { renderFrameInspector } from "./frame-inspector.mjs";
+import { createFrameEditor, renderFrameInspector } from "./frame-inspector.mjs";
 import { basisChip, foregroundChip, panelBasis } from "./panel-basis.mjs";
 import { REVISION_COPY, renderRevisionSummary } from "./panel-revision-view.mjs";
-import { defaultDurationFrames, typedDialogue } from "../timing.mjs";
 export { presentFrameForMount };
 
 const draftCompiler = typeof globalThis.window === "undefined"
@@ -124,12 +123,7 @@ const revisionConfirmDo = document.querySelector("#revision-confirm-do");
 
 let workspaceStages = null;
 let selection = null;
-let detailPanelIndex = 0;
-let editorTab = "frame";
-let dialogueDraft = null;
-let renderedDialogue = null;
-let pendingLeave = null;
-let detailFrameObserver = null;
+let frameEditor = null;
 let revisionPreflightEpoch = 0;
 let dockSuspended = false;
 let dockRestoreCollapsed = null;
@@ -140,23 +134,20 @@ let draftSync = { state: "boot", savedText: null };
 let review = null;
 let castChain = Promise.resolve();
 let visual = null;
-let detailIndex = -1;
-let detailStructureId = null;
-let detailSegmentIndex = null;
 let statusTimer = 0;
 let busy = false;
 let pendingCastEdit = null;
 
 export function setResearchDetailState(frames, index = -1) {
   readyFrames = Array.isArray(frames) ? frames.slice() : [];
-  detailIndex = Number.isInteger(index) ? index : -1;
+  frameEditor?.setCurrentIndex(index);
 }
 
 export function setResearchVisualState(next, index = -1) {
   if (!next || next.status !== "ready") {
     visual = null;
     readyFrames = [];
-    detailIndex = -1;
+    frameEditor?.setCurrentIndex(-1);
     if (charactersWorkspace) charactersWorkspace.hidden = true;
     if (characterCards) characterCards.replaceChildren();
     if (detailPanelControls) detailPanelControls.replaceChildren();
@@ -164,7 +155,7 @@ export function setResearchVisualState(next, index = -1) {
   }
   visual = next;
   readyFrames = withVisualReady(next.frames || []);
-  detailIndex = Number.isInteger(index) ? index : -1;
+  frameEditor?.setCurrentIndex(index);
   if (charactersWorkspace) charactersWorkspace.hidden = false;
   if (visualHeading) visualHeading.hidden = !next.allAnchorsApproved;
   if (visualApproval) visualApproval.hidden = !next.complete;
@@ -188,8 +179,8 @@ export function setResearchVisualState(next, index = -1) {
       grid.append(card);
     });
   }
-  if (detailIndex >= 0 && readyFrames[detailIndex]) {
-    renderPanelControls(readyFrames[detailIndex]);
+  if (frameEditor?.index >= 0 && readyFrames[frameEditor.index]) {
+    renderPanelControls(readyFrames[frameEditor.index]);
   } else if (detailPanelControls) {
     detailPanelControls.replaceChildren();
   }
@@ -213,6 +204,7 @@ export function captureResearchContext() {
   else if (review?.mode === "reading") workflowPhase = "reading";
   else if (typeof draftField?.value === "string" && draftField.value.length > 0) workflowPhase = "draft";
 
+  const detailIndex = frameEditor?.index ?? -1;
   const frame = detailIndex >= 0 ? readyFrames[detailIndex] : null;
   return createEmptyContext({
     workflowPhase,
@@ -755,12 +747,12 @@ function frameCard(frame, index) {
   open.textContent = "Открыть";
   open.addEventListener("click", (event) => {
     event?.stopPropagation?.();
-    openDetail(index);
+    frameEditor.open(index);
   });
   foot.append(open);
   card.append(foot);
   card.addEventListener("click", () => selectFrameAt(index));
-  card.addEventListener("dblclick", () => openDetail(index));
+  card.addEventListener("dblclick", () => frameEditor.open(index));
   card.addEventListener("keydown", (event) => {
     if (event.target !== card) return;
     if (event.key !== "Enter" && event.key !== " ") return;
@@ -886,10 +878,10 @@ function inspectorActions(frame, index) {
   const address = frameAddress(frame);
   const panels = frame.panels || [];
   return {
-    openEditor: () => openDetail(index),
+    openEditor: () => frameEditor.open(index),
     openPanel: (panelIndex) => {
-      openDetail(index, { panelIndex });
-      selectDetailPanel(panelIndex);
+      frameEditor.open(index, { panelIndex });
+      frameEditor.selectPanel(panelIndex);
     },
     clearSelection: () => clearFrameSelection(),
     duplicate: () => runAssembly({
@@ -963,7 +955,7 @@ function runStageAction(next, button) {
   const frame = readyFrames[next?.frameIndex];
   if (!frame) return;
   if (next.action === "generate-frame") generateFrame(frame.id, button, next.frameIndex);
-  else if (next.action === "open-frame") openDetail(next.frameIndex);
+  else if (next.action === "open-frame") frameEditor.open(next.frameIndex);
 }
 
 function frameStatus(frame) {
@@ -1224,219 +1216,6 @@ function prepareUtteranceEditor() {
   if (utteranceError) utteranceError.hidden = true;
 }
 
-const DIALOGUE_LABELS = {
-  spoken: "Реплика",
-  silent: "Молчание",
-  hidden: "Без реплики",
-};
-
-function frameDraftKey(frame) {
-  if (!frame) return "";
-  const segment = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : "";
-  return `${frame.structureFrameId || frame.id || ""}#${segment}`;
-}
-
-function dialogueFormSnapshot() {
-  return {
-    mode: selectedFrameDialogueMode(),
-    text: frameDialogueText?.value ?? "",
-    speakerPanelId: selectedSpeakerPanelId(),
-  };
-}
-
-function persistedDialogueSnapshot(frame) {
-  const mode = persistedDialogueMode(frame);
-  const panels = frame?.panels || [];
-  const speakerPanel = mode === "spoken" ? panels[frame.speakerPanel] : null;
-  return {
-    mode,
-    text: storedDialogueLine(frame),
-    speakerPanelId: speakerPanel?.id || null,
-  };
-}
-
-function dialogueSnapshotsMatch(left, right) {
-  if (!left || !right || left.mode !== right.mode) return false;
-  if (left.mode !== "spoken") return true;
-  return left.text === right.text && (left.speakerPanelId || null) === (right.speakerPanelId || null);
-}
-
-function dialogueDirty(frame) {
-  if (!frame || frame.frameKind === "text" || !frameDialogue || frameDialogueText == null) return false;
-  const current = dialogueFormSnapshot();
-  if (!current.mode) return false;
-  return !dialogueSnapshotsMatch(current, persistedDialogueSnapshot(frame));
-}
-
-function applyDialogueDraft(frame) {
-  if (!dialogueDraft || dialogueDraft.key !== frameDraftKey(frame)) return;
-  for (const input of namedInputs(frameDialogue, "frame-dialogue-mode")) {
-    input.checked = input.value === dialogueDraft.mode;
-  }
-  if (frameDialogueText) frameDialogueText.value = dialogueDraft.text ?? "";
-  if (dialogueDraft.speakerPanelId) {
-    for (const input of namedInputs(frameDialogueSpeaker, "frame-dialogue-speaker")) {
-      input.checked = input.value === dialogueDraft.speakerPanelId;
-    }
-  }
-}
-
-function previewFrame(frame) {
-  if (!frame || !dialogueDirty(frame)) return frame;
-  const snap = dialogueFormSnapshot();
-  const panels = frame.panels || [];
-  let speakerPanel = frame.speakerPanel;
-  if (snap.mode === "spoken" && panels.length > 1) {
-    const index = panels.findIndex((panel) => panel.id === snap.speakerPanelId);
-    if (index >= 0) speakerPanel = index;
-  }
-  return {
-    ...frame,
-    dialogueMode: snap.mode,
-    dialogue: snap.mode === "spoken" ? snap.text : frame.dialogue,
-    speakerPanel: snap.mode === "spoken" ? speakerPanel : null,
-  };
-}
-
-function persistedDialogueMode(frame) {
-  if (frame?.dialogueMode === "spoken" || frame?.dialogueMode === "silent" || frame?.dialogueMode === "hidden") {
-    return frame.dialogueMode;
-  }
-  return String(frame?.dialogue || "").trim() ? "spoken" : "hidden";
-}
-
-function sameDialogueUnit(left, right) {
-  return (left?.structureFrameId || left?.id) === (right?.structureFrameId || right?.id)
-    && (Number.isInteger(left?.structureSegmentIndex) ? left.structureSegmentIndex : null)
-      === (Number.isInteger(right?.structureSegmentIndex) ? right.structureSegmentIndex : null);
-}
-
-function storedDialogueLine(frame) {
-  return readyFrames
-    .filter((entry) => sameDialogueUnit(entry, frame))
-    .slice()
-    .sort((left, right) => (left.displayBlock?.start || 0) - (right.displayBlock?.start || 0))
-    .map((entry) => entry.dialogue || "")
-    .join("");
-}
-
-function showFrameDialogueError(message) {
-  if (!frameDialogueError) return;
-  frameDialogueError.hidden = !message;
-  frameDialogueError.textContent = message || "";
-}
-
-function selectedFrameDialogueMode() {
-  return namedInputs(frameDialogue, "frame-dialogue-mode").find((input) => input.checked)?.value || null;
-}
-
-function selectedSpeakerPanelId() {
-  return namedInputs(frameDialogueSpeaker, "frame-dialogue-speaker").find((input) => input.checked)?.value || null;
-}
-
-function syncFrameDialogueFields(frame) {
-  const mode = selectedFrameDialogueMode();
-  if (frameDialogueSpoken) frameDialogueSpoken.hidden = mode !== "spoken";
-  if (frameDialogueSpeaker) {
-    frameDialogueSpeaker.hidden = mode !== "spoken" || (frame?.panels || []).length < 2;
-  }
-}
-
-function namedInputs(root, name) {
-  if (!root || typeof root.querySelectorAll !== "function") return [];
-  return [...root.querySelectorAll(`input[name='${name}']`)];
-}
-
-function renderFrameDialogue(frame) {
-  if (!frameDialogue) return;
-  const eligible = frame && frame.frameKind !== "text";
-  frameDialogue.hidden = !eligible;
-  if (!eligible) return;
-  const mode = persistedDialogueMode(frame);
-  if (frameDialogueState) frameDialogueState.textContent = `Сейчас: ${DIALOGUE_LABELS[mode]}`;
-  for (const input of namedInputs(frameDialogue, "frame-dialogue-mode")) {
-    input.checked = input.value === mode;
-  }
-  if (frameDialogueText) frameDialogueText.value = storedDialogueLine(frame);
-  if (frameDialogueSpeaker && typeof frameDialogueSpeaker.replaceChildren === "function") {
-    frameDialogueSpeaker.replaceChildren();
-    frameDialogueSpeaker.className = "frame-dialogue-speaker";
-    const panels = frame.panels || [];
-    const currentId = mode === "spoken"
-      ? panels[frame.speakerPanel]?.id
-      : frame.dormantSpeakerPanelId;
-    panels.forEach((panel, index) => {
-      const label = document.createElement("label");
-      const input = document.createElement("input");
-      input.type = "radio";
-      input.name = "frame-dialogue-speaker";
-      input.value = panel.id || "";
-      input.checked = Boolean(panel.id) && panel.id === currentId;
-      const caption = document.createElement("span");
-      caption.textContent = panel.subject || `Панель ${index + 1}`;
-      label.append(input, caption);
-      frameDialogueSpeaker.append(label);
-    });
-  }
-  showFrameDialogueError("");
-  applyDialogueDraft(frame);
-  if (frameDialogueState) frameDialogueState.textContent = `Сейчас: ${DIALOGUE_LABELS[selectedFrameDialogueMode()] || DIALOGUE_LABELS[mode]}`;
-  syncFrameDialogueFields(frame);
-  renderedDialogue = dialogueFormSnapshot();
-}
-
-async function saveFrameDialogue(frame, mode) {
-  const multiPanel = (frame?.panels || []).length > 1;
-  if (!frame || !mode) return false;
-  if (mode === "spoken") {
-    if (!(frameDialogueText?.value ?? "").trim()) {
-      showFrameDialogueError("Введите текст реплики.");
-      return false;
-    }
-    if (multiPanel && !selectedSpeakerPanelId()) {
-      showFrameDialogueError("Выберите панель, которая говорит.");
-      return false;
-    }
-  }
-  const result = await submitFrameDialogue(frame, mode, {
-    text: mode === "spoken" ? (frameDialogueText?.value ?? "") : null,
-    speakerPanelId: mode === "spoken" && multiPanel ? selectedSpeakerPanelId() : null,
-  });
-  return Boolean(result);
-}
-
-async function submitFrameDialogue(frame, mode, {
-  text: requestedText = null,
-  speakerPanelId: requestedSpeaker = null,
-  showError = showFrameDialogueError,
-} = {}) {
-  if (!frame) return;
-  const previousDialogueMode = persistedDialogueMode(frame);
-  let text = null;
-  let speakerPanelId = null;
-  if (mode === "spoken") {
-    text = requestedText ?? "";
-    if (!text.trim()) {
-      showError("Введите текст реплики.");
-      return;
-    }
-    if ((frame.panels || []).length > 1) {
-      speakerPanelId = requestedSpeaker;
-      if (!speakerPanelId) {
-        showError("Выберите панель, которая говорит.");
-        return;
-      }
-    }
-  }
-  showError("");
-  return runAssembly({
-    op: "setFrameDialogue",
-    ...frameAddress(frame),
-    dialogueMode: mode,
-    ...(mode === "spoken" ? { text, ...(speakerPanelId ? { speakerPanelId } : {}) } : {}),
-  }, "Сохраняю диалог кадра…", { frame, previousDialogueMode });
-}
-
 function openUtteranceEditor(frame) {
   const sourceItemId = sourceItemIdOf(frame);
   if (!sourceItemId || !utteranceEditor) return;
@@ -1476,7 +1255,7 @@ function structureFrameIndex(structureFrameId, structureSegmentIndex = null) {
 
 function openStructureAddress(address) {
   const index = structureFrameIndex(address?.structureFrameId, address?.structureSegmentIndex);
-  if (index >= 0) openDetail(index);
+  if (index >= 0) frameEditor.open(index);
 }
 
 function createdFrameResearchAddress(created, requestedSegment = null) {
@@ -1497,411 +1276,87 @@ function createdFrameResearchAddress(created, requestedSegment = null) {
   };
 }
 
-function placeDetailScroll(top) {
-  if (!detailScroll) return;
-  detailScroll.scrollTop = top > 0 ? top : 0;
+function saveEditorDialogue({ frame, mode, text, speakerPanelId, previousDialogueMode }) {
+  return runAssembly({
+    op: "setFrameDialogue",
+    ...frameAddress(frame),
+    dialogueMode: mode,
+    ...(mode === "spoken" ? { text, ...(speakerPanelId ? { speakerPanelId } : {}) } : {}),
+  }, "Сохраняю диалог кадра…", { frame, previousDialogueMode });
 }
 
-function editorTabFor(frame, requested) {
-  const panels = frame?.panels || [];
-  let tab = requested || "frame";
-  if (tab === "dialogue" && frame?.frameKind === "text") tab = "frame";
-  if (String(tab).startsWith("panel-")) {
-    const index = Number(String(tab).slice("panel-".length));
-    if (!Number.isInteger(index) || index < 0 || index >= panels.length) return "frame";
-    detailPanelIndex = index;
-  }
-  return tab;
-}
-
-function placeEditorUndo(open) {
-  const slot = open ? frameEditorUndo : workspaceUndoSlot;
-  if (!slot || !globalUndo || globalUndo.parentNode === slot) return;
-  slot.append(globalUndo);
-}
-
-function syncFrameNav() {
-  if (prevFrame) prevFrame.disabled = detailIndex <= 0;
-  if (nextFrame) nextFrame.disabled = detailIndex < 0 || detailIndex >= readyFrames.length - 1;
-}
-
-function paintEditorTabs(frame) {
-  if (!frameEditorTabs) return;
-  frameEditorTabs.replaceChildren();
-  const panels = frame?.panels || [];
-  const tabs = [
-    { id: "frame", label: "Кадр" },
-    ...(frame?.frameKind === "text" ? [] : [{ id: "dialogue", label: "Диалог" }]),
-    ...panels.map((_, index) => ({
-      id: `panel-${index}`,
-      label: panels.length === 1 ? "Панель" : `Панель ${index + 1}`,
-    })),
-  ];
-  for (const tab of tabs) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "frame-editor-tab";
-    button.dataset.editorTab = tab.id;
-    if (typeof button.setAttribute === "function") {
-      button.setAttribute("role", "tab");
-      button.setAttribute("aria-pressed", tab.id === editorTab ? "true" : "false");
+frameEditor = createFrameEditor({
+  document,
+  elements: {
+    detail,
+    detailHost,
+    detailOutside,
+    detailRetained,
+    detailScroll,
+    detailTitle,
+    detailFrameNumber,
+    detailPanelControls,
+    panelEditor,
+    frameDialogue,
+    frameDialogueState,
+    frameDialogueSpoken,
+    frameDialogueText,
+    frameDialogueSpeaker,
+    frameDialogueError,
+    closeDetail,
+    openLast,
+    nextFrame,
+    prevFrame,
+    frameEditorTabs,
+    frameEditorFrame,
+    frameEditorUndo,
+    workspaceUndoSlot,
+    globalUndo,
+    frameEditorLeave,
+    frameEditorLeaveStay,
+    frameEditorLeaveDiscard,
+    frameEditorLeaveSave,
+  },
+  renderer: FrameRenderer,
+  getFrames: () => readyFrames,
+  formatSeconds,
+  mountFrame,
+  frameAddress,
+  runAssembly,
+  deletePanel: deletePanelWithConfirmation,
+  renderPanelControls,
+  setSelection: setSelectionTo,
+  markSelectedCards,
+  renderInspector,
+  prepareUtteranceEditor,
+  saveDialogue: saveEditorDialogue,
+  enterDetail: () => researchDock?.enterDetail(),
+  leaveDetail: () => {
+    hideRevisionConfirm();
+    resumeDockAfterPanel();
+    if (detailGenerationStatus) {
+      detailGenerationStatus.hidden = true;
+      detailGenerationStatus.textContent = "";
+      delete detailGenerationStatus.dataset.kind;
     }
-    button.textContent = tab.label;
-    button.addEventListener("click", () => selectEditorTab(tab.id));
-    frameEditorTabs.append(button);
-  }
-}
-
-function applyEditorPanes(frame) {
-  const showPanel = editorTab.startsWith("panel-");
-  if (frameEditorFrame) frameEditorFrame.hidden = editorTab !== "frame";
-  if (frameDialogue) frameDialogue.hidden = editorTab !== "dialogue" || frame?.frameKind === "text";
-  if (panelEditor) panelEditor.hidden = !showPanel || !(detailPanelControls?.children?.length);
-  [...(detailPanelControls?.children || [])].forEach((section, index) => {
-    section.hidden = !showPanel || index !== detailPanelIndex;
-  });
-  if (detailHost) detailHost.hidden = false;
-  if (detailTitle) {
-    detailTitle.hidden = false;
-    detailTitle.textContent = "Редактор кадра";
-  }
-  if (detailFrameNumber) detailFrameNumber.hidden = false;
-  if (detailOutside) detailOutside.hidden = false;
-  if (closeDetail) closeDetail.hidden = false;
-  if (detail) {
-    detail.dataset.editorTab = editorTab;
-    detail.dataset.view = "frame";
-  }
-}
-
-function markFrameSelection() {
-  for (const column of detailPanels()) {
-    const classes = String(column.className || "").split(/\s+/).filter((name) => name && name !== "panel-selected");
-    if (editorTab === `panel-${column.dataset?.panelIndex}`) classes.push("panel-selected");
-    column.className = classes.join(" ");
-  }
-  const bar = detailHost?.querySelector?.(".dialogue-bar");
-  if (!bar) return;
-  const classes = String(bar.className || "").split(/\s+/).filter((name) => name && name !== "is-selected");
-  if (editorTab === "dialogue") classes.push("is-selected");
-  bar.className = classes.join(" ");
-}
-
-function selectEditorTab(tab) {
-  const frame = readyFrames[detailIndex];
-  editorTab = editorTabFor(frame, tab);
-  paintEditorTabs(frame);
-  applyEditorPanes(frame);
-  markFrameSelection();
-}
-
-function detailFrameScale() {
-  const column = detailHost?.parentElement;
-  const width = Number(column?.clientWidth) || Number(detailHost?.clientWidth) || 0;
-  const frameWidth = FrameRenderer.FRAME_GEOMETRY.width;
-  if (width > 120 && frameWidth > 0) return Math.min(0.48, Math.max(0.16, (width - 2) / frameWidth));
-  return 0.5;
-}
-
-function fitOpenDetailFrame() {
-  if (!detail?.open) return;
-  const frame = readyFrames[detailIndex];
-  if (!frame || !detailHost) return;
-  const scale = detailFrameScale();
-  const current = Number(detailHost.querySelector?.(".frame-stage")?.dataset?.frameScale);
-  if (scale === 0.5 && !(Number(detailHost.parentElement?.clientWidth) > 120)) return;
-  if (Number.isFinite(current) && Math.abs(current - scale) < 0.008) return;
-  mountDetailFrame(frame);
-  bindDetailFrameChrome(frame);
-}
-
-function watchDetailFrameColumn() {
-  const column = detailHost?.parentElement;
-  if (!column || typeof ResizeObserver !== "function") return;
-  if (!detailFrameObserver) {
-    detailFrameObserver = new ResizeObserver(() => fitOpenDetailFrame());
-  }
-  detailFrameObserver.disconnect?.();
-  detailFrameObserver.observe(column);
-}
-
-function bindDetailFrameChrome(frame) {
-  bindDetailPan(frame);
-  for (const column of detailPanels()) {
-    const panelIndex = Number(column.dataset?.panelIndex);
-    if (!Number.isInteger(panelIndex)) continue;
-    column.addEventListener("click", () => selectEditorTab(`panel-${panelIndex}`));
-  }
-  detailHost?.querySelector?.(".dialogue-bar")?.addEventListener("click", () => selectEditorTab("dialogue"));
-  markFrameSelection();
-}
-
-function mountDetailFrame(frame) {
-  if (!detailHost || !frame) return;
-  mountFrame(detailHost, previewFrame(frame), detailFrameScale());
-}
-
-function refreshDetailPreview() {
-  const frame = readyFrames[detailIndex];
-  if (!detail?.open || !frame) return;
-  mountDetailFrame(frame);
-  bindDetailFrameChrome(frame);
-}
-
-function renderFrameStructure(frame) {
-  if (!frameEditorFrame) return;
-  frameEditorFrame.replaceChildren();
-  if (!frame) return;
-  const stored = Number.isInteger(frame.durationFrames) ? frame.durationFrames : 36;
-  const resetFrames = defaultDurationFrames(typedDialogue(frame));
-  const heading = document.createElement("h3");
-  heading.textContent = "Длительность";
-  const grid = document.createElement("div");
-  grid.className = "frame-editor-duration";
-  const secondsField = document.createElement("label");
-  secondsField.className = "inspector-field";
-  const seconds = document.createElement("input");
-  seconds.id = "frame-duration-seconds";
-  seconds.type = "number";
-  seconds.min = "0.01";
-  seconds.step = "any";
-  seconds.value = formatSeconds(stored / 30);
-  if (typeof seconds.setAttribute === "function") seconds.setAttribute("aria-label", "Длительность в секундах");
-  const secondsLabel = document.createElement("span");
-  secondsLabel.textContent = "Секунды";
-  secondsField.append(secondsLabel, seconds);
-  const framesField = document.createElement("label");
-  framesField.className = "inspector-field";
-  const frames = document.createElement("input");
-  frames.id = "frame-duration-frames";
-  frames.type = "number";
-  frames.min = "1";
-  frames.step = "1";
-  frames.value = String(stored);
-  if (typeof frames.setAttribute === "function") frames.setAttribute("aria-label", "Длительность в кадрах");
-  const framesLabel = document.createElement("span");
-  framesLabel.textContent = "Кадры";
-  framesField.append(framesLabel, frames);
-  grid.append(secondsField, framesField);
-  const rate = document.createElement("p");
-  rate.className = "helper";
-  rate.textContent = "30 кадр/с";
-  const reset = document.createElement("button");
-  reset.type = "button";
-  reset.dataset.frameAction = "reset-duration";
-  reset.textContent = `Сбросить длительность · ${formatSeconds(resetFrames / 30)} с`;
-  const syncSeconds = () => {
-    const count = Math.round(Number(seconds.value) * 30);
-    if (Number.isInteger(count) && count > 0) frames.value = String(count);
-  };
-  const syncFrames = () => {
-    const count = Number(frames.value);
-    if (Number.isInteger(count) && count > 0) seconds.value = formatSeconds(count / 30);
-  };
-  const commit = (count) => {
-    const current = readyFrames[detailIndex];
-    if (!current || !Number.isInteger(count) || count <= 0) return;
-    runAssembly({
-      op: "setDuration",
-      ...frameAddress(current),
-      durationFrames: count,
-    }, "Сохраняю длительность…", { submittedText: String(count), frame: current });
-  };
-  seconds.addEventListener("input", syncSeconds);
-  frames.addEventListener("input", syncFrames);
-  seconds.addEventListener("change", () => {
-    syncSeconds();
-    commit(Number(frames.value));
-  });
-  frames.addEventListener("change", () => {
-    syncFrames();
-    commit(Number(frames.value));
-  });
-  reset.addEventListener("click", () => {
-    const current = readyFrames[detailIndex];
-    if (!current) return;
-    const next = defaultDurationFrames(typedDialogue(current));
-    frames.value = String(next);
-    seconds.value = formatSeconds(next / 30);
-    commit(next);
-  });
-  frameEditorFrame.append(heading, grid, rate, reset);
-  if (frame.frameKind === "text") return;
-  const structure = document.createElement("div");
-  structure.className = "frame-structure-actions";
-  const panels = frame.panels || [];
-  if (panels.length < 2) {
-    const add = document.createElement("button");
-    add.type = "button";
-    add.dataset.frameAction = "add-panel";
-    add.textContent = "Добавить панель";
-    add.addEventListener("click", () => {
-      const current = readyFrames[detailIndex];
-      if (!current) return;
-      runAssembly({ op: "addPanel", ...frameAddress(current) }, "Добавляю панель…", { frame: current });
-    });
-    structure.append(add);
-  }
-  if (panels.length === 2) {
-    const swap = document.createElement("button");
-    swap.type = "button";
-    swap.dataset.frameAction = "swap-panels";
-    swap.textContent = "Поменять панели местами";
-    swap.addEventListener("click", () => {
-      const current = readyFrames[detailIndex];
-      const ids = current?.panels || [];
-      if (!current || ids.length < 2) return;
-      runAssembly({
-        op: "reorderPanels",
-        ...frameAddress(current),
-        panelIds: [ids[1].id, ids[0].id],
-      }, "Меняю панели местами…", { frame: current });
-    });
-    structure.append(swap);
-    panels.forEach((panel, panelIndex) => {
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.dataset.frameAction = "delete-panel";
-      remove.dataset.panelIndex = String(panelIndex);
-      remove.textContent = `Удалить панель ${panelIndex + 1}`;
-      remove.addEventListener("click", () => {
-        const current = readyFrames[detailIndex];
-        const target = current?.panels?.[panelIndex];
-        if (current && target) deletePanelWithConfirmation(current, target, panelIndex);
-      });
-      structure.append(remove);
-    });
-  }
-  frameEditorFrame.append(structure);
-}
-
-function hideLeaveModal() {
-  pendingLeave = null;
-  if (frameEditorLeave) frameEditorLeave.hidden = true;
-}
-
-function requestLeave(action) {
-  const frame = readyFrames[detailIndex];
-  if (!dialogueDirty(frame)) {
-    if (dialogueDraft?.key === frameDraftKey(frame)) dialogueDraft = null;
-    action();
-    return;
-  }
-  pendingLeave = action;
-  if (frameEditorLeave) frameEditorLeave.hidden = false;
-  frameEditorLeaveSave?.focus?.();
-}
-
-function openDetail(index, { panelIndex = null, tab = null } = {}) {
-  const frame = readyFrames[index];
-  if (!frame) return;
-  const wasOpen = Boolean(detail?.open);
-  const preservedScroll = Number(detailScroll?.scrollTop) || 0;
-  const structureId = frame.structureFrameId || frame.id;
-  const segmentIndex = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
-  const sameFrame = wasOpen && detailStructureId === structureId && detailSegmentIndex === segmentIndex;
-  if (sameFrame) {
-    const current = dialogueFormSnapshot();
-    const edited = Boolean(renderedDialogue && current.mode && !dialogueSnapshotsMatch(current, renderedDialogue));
-    dialogueDraft = edited ? { key: frameDraftKey(readyFrames[detailIndex]), ...current } : null;
-  } else dialogueDraft = null;
-  let requested = sameFrame ? editorTab : "frame";
-  if (typeof tab === "string" && tab) requested = tab;
-  if (Number.isInteger(panelIndex)) requested = `panel-${panelIndex}`;
-  editorTab = editorTabFor(frame, requested);
-  detailIndex = index;
-  detailStructureId = structureId;
-  detailSegmentIndex = segmentIndex;
-  setSelectionTo(index);
-  markSelectedCards();
-  renderInspector();
-  if (detailFrameNumber) detailFrameNumber.textContent = `Кадр ${index + 1}`;
-  detailOutside.textContent = frame.outsideFrameText || "";
-  if (detailRetained) {
-    detailRetained.hidden = !frame.retainedImageNotice;
-    detailRetained.textContent = frame.retainedImageNotice || "";
-  }
-  prepareUtteranceEditor();
-  renderFrameDialogue(frame);
-  renderFrameStructure(frame);
-  mountDetailFrame(frame);
-  renderPanelControls(frame);
-  syncFrameNav();
-  placeEditorUndo(true);
-  researchDock?.enterDetail();
-  if (!detail.open) detail.showModal();
-  watchDetailFrameColumn();
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => requestAnimationFrame(() => fitOpenDetailFrame()));
-  } else fitOpenDetailFrame();
-  if (wasOpen && sameFrame) placeDetailScroll(preservedScroll);
-  else placeDetailScroll(0);
-}
+  },
+  undo: performGlobalUndo,
+  commitPlacement: commitEditorPlacement,
+});
 
 export function openResearchDetail(index) {
-  openDetail(index);
+  frameEditor.open(index);
 }
 
-function selectDetailPanel(panelIndex) {
-  selectEditorTab(`panel-${panelIndex}`);
-}
-
-openLast.addEventListener("click", () => openDetail(readyFrames.length - 1));
-closeDetail.addEventListener("click", () => requestLeave(() => detail.close()));
-prevFrame?.addEventListener("click", () => {
-  if (detailIndex <= 0) return;
-  const index = detailIndex - 1;
-  requestLeave(() => openDetail(index, { tab: editorTab }));
-});
 utteranceEdit?.addEventListener("click", () => {
-  const frame = readyFrames[detailIndex];
+  const frame = readyFrames[frameEditor.index];
   if (frame) openUtteranceEditor(frame);
 });
 utteranceCancel?.addEventListener("click", () => {
   if (utteranceEditor) utteranceEditor.hidden = true;
 });
-frameDialogue?.addEventListener("change", (event) => {
-  const name = event.target?.name;
-  if (name !== "frame-dialogue-mode" && name !== "frame-dialogue-speaker") return;
-  const frame = readyFrames[detailIndex];
-  showFrameDialogueError("");
-  syncFrameDialogueFields(frame);
-  if (frameDialogueState) {
-    const mode = selectedFrameDialogueMode();
-    frameDialogueState.textContent = `Сейчас: ${DIALOGUE_LABELS[mode] || ""}`;
-  }
-  refreshDetailPreview();
-});
-frameDialogueText?.addEventListener("input", () => {
-  showFrameDialogueError("");
-  refreshDetailPreview();
-});
-frameEditorLeaveStay?.addEventListener("click", () => hideLeaveModal());
-frameEditorLeaveDiscard?.addEventListener("click", () => {
-  const action = pendingLeave;
-  dialogueDraft = null;
-  const frame = readyFrames[detailIndex];
-  hideLeaveModal();
-  if (frame) {
-    renderFrameDialogue(frame);
-    refreshDetailPreview();
-  }
-  action?.();
-});
-frameEditorLeaveSave?.addEventListener("click", async () => {
-  if (!pendingLeave) return;
-  const frame = readyFrames[detailIndex];
-  const action = pendingLeave;
-  const ok = await saveFrameDialogue(frame, selectedFrameDialogueMode());
-  if (!ok) {
-    hideLeaveModal();
-    selectEditorTab("dialogue");
-    return;
-  }
-  hideLeaveModal();
-  action?.();
-});
 utteranceSave?.addEventListener("click", () => {
+  const detailIndex = frameEditor.index;
   const frame = readyFrames[detailIndex];
   const sourceItemId = utteranceEditor?.dataset.sourceId;
   const spokenText = utteranceText?.value ?? "";
@@ -1971,33 +1426,7 @@ detail.addEventListener("cancel", (event) => {
     hideRevisionConfirm();
     return;
   }
-  if (frameEditorLeave && !frameEditorLeave.hidden) {
-    event.preventDefault();
-    hideLeaveModal();
-    return;
-  }
-  if (dialogueDirty(readyFrames[detailIndex])) {
-    event.preventDefault();
-    requestLeave(() => detail.close());
-  }
-});
-detail.addEventListener("close", () => {
-  editorTab = "frame";
-  dialogueDraft = null;
-  hideLeaveModal();
-  hideRevisionConfirm();
-  placeEditorUndo(false);
-  resumeDockAfterPanel();
-  if (detailGenerationStatus) {
-    detailGenerationStatus.hidden = true;
-    detailGenerationStatus.textContent = "";
-    delete detailGenerationStatus.dataset.kind;
-  }
-});
-nextFrame.addEventListener("click", () => {
-  if (detailIndex < 0 || detailIndex >= readyFrames.length - 1) return;
-  const index = detailIndex + 1;
-  requestLeave(() => openDetail(index, { tab: editorTab }));
+  frameEditor.handleCancel(event);
 });
 
 function presentDetailGeneration(text, kind = "success") {
@@ -2277,21 +1706,11 @@ export function applyVisual(next) {
     ? "Текущая версия утверждена."
     : "Просмотрите все кадры и утвердите текущую версию.";
   readyForVideo.hidden = !next.readyForVideo;
-  syncGlobalUndo(next);
+  frameEditor.syncUndo(next);
   syncExportRuntime();
   refreshIntroTemplates();
   refreshStages();
-  if (detail?.open && detailStructureId) {
-    const nextIndex = readyFrames.findIndex((frame) => {
-      if ((frame.structureFrameId || frame.id) !== detailStructureId) return false;
-      const segment = Number.isInteger(frame.structureSegmentIndex) ? frame.structureSegmentIndex : null;
-      return segment === detailSegmentIndex;
-    });
-      if (nextIndex >= 0) {
-      openDetail(nextIndex, editorTab.startsWith("panel-") ? { panelIndex: detailPanelIndex } : { tab: editorTab });
-    }
-    else detail.close();
-  }
+  frameEditor.reconcile();
 }
 
 async function refreshVisual() {
@@ -2363,7 +1782,7 @@ async function generateFrame(frameId, button, index) {
         const fittedIndex = readyFrames.findIndex((frame) => frame.id === frameId);
         const openIndex = fittedIndex >= 0 ? fittedIndex : index;
         if (Number.isInteger(openIndex) && readyFrames[openIndex]) {
-          openDetail(openIndex);
+          frameEditor.open(openIndex);
         }
         const attempt = frameAttemptNotice({
           generationFailures: next.generationFailures || [],
@@ -2381,119 +1800,10 @@ async function generateFrame(frameId, button, index) {
   });
 }
 
-function placementOf(panel) {
-  const defaults = FrameRenderer.PLACEMENT_DEFAULTS;
-  const parsed = typeof panel?.position === "string"
-    ? panel.position.match(/(-?\d+(?:\.\d+)?)%\s+(-?\d+(?:\.\d+)?)%/)
-    : null;
-  return {
-    zoom: Number.isFinite(Number(panel?.zoom)) ? Number(panel.zoom) : defaults.zoom,
-    positionX: Number.isFinite(Number(panel?.positionX))
-      ? Number(panel.positionX)
-      : (parsed ? Number(parsed[1]) : defaults.positionX),
-    positionY: Number.isFinite(Number(panel?.positionY))
-      ? Number(panel.positionY)
-      : (parsed ? Number(parsed[2]) : defaults.positionY),
-    mirrored: panel?.mirrored === true,
-  };
-}
-
-function rememberPlacement(panel, placementValue) {
-  panel.zoom = placementValue.zoom;
-  panel.positionX = placementValue.positionX;
-  panel.positionY = placementValue.positionY;
-  panel.mirrored = placementValue.mirrored === true;
-  panel.position = `${placementValue.positionX}% ${placementValue.positionY}%`;
-  panel.align = panel.position;
-}
-
-function applyRendition(image, placementValue) {
-  if (!image?.style) return;
-  const position = `${placementValue.positionX}% ${placementValue.positionY}%`;
-  image.style.objectPosition = position;
-  image.style.transformOrigin = position;
-  image.style.transform = FrameRenderer.renditionTransform(placementValue);
-}
-
-function applyPanelRendition(panelIndex, placementValue) {
-  applyRendition(panelImage(panelIndex), placementValue);
-  const section = detailPanelControls?.children?.[panelIndex];
-  const figure = section?.querySelector?.(".revision-current");
-  const current = figure?.querySelector?.("img");
-  if (current) applyRendition(current, placementValue);
-}
-
-function detailPanels() {
-  if (!detailHost || typeof detailHost.querySelectorAll !== "function") return [];
-  return [...detailHost.querySelectorAll(".panel")];
-}
-
-function panelColumn(panelIndex) {
-  return detailPanels().find((node) => Number(node.dataset?.panelIndex) === panelIndex) ?? null;
-}
-
-function panelImage(panelIndex) {
-  const column = panelColumn(panelIndex);
-  if (!column || typeof column.querySelector !== "function") return null;
-  return column.querySelector(".panel-asset");
-}
-
-function placementReadout(panelIndex) {
-  const section = detailPanelControls?.children?.[panelIndex];
-  if (!section) return null;
-  if (typeof section.querySelector === "function") {
-    const found = section.querySelector("[data-placement-readout]");
-    if (found) return found;
-  }
-  const stack = [...(section.children || [])];
-  while (stack.length) {
-    const node = stack.shift();
-    if (node?.dataset?.placementReadout != null) return node;
-    if (node?.children?.length) stack.push(...node.children);
-  }
-  return null;
-}
-
-function placementCopy(placementValue) {
-  return `Приближение без генерации · ${Number(placementValue.zoom).toFixed(2)}× · ${placementValue.positionX} / ${placementValue.positionY}`;
-}
-
-function updatePlacementCopy(panelIndex, placementValue) {
-  const copy = placementReadout(panelIndex);
-  if (copy) copy.textContent = placementCopy(placementValue);
-  const section = detailPanelControls?.children?.[panelIndex];
-  const mirror = [...(section?.querySelectorAll?.("button") || section?.children || [])]
-    .find((node) => node?.dataset?.placementAction === "mirror");
-  if (mirror) {
-    const on = placementValue.mirrored === true;
-    mirror.textContent = on ? "Отражено по горизонтали" : "Отразить по горизонтали";
-    if (typeof mirror.setAttribute === "function") mirror.setAttribute("aria-pressed", on ? "true" : "false");
-  }
-}
-
-function frameScaleOf(node) {
-  let current = node;
-  while (current) {
-    const scale = Number(current.dataset?.frameScale);
-    if (Number.isFinite(scale) && scale > 0) return scale;
-    current = current.parentNode;
-  }
-  return 1;
-}
-
-function restorePlacement(panel, panelIndex, placementValue) {
-  rememberPlacement(panel, placementValue);
-  applyPanelRendition(panelIndex, placementValue);
-  const section = detailPanelControls?.children?.[panelIndex];
-  const zoom = [...(section?.querySelectorAll?.("input") || [])].find((input) => input.type === "range");
-  if (zoom) zoom.value = String(placementValue.zoom);
-  updatePlacementCopy(panelIndex, placementValue);
-}
-
-async function commitPlacement(frame, panel, panelIndex, patch, messages) {
+async function commitEditorPlacement(frame, panel, panelIndex, patch, messages, rollback) {
   const saved = panel.authoritativePlacement
     ? { ...panel.authoritativePlacement }
-    : placementOf(panel);
+    : frameEditor.placementOf(panel);
   const intended = patch.reset === true
     ? { ...FrameRenderer.PLACEMENT_DEFAULTS }
     : {
@@ -2502,7 +1812,7 @@ async function commitPlacement(frame, panel, panelIndex, patch, messages) {
       positionY: patch.positionY ?? saved.positionY,
       mirrored: patch.mirrored ?? saved.mirrored,
     };
-  const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
+  const displayFrameNumber = frameEditor.index >= 0 ? frameEditor.index + 1 : null;
   await runProductResearchAction({
     semanticAction: "placement_commit",
     submittedText: null,
@@ -2547,102 +1857,15 @@ async function commitPlacement(frame, panel, panelIndex, patch, messages) {
         showActionNotice(messages.success, "success");
         return next;
       } catch (error) {
-        restorePlacement(panel, panelIndex, saved);
+        rollback?.();
         throw error;
       }
     },
   });
 }
 
-function bindDetailPan(frame) {
-  const columns = [
-    ...detailPanels(),
-    ...(detailPanelControls?.querySelectorAll?.(".revision-current") || []),
-  ];
-  for (const column of columns) {
-    const panelIndex = Number(column.dataset?.panelIndex);
-    const panel = frame.panels?.[panelIndex];
-    if (!panel?.assetId) continue;
-    const image = typeof column.querySelector === "function"
-      ? (column.querySelector(".panel-asset") || column.querySelector("img"))
-      : null;
-    if (!image) continue;
-    if (!String(column.className || "").split(/\s+/).includes("panel-pannable")) {
-      column.className = `${column.className || ""} panel-pannable`.trim();
-    }
-    let drag = null;
-    const stop = (event, cancelled) => {
-      if (!drag) return;
-      const samePointer = event?.pointerId == null
-        || drag.pointerId == null
-        || event.pointerId === drag.pointerId;
-      if (!samePointer && event?.type === "pointermove") return;
-      if (!samePointer && event?.type !== "pointerup" && event?.type !== "pointercancel") return;
-      const moved = drag.moved;
-      drag = null;
-      column.className = String(column.className || "").replace(/\bis-panning\b/g, "").replace(/\s+/g, " ").trim();
-      column.releasePointerCapture?.(event?.pointerId);
-      if (!moved || cancelled) return;
-      const current = placementOf(panel);
-      commitPlacement(frame, panel, panelIndex, current, {
-        busy: "Сохраняю кадрирование…",
-        success: "Кадрирование сохранено без новой генерации.",
-      });
-    };
-    column.addEventListener("pointerdown", (event) => {
-      if (event.button != null && event.button !== 0) return;
-      if (typeof event.preventDefault === "function") event.preventDefault();
-      drag = {
-        pointerId: event.pointerId,
-        lastX: Number(event.clientX) || 0,
-        lastY: Number(event.clientY) || 0,
-        moved: false,
-      };
-      if (!String(column.className || "").split(/\s+/).includes("is-panning")) {
-        column.className = `${column.className || ""} is-panning`.trim();
-      }
-      column.setPointerCapture?.(event.pointerId);
-    });
-    column.addEventListener("pointermove", (event) => {
-      if (!drag || (event.pointerId != null && drag.pointerId != null && event.pointerId !== drag.pointerId)) return;
-      const clientX = Number(event.clientX);
-      const clientY = Number(event.clientY);
-      if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
-      const deltaX = clientX - drag.lastX;
-      const deltaY = clientY - drag.lastY;
-      if (deltaX === 0 && deltaY === 0) return;
-      const current = placementOf(panel);
-      const hasDialogue = FrameRenderer.dialogueRegionVisible(frame);
-      const size = FrameRenderer.panelContentSize(frame.panels.length, hasDialogue);
-      const nextPan = FrameRenderer.panByPointer({
-        positionX: current.positionX,
-        positionY: current.positionY,
-        deltaX,
-        deltaY,
-        frameScale: frameScaleOf(column),
-        panelWidth: size.width,
-        panelHeight: size.height,
-        mirrored: current.mirrored,
-      });
-      if (!nextPan) return;
-      drag.lastX = clientX;
-      drag.lastY = clientY;
-      drag.moved = true;
-      const next = { ...current, ...nextPan };
-      rememberPlacement(panel, next);
-      applyPanelRendition(panelIndex, next);
-      updatePlacementCopy(panelIndex, next);
-    });
-    column.addEventListener("pointerup", (event) => stop(event, false));
-    column.addEventListener("pointercancel", (event) => {
-      if (drag) restorePlacement(panel, panelIndex, panel.authoritativePlacement || placementOf(panel));
-      stop(event, true);
-    });
-  }
-}
-
 function panelAddress(panelIndex) {
-  return `${detailIndex >= 0 ? detailIndex + 1 : "?"}.${panelIndex + 1}`;
+  return `${frameEditor.index >= 0 ? frameEditor.index + 1 : "?"}.${panelIndex + 1}`;
 }
 
 function panelOpenSection(name, title) {
@@ -2697,14 +1920,14 @@ function renderPanelTabs(frame) {
     tab.className = "panel-editor-tab";
     tab.dataset.panelIndex = String(panelIndex);
     tab.textContent = `Панель ${panelAddress(panelIndex)}${panel.subject ? ` · ${panel.subject}` : ""}`;
-    tab.setAttribute?.("aria-pressed", panelIndex === detailPanelIndex ? "true" : "false");
-    tab.addEventListener("click", () => selectDetailPanel(panelIndex));
+    tab.setAttribute?.("aria-pressed", panelIndex === frameEditor.panelIndex ? "true" : "false");
+    tab.addEventListener("click", () => frameEditor.selectPanel(panelIndex));
     panelEditorTabs.append(tab);
   });
 }
 
 function panelRevisionAddress(frame, panel, panelIndex) {
-  const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
+  const displayFrameNumber = frameEditor.index >= 0 ? frameEditor.index + 1 : null;
   return {
     displayFrameNumber,
     target: createEmptyCommandTarget("panel", {
@@ -2738,9 +1961,9 @@ function bindInitialPanelCreate({ frame, panel, panelIndex, instruction, perform
   const regenerate = revisionButton("Создать эту панель", "create");
   regenerate.addEventListener("click", async () => {
     const panelInstruction = instruction.value;
-    const displayFrameNumber = detailIndex >= 0 ? detailIndex + 1 : null;
-    const busyText = `Создаю панель ${panelIndex + 1} кадра ${detailIndex + 1}…`;
-    const successText = `Панель ${panelIndex + 1} кадра ${detailIndex + 1} готова.`;
+    const displayFrameNumber = frameEditor.index >= 0 ? frameEditor.index + 1 : null;
+    const busyText = `Создаю панель ${panelIndex + 1} кадра ${frameEditor.index + 1}…`;
+    const successText = `Панель ${panelIndex + 1} кадра ${frameEditor.index + 1} готова.`;
     const addressed = panelRevisionAddress(frame, panel, panelIndex);
     const priorAssetId = typeof panel.assetId === "string" ? panel.assetId : null;
     regenerate.disabled = true;
@@ -2862,7 +2085,7 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
   currentImage.alt = "Текущее изображение";
   if (panel.asset) currentImage.src = panel.asset;
   currentFigure.append(textElement("figcaption", "", "Текущее изображение"), currentImage);
-  applyRendition(currentImage, placementOf(panel));
+  frameEditor.applyRendition(currentImage, frameEditor.placementOf(panel));
   compare.append(currentFigure);
   const history = document.createElement("div");
   history.className = "revision-history";
@@ -3084,13 +2307,11 @@ function bindPanelRevision({ frame, panel, panelIndex, instruction, performance,
 function renderPanelControls(frame) {
   const epoch = ++revisionPreflightEpoch;
   detailPanelControls.replaceChildren();
-  const panelCount = (frame.panels || []).length;
-  if (!Number.isInteger(detailPanelIndex) || detailPanelIndex < 0 || detailPanelIndex >= panelCount) detailPanelIndex = 0;
   frame.panels.forEach((panel, panelIndex) => {
     const section = document.createElement("section");
     section.className = "panel-control";
     section.dataset.panelIndex = String(panelIndex);
-    section.hidden = panelIndex !== detailPanelIndex;
+    section.hidden = panelIndex !== frameEditor.panelIndex;
     const description = document.createElement("p");
     description.className = "panel-description-copy";
     description.textContent = panel.description;
@@ -3136,88 +2357,10 @@ function renderPanelControls(frame) {
     const referencesPart = panelSubsection("references", "Референсы");
     referencesPart.append(description, identityReference(panel));
     section.append(imagePart, framingPart, referencesPart);
-    if (!panel.assetId) {
-      framingPart.append(textElement("p", "helper", "Кадрирование появится, когда у панели будет своё изображение."));
-    }
-    if (panel.assetId) {
-      const initial = placementOf(panel);
-      rememberPlacement(panel, initial);
-      panel.authoritativePlacement = { ...initial };
-      const zoomLabel = document.createElement("label");
-      zoomLabel.className = "zoom-control";
-      const zoomCopy = document.createElement("span");
-      zoomCopy.dataset.placementReadout = "true";
-      zoomCopy.textContent = placementCopy(initial);
-      const zoom = document.createElement("input");
-      zoom.type = "range";
-      zoom.min = "1";
-      zoom.max = "3";
-      zoom.step = "0.05";
-      zoom.value = String(initial.zoom);
-      zoom.addEventListener("input", () => {
-        const next = { ...placementOf(panel), zoom: Number(zoom.value) };
-        rememberPlacement(panel, next);
-        updatePlacementCopy(panelIndex, next);
-        applyPanelRendition(panelIndex, next);
-      });
-      zoom.addEventListener("change", () => {
-        const next = { ...placementOf(panel), zoom: Number(zoom.value) };
-        rememberPlacement(panel, next);
-        commitPlacement(frame, panel, panelIndex, next, {
-          busy: "Сохраняю приближение…",
-          success: "Приближение сохранено без новой генерации.",
-        });
-      });
-      const actions = document.createElement("div");
-      actions.className = "placement-actions";
-      const reset = document.createElement("button");
-      reset.type = "button";
-      reset.dataset.placementAction = "reset";
-      reset.dataset.panelIndex = String(panelIndex);
-      reset.textContent = "Сбросить кадрирование";
-      reset.addEventListener("click", () => {
-        const defaults = { ...FrameRenderer.PLACEMENT_DEFAULTS };
-        rememberPlacement(panel, defaults);
-        applyPanelRendition(panelIndex, defaults);
-        zoom.value = String(defaults.zoom);
-        updatePlacementCopy(panelIndex, defaults);
-        commitPlacement(frame, panel, panelIndex, { reset: true }, {
-          busy: "Сбрасываю кадрирование…",
-          success: "Кадрирование сброшено.",
-        });
-      });
-      const mirror = document.createElement("button");
-      mirror.type = "button";
-      mirror.dataset.placementAction = "mirror";
-      mirror.dataset.panelIndex = String(panelIndex);
-      mirror.textContent = initial.mirrored ? "Отражено по горизонтали" : "Отразить по горизонтали";
-      if (typeof mirror.setAttribute === "function") {
-        mirror.setAttribute("aria-pressed", initial.mirrored ? "true" : "false");
-      }
-      mirror.addEventListener("click", () => {
-        const current = placementOf(panel);
-        const next = { ...current, mirrored: !current.mirrored };
-        rememberPlacement(panel, next);
-        applyPanelRendition(panelIndex, next);
-        updatePlacementCopy(panelIndex, next);
-        commitPlacement(frame, panel, panelIndex, next, {
-          busy: "Сохраняю отражение…",
-          success: "Отражение сохранено без новой генерации.",
-        });
-      });
-      actions.append(reset, mirror);
-      zoomLabel.append(zoomCopy, zoom);
-      framingPart.append(
-        zoomLabel,
-        textElement("p", "helper panel-pan-hint", "Перетащите изображение в кадре выше, чтобы сдвинуть его."),
-        actions,
-      );
-    }
+    frameEditor.renderPlacementControls({ frame, panel, panelIndex, framingPart, textElement });
     detailPanelControls.append(section);
   });
-  paintEditorTabs(frame);
-  applyEditorPanes(frame);
-  bindDetailFrameChrome(frame);
+  frameEditor.finishPanelRender(frame);
 }
 
 approveVisual?.addEventListener("click", async () => {
@@ -4036,19 +3179,9 @@ function undoneNotice(next) {
   return `Отменено: ${label}`;
 }
 
-function syncGlobalUndo(next) {
-  if (!globalUndo) return;
-  const available = Boolean(next?.canUndo);
-  globalUndo.hidden = !next || next.status !== "ready";
-  globalUndo.disabled = !available;
-  globalUndo.textContent = available && next.undoLabel
-    ? `Отменить: ${next.undoLabel}`
-    : "Нечего отменять";
-}
-
-globalUndo?.addEventListener("click", () => {
+function performGlobalUndo() {
   const pendingLabel = visual?.undoLabel || null;
-  runProductResearchAction({
+  return runProductResearchAction({
     semanticAction: "storyboard_undo",
     submittedText: null,
     commandTarget: createEmptyCommandTarget("storyboard"),
@@ -4066,7 +3199,7 @@ globalUndo?.addEventListener("click", () => {
       const createdId = undone?.op === "duplicateFrame" && typeof undone?.created?.structureFrameId === "string"
         ? undone.created.structureFrameId
         : null;
-      const viewingCopy = Boolean(createdId && detail?.open && detailStructureId === createdId);
+      const viewingCopy = Boolean(createdId && detail?.open && frameEditor.structureId === createdId);
       if (next?.status === "ready") applyVisual(next);
       if (viewingCopy) {
         openStructureAddress(undone.source?.structureFrameId ? undone.source : {
@@ -4079,7 +3212,7 @@ globalUndo?.addEventListener("click", () => {
       return next;
     },
   });
-});
+}
 
 function selectedTransition() {
   return renderTransition?.value === "cross-dissolve" ? "cross-dissolve" : "hard-cut";

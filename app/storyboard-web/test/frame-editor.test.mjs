@@ -17,6 +17,8 @@ import {
 } from "./workspace-harness.mjs";
 
 const css = readFileSync(new URL("../public/app.css", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../public/app.js", import.meta.url), "utf8");
+const frameEditorSource = readFileSync(new URL("../public/frame-inspector.mjs", import.meta.url), "utf8");
 const page = await loadWorkspacePage();
 const $ = (selector) => document.querySelector(selector);
 const cards = () => $("#storyboard").querySelectorAll(".story-card");
@@ -49,6 +51,20 @@ async function reset(visual = readyVisual()) {
 function stageBox() {
   return $("#detail-frame").querySelector(".frame-stage");
 }
+
+test("the Frame Editor state machine lives behind the allowlisted frontend module boundary", () => {
+  assert.match(appSource, /createFrameEditor/);
+  assert.match(frameEditorSource, /export function createFrameEditor/);
+  for (const ownedSymbol of [
+    "dialogueDraft",
+    "pendingLeave",
+    "function renderFrameStructure",
+    "function bindDetailPan",
+    "function syncGlobalUndo",
+  ]) {
+    assert.equal(appSource.includes(ownedSymbol), false, ownedSymbol);
+  }
+});
 
 test("the final frame stays visible on every Frame Editor tab", async () => {
   await reset();

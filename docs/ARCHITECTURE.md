@@ -19,12 +19,13 @@ This map describes the implementation tree after the bounded Stage 2B research-r
 
 ## Browser UI
 
-[`public/index.html`](../app/storyboard-web/public/index.html) is the project workspace (`Раскадровка`). [`public/projects.html`](../app/storyboard-web/public/projects.html) is the project list. Styles are [`public/app.css`](../app/storyboard-web/public/app.css) plus the served viewer stylesheet.
+[`public/index.html`](../app/storyboard-web/public/index.html) is the project workspace (`Раскадровка`). [`public/projects.html`](../app/storyboard-web/public/projects.html) is the project list. Styles are [`public/app.css`](../app/storyboard-web/public/app.css) (2,047 lines) plus the served viewer stylesheet.
 
-[`public/app.js`](../app/storyboard-web/public/app.js) is still the page controller (3,913 lines). It imports the extracted client modules and calls `projectApi` from [`public/project-api.mjs`](../app/storyboard-web/public/project-api.mjs), which prefixes `/api/projects/:id`. Extracted modules include:
+[`public/app.js`](../app/storyboard-web/public/app.js) is the composition root (3,378 lines). It passes page, API, research, and renderer dependencies into extracted client modules and calls `projectApi` from [`public/project-api.mjs`](../app/storyboard-web/public/project-api.mjs), which prefixes `/api/projects/:id`. Extracted modules include:
 
 - [`workspace-stages.mjs`](../app/storyboard-web/public/workspace-stages.mjs) — stage list, hash navigation, and derived stage status;
-- [`frame-inspector.mjs`](../app/storyboard-web/public/frame-inspector.mjs), [`panel-basis.mjs`](../app/storyboard-web/public/panel-basis.mjs), [`panel-revision-view.mjs`](../app/storyboard-web/public/panel-revision-view.mjs);
+- [`frame-inspector.mjs`](../app/storyboard-web/public/frame-inspector.mjs) (1,152 lines) — the overview inspector renderer plus the Frame Editor controller for current-frame lifecycle, tabs, dialogue drafts and leave confirmation, duration/frame controls, editor Undo placement, and panel placement interaction wiring;
+- [`panel-basis.mjs`](../app/storyboard-web/public/panel-basis.mjs), [`panel-revision-view.mjs`](../app/storyboard-web/public/panel-revision-view.mjs);
 - [`anchor-session.mjs`](../app/storyboard-web/public/anchor-session.mjs) and [`anchor-session-ui.mjs`](../app/storyboard-web/public/anchor-session-ui.mjs);
 - [`research-dock.mjs`](../app/storyboard-web/public/research-dock.mjs), [`asset-picker.mjs`](../app/storyboard-web/public/asset-picker.mjs), [`export-timing.mjs`](../app/storyboard-web/public/export-timing.mjs), [`duplicate-project.mjs`](../app/storyboard-web/public/duplicate-project.mjs), [`draft-autosave.mjs`](../app/storyboard-web/public/draft-autosave.mjs).
 
