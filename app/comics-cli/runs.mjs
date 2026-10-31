@@ -189,10 +189,7 @@ async function headSha(execFile, cwd) {
 
 async function launch(input, primary, deps) {
   if (input.id !== MAIN_RUN_ID) {
-    const actual = await headSha(deps.execFile, input.worktree);
-    if (actual !== input.resolvedSha) {
-      throw new CliError(`refusing to launch run ${input.id} because worktree HEAD ${actual} does not match ${input.resolvedSha}`);
-    }
+    await assertReusableWorktree(primary, input.root, input, deps);
   }
   const serverPath = join(input.worktree, SERVER_RELATIVE);
   if (!existsSync(serverPath)) throw new CliError(`server entry is missing at ${serverPath}`);
@@ -497,11 +494,11 @@ export async function startCommand(parsed, context, deps, secrets) {
       if (existing && parsed.mode !== "fresh") {
         const problem = validateRecord(existing, root, primary);
         if (problem) throw new CliError(`run ${runId} is inconsistent (${problem})`);
+        if (existing.resolvedSha !== resolved.sha) {
+          throw new CliError(`run ${runId} was previously reused at ${existing.resolvedSha}; retarget it with --reuse ${runId}, or use --fresh`);
+        }
         const status = await inspectRun(existing, deps);
         if (status !== "running" && status !== "unhealthy") {
-          if (existing.resolvedSha !== resolved.sha) {
-            throw new CliError(`run ${runId} was previously reused at ${existing.resolvedSha}; retarget it with --reuse ${runId}, or use --fresh`);
-          }
           await assertReusableWorktree(primary, root, existing, deps);
           if (await needsInstall(primary, existing.worktree, existing.resolvedSha, resolved.sha, deps)) {
             await installDependencies(existing.worktree, deps, secrets, lines);
@@ -569,6 +566,7 @@ async function reuseRun(parsed, resolved, primary, root, auth, deps, state, line
   if (status === "unhealthy") throw new CliError(`run ${runId} is unhealthy; stop it before reuse`);
   await assertReusableWorktree(primary, root, run, deps);
   const previousSha = run.resolvedSha;
+  const previousRef = run.requestedRef;
   if (previousSha !== resolved.sha) {
     await runGit(deps.execFile, run.worktree, ["checkout", "--detach", resolved.sha]);
     const checkedOut = await headSha(deps.execFile, run.worktree);
@@ -596,7 +594,25 @@ async function reuseRun(parsed, resolved, primary, root, auth, deps, state, line
     extra.push(`previous-sha: ${previousSha}`);
     extra.push(REUSE_SCHEMA_WARNING);
   }
-  return startRecorded(run, primary, root, auth, deps, state, { lines, extra });
+  try {
+    return await startRecorded(run, primary, root, auth, deps, state, { lines, extra });
+  } catch (error) {
+    if (previousSha === resolved.sha) throw error;
+    let restoredSha = null;
+    try {
+      await runGit(deps.execFile, run.worktree, ["checkout", "--detach", previousSha]);
+      restoredSha = await headSha(deps.execFile, run.worktree);
+    } catch {
+      restoredSha = null;
+    }
+    run.requestedRef = previousRef;
+    run.resolvedSha = previousSha;
+    if (restoredSha !== previousSha) {
+      const reason = error instanceof CliError ? error.message : "managed launch failed";
+      throw new CliError(`rollback incomplete: worktree ${run.worktree} is at ${restoredSha ?? "unknown"}, not ${previousSha}; ${reason}`);
+    }
+    throw error;
+  }
 }
 
 export async function stopCommand(runIdInput, context, deps) {

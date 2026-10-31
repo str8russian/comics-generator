@@ -152,6 +152,7 @@ function createHarness(fixture, { packageRoot = fixture.primary } = {}) {
   let failNpm = false;
   let failWorktreeRemove = false;
   let failDropdb = false;
+  let dirtyAfterNpm = false;
   let missingTool = null;
   const busyPorts = new Set();
   const shellCalls = [];
@@ -194,6 +195,7 @@ function createHarness(fixture, { packageRoot = fixture.primary } = {}) {
         if (failNpm) return { code: 17, stdout: "", stderr: "npm ci failed token=should-not-leak" };
         mkdirSync(join(options.cwd, "node_modules"), { recursive: true });
         writeFileSync(join(options.cwd, "node_modules/.installed"), "ok\n");
+        if (dirtyAfterNpm) writeFileSync(join(options.cwd, "npm-left-dirty.txt"), "dirty\n");
       }
       return { code: 0, stdout: "", stderr: "" };
     }
@@ -263,6 +265,7 @@ function createHarness(fixture, { packageRoot = fixture.primary } = {}) {
     set failNpm(value) { failNpm = value; },
     set failWorktreeRemove(value) { failWorktreeRemove = value; },
     set failDropdb(value) { failDropdb = value; },
+    set dirtyAfterNpm(value) { dirtyAfterNpm = value; },
     set missingTool(value) { missingTool = value; },
     busyPorts,
   };
@@ -618,8 +621,27 @@ test("ordinary start does not launch a reused run at a different SHA", async () 
     await execute(["stop", runId], harness.deps);
     const reused = await execute(["start", shaB, "--reuse", runId], harness.deps);
     assert.equal(reused.exitCode, 0, reused.stderr);
-    await execute(["stop", runId], harness.deps);
     const worktree = join(managedRoot(fixture), "worktrees", runId);
+    const registryWhileRunning = registryText(fixture);
+    const spawnsWhileRunning = harness.processes.spawns.length;
+    const npmWhileRunning = harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length;
+    const signalsWhileRunning = harness.processes.signals.length;
+    const checkoutsWhileRunning = harness.calls.filter((call) => call.file === "git" && call.args.includes("checkout")).length;
+    const ordinaryWhileRunning = await execute(["start", shaA], harness.deps);
+    assert.notEqual(ordinaryWhileRunning.exitCode, 0);
+    assert.match(ordinaryWhileRunning.stderr, /previously reused/);
+    assert.match(ordinaryWhileRunning.stderr, /--reuse/);
+    assert.match(ordinaryWhileRunning.stderr, /--fresh/);
+    assert.equal(ordinaryWhileRunning.stdout.includes("status: running"), false);
+    assert.equal(ordinaryWhileRunning.stdout.includes(`sha: ${shaA}`), false);
+    assert.equal(harness.processes.spawns.length, spawnsWhileRunning);
+    assert.equal(harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length, npmWhileRunning);
+    assert.equal(harness.processes.signals.length, signalsWhileRunning);
+    assert.equal(harness.calls.filter((call) => call.file === "git" && call.args.includes("checkout")).length, checkoutsWhileRunning);
+    assert.equal(git(worktree, ["rev-parse", "HEAD"]).trim(), shaB);
+    assert.equal(JSON.parse(registryText(fixture)).runs[runId].resolvedSha, shaB);
+    assert.equal(registryText(fixture), registryWhileRunning);
+    await execute(["stop", runId], harness.deps);
     const registryBefore = registryText(fixture);
     const spawnsBefore = harness.processes.spawns.length;
     const npmBefore = harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length;
@@ -641,6 +663,22 @@ test("ordinary start does not launch a reused run at a different SHA", async () 
     assert.match(back.stdout, new RegExp(`sha: ${shaA}`));
     assert.equal(git(worktree, ["rev-parse", "HEAD"]).trim(), shaA);
     assert.equal(JSON.parse(registryText(fixture)).runs[runId].resolvedSha, shaA);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("managed launch refuses a worktree dirtied by dependency installation", async () => {
+  const fixture = createRepository();
+  const sha = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  try {
+    const harness = createHarness(fixture);
+    harness.dirtyAfterNpm = true;
+    const started = await execute(["start", sha], harness.deps);
+    assert.notEqual(started.exitCode, 0);
+    assert.equal(`${started.stdout}\n${started.stderr}`.includes("status: running"), false);
+    assert.equal(harness.processes.spawns.length, 0);
+    assert.match(started.stderr, /dirty/);
   } finally {
     fixture.cleanup();
   }
