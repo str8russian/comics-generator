@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "comics": "./bin/comics.mjs"
+  },
   "description": "Server-side storyboard pipeline: schema, role prompts, validator, eval harness.",
   "scripts": {
     "golden": "node tools/build-golden.mjs",

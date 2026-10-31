@@ -40,6 +40,20 @@ node app/storyboard-web/server.mjs
 
 The process uses the environment it is given. It does not load `.env.local` by itself. Docker Compose injects `env_file` and the `DATABASE_URL` above. A local shell can export the variables, or use Node's `--env-file-if-exists=.env.local`, which the spike scripts in `package.json` already use. There is no npm start script.
 
+## Local `comics` command
+
+The `comics` bin starts one local Comics Generator process at a time. `comics start` serves the primary `master` checkout, including its uncommitted files, at `http://127.0.0.1:4173/` on database `comics`. `comics start <ref>` checks out that resolved commit in a detached worktree and serves it on the next free port from `4174` through `4273`, using a database copied from `comics`. Providers stay on the primary checkout's local configuration. The command loads that checkout's `.env.local` when it exists and overrides only the host, port, and database.
+
+Runtime state lives outside the checkout, in a hidden sibling of the primary worktree. For this repository that directory is `/Users/andrey/Documents/Projects/.comics-pipeline-runs/`. It holds the registry, logs, and managed worktrees. `comics stop` leaves those resources in place. `comics clean <run-id>` is the only command that deletes a managed worktree and its database, and it refuses `main`.
+
+After this branch is integrated, install the command from the primary checkout:
+
+```sh
+npm link
+```
+
+Until then, run `bin/comics.mjs` from the feature worktree, or link into a disposable prefix. Do not leave a global `comics` command pointing at a disposable worktree. `comics compare` is not part of this command.
+
 ## Tests
 
 From the repository root:
