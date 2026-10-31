@@ -3086,8 +3086,7 @@ confirmMaterial?.addEventListener("click", async () => {
       }
       review.mode = "material";
       review.id = payload.materialStateId;
-      renderFindings();
-      refreshConfirmation();
+      renderReview();
       return payload;
     },
   });
