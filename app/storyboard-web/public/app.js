@@ -2723,6 +2723,7 @@ async function saveCast() {
       body: JSON.stringify(cast),
     });
   } catch {
+    renderReview();
     if (capture) await capture.terminal("failure", { outcomeKind: "request-failed" });
     return { ok: false };
   }

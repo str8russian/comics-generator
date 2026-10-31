@@ -693,6 +693,49 @@ describe("truthful Story long-running actions", { concurrency: false }, () => {
     harness.respond = null;
   });
 
+  test("a failed pending rename request restores the last persisted cast", async () => {
+    resetRecorder();
+    page.setResearchReviewState(relationshipReview("reading"), "reading");
+    harness.respond = async (entry) => {
+      if (entry.method === "PUT" && entry.path.endsWith("/readings/reading-1/cast")) {
+        throw new Error("network");
+      }
+      return null;
+    };
+    const nameInput = [...$("#material-characters").querySelectorAll("input")].find((node) => node.value === "Путин");
+    nameInput.value = "Влади";
+    nameInput.dispatchEvent({ type: "input" });
+    nameInput.value = "Владимир";
+    nameInput.dispatchEvent({ type: "input" });
+    nameInput.dispatchEvent({ type: "blur" });
+    await flush(6);
+    assert.equal(castWrites().length, 1);
+    assert.deepEqual([...$("#material-characters").querySelectorAll("input")].map((node) => node.value), ["Путин", "Песков"]);
+    assert.equal(aliasValue("Путин"), "Путин");
+    assert.equal(aliasValue("Владимир"), "Песков");
+    assert.equal(aliasValue("Дмитрий Сергеевич"), "Песков");
+    assert.equal(speakerValue("utterance-1"), "Путин");
+    assert.equal(speakerValue("utterance-2"), "Песков");
+    const extracted = [...$("#material-characters").querySelectorAll(".cast-include")].map((node) => node.dataset.extractedName);
+    assert.deepEqual(extracted, ["Путин", "Песков"]);
+    assert.equal($("#add-character").hidden, false);
+    assert.equal($("#add-character").textContent, "Добавить персонажа");
+    assert.equal(harness.requests.some((entry) => entry.path.endsWith("/storyboard-results")), false);
+    assert.equal(harness.requests.some((entry) => /\/generate$/.test(entry.path)), false);
+    assert.equal(harness.requests.some((entry) => entry.path.includes("/anchors")), false);
+    assert.equal(harness.requests.some((entry) => entry.path.includes("/render")), false);
+    const starts = researchStarts("cast_edit").filter((event) => event.editTarget?.editKind === "character_rename");
+    assert.equal(starts.length, 1);
+    const terminals = harness.researchPosts.filter((event) => (
+      event.eventKind === "action_terminal" && event.correlationId === starts[0].correlationId
+    ));
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0].outcome, "failure");
+    assert.equal(terminals[0].outcomeKind, "request-failed");
+    assert.equal(harness.researchPosts.some((event) => event.eventKind === "action_terminal" && event.outcome === "success"), false);
+    harness.respond = null;
+  });
+
   test("confirmed Story review shows canonical names as text and still adds and excludes", async () => {
     resetRecorder();
     page.setResearchReviewState({
