@@ -2,7 +2,7 @@
 
 ## Status
 
-SpecKit Lite contract for the first CLI increment. Owner acceptance is still required. `comics compare` is deferred and is not implemented here.
+The local Comics CLI foundation is accepted. This contract includes `comics compare <ref-a> <ref-b>`.
 
 ## Command surface
 
@@ -11,6 +11,7 @@ comics start
 comics start <ref>
 comics start <ref> --fresh
 comics start <ref> --reuse <run-id>
+comics compare <ref-a> <ref-b>
 comics list
 comics stop <run-id>
 comics clean <run-id>
@@ -46,7 +47,25 @@ CLI state is stored in a hidden sibling of that checkout: `<parent>/.comics-pipe
 - Failed Git worktree removal never falls back to raw recursive deletion. The worktree, database, and registry entry stay, and the command fails. If Git removal succeeds and the database drop fails, the worktree is gone, the database and registry entry remain, and a later `clean <run-id>` retries the remaining database cleanup.
 - Failed creation rolls back only the worktree, database, and dump created by that invocation. If Git cannot remove the new worktree, rollback is reported as incomplete and the directory is not raw-deleted.
 - Registry writes use a temp file and rename. A malformed registry is refused rather than treated as empty.
-- `comics start` writes a short progress line to stderr immediately before each stage it actually runs. The final run summary stays on stdout. Help and the other commands do not emit start progress. Progress does not include credentials, database URLs, or provider output.
+- `comics start` writes a short progress line to stderr immediately before each stage it actually runs. The final run summary stays on stdout. Help, list, stop, clean, and db commands do not emit start progress. Compare progress is specified below. Progress does not include credentials, database URLs, or provider output.
+
+## Compare
+
+`comics compare <ref-a> <ref-b>` resolves two explicit local refs and starts two ordinary managed runs, labelled `left` and `right`. It does not diff Git, compare rendered output, open a browser, synchronize application state, or add a comparison screen. It does not create a comparison-group record or a second registry. After success, both runs remain ordinary entries in `comics list` and `comics db list`. The user stops and cleans each one with the existing commands. Compare does not stop or clean either side when it returns.
+
+- Exactly two positional refs are required. Missing refs, extra arguments, and every option, including `--fresh`, `--reuse`, and `--open`, fail with usage.
+- Both operands use the existing local-only ref rules. Compare never fetches.
+- Both refs are resolved, and both existing-record checks below are finished, before either side is installed, checked out, started, or created. An unknown, ambiguous, or otherwise invalid right ref does not launch the left side.
+- If both refs resolve to the same full commit SHA, compare refuses before database, worktree, install, spawn, or registry mutation.
+- The first operand is `left` and the second is `right`. Those labels stay on progress, errors, and the final summary.
+- `master`, `HEAD`, tags, local branches, existing remote-tracking refs, and commit IDs stay ordinary refs. Each side uses the deterministic managed run for its resolved SHA and the same safety rules as `comics start <ref>`. Neither side is the `main` run, uses port `4173`, or connects to database `comics`.
+- A missing side is created with a detached worktree, isolated snapshot database, dependency installation, port allocation, server spawn, and health check. A stopped matching side restarts on its existing worktree and database. A healthy matching side is reused without a second process.
+- Distinct sides have distinct run IDs, worktrees, databases, and non-`4173` ports.
+- Existing deterministic-run retargeting, dirty or drifted worktrees, stored SHA checks, foreign PIDs, unhealthy processes, installation, rollback, cleanup, and migration-warning rules stay in force. An already inconsistent or unhealthy side is refused before either side launches.
+- The sides run left, then right. Compare does not mutate the registry concurrently. If the left side fails, the right side is not attempted. If the right side fails after the left side is healthy, compare exits nonzero, identifies the right-side failure, and reports that the left run remains available, with enough left-side details to manage it. It does not roll back, stop, or clean the left side.
+- A pre-spawn failure rolls back only resources newly created by that side. A post-spawn failure stays recorded under the accepted per-run rule.
+- A successful pair summary is printed only when both sides are healthy. Stdout labels `left` and `right` and includes, for each, the requested ref, resolved SHA, run ID, status, worktree, database, port, URL, and provider mode. The summary does not claim that Git content or rendered output was compared.
+- Live progress stays on stderr and is prefixed `[left]` or `[right]` for the side that is actually running that stage. The final summary stays on stdout.
 
 ## Provider and dependencies
 
@@ -58,8 +77,8 @@ The first creation of a managed worktree runs `npm ci` there. A later SHA change
 
 ## Owner checkpoint
 
-Review the feature worktree, then from an unrelated directory run the worktree executable: show `--help`; start this branch's ref as a managed run; open its URL and confirm the copied projects load without an unrequested provider action; `list`, `stop`, and start the same ref again to confirm reuse; `db list` and optionally `db shell`; then `stop` and `clean` and confirm the reported resources are gone. Run `npm link` from the primary checkout only after integration.
+Review the feature worktree, then from an unrelated directory run the worktree executable: show `--help`; start this branch's ref as a managed run; open its URL and confirm the copied projects load without an unrequested provider action; `list`, `stop`, and start the same ref again to confirm reuse; `db list` and optionally `db shell`; then `stop` and `clean` and confirm the reported resources are gone. `comics compare <ref-a> <ref-b>` prints two managed URLs; open each, then stop and clean those run ids individually. Run `npm link` from the primary checkout only after integration.
 
 ## Deferred
 
-`comics compare`, paired runs, project transfer, automatic fetch, `open`, `--ephemeral`, aliases, shell completion, and any change to server routes, providers, schemas, migrations, or the main database contract are out of scope.
+Project transfer, automatic fetch, `open`, `--ephemeral`, aliases, shell completion, and any change to server routes, providers, schemas, migrations, or the main database contract are out of scope.

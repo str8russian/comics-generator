@@ -319,9 +319,13 @@ test("parsing accepts the command surface and rejects malformed combinations", (
   assert.equal(parseArgs(["db", "list"]).command, "db-list");
   assert.equal(parseArgs(["db", "shell"]).runId, null);
   assert.equal(parseArgs(["db", "shell", "main"]).runId, "main");
+  assert.deepEqual(parseArgs(["compare", "left-ref", "right-ref"]), {
+    command: "compare",
+    left: "left-ref",
+    right: "right-ref",
+  });
   for (const argv of [
     [],
-    ["compare", "a", "b"],
     ["start", "--fresh"],
     ["start", "--reuse", "main"],
     ["start", "feature", "--fresh", "--reuse", "main"],
@@ -339,12 +343,20 @@ test("parsing accepts the command surface and rejects malformed combinations", (
     ["help", "extra"],
     ["--help", "extra"],
     ["-h"],
+    ["compare"],
+    ["compare", "only-one"],
+    ["compare", "a", "b", "c"],
+    ["compare", "a", "b", "--fresh"],
+    ["compare", "--reuse", "a", "b"],
+    ["compare", "a", "--open", "b"],
+    ["compare", "--fresh"],
+    ["compare", "a", "b", "--ephemeral"],
   ]) {
     assert.throws(() => parseArgs(argv), /comics|usage|unknown|require|mutually|unexpected|invalid/i);
   }
 });
 
-test("help lists the accepted commands and does not advertise compare", async () => {
+test("help lists compare and rejects a compare command without two refs", async () => {
   const fixture = createRepository();
   try {
     const harness = createHarness(fixture);
@@ -354,13 +366,15 @@ test("help lists the accepted commands and does not advertise compare", async ()
       assert.match(result.stdout, /comics start <ref> --fresh/);
       assert.match(result.stdout, /comics start <ref> --reuse <run-id>/);
       assert.match(result.stdout, /comics db shell \[<run-id>\]/);
-      assert.equal(result.stdout.includes("compare"), false);
+      assert.match(result.stdout, /comics compare <ref-a> <ref-b>/);
       assert.equal(harness.calls.length, 0);
     }
-    const unknown = await execute(["compare", "a", "b"], harness.deps);
-    assert.notEqual(unknown.exitCode, 0);
-    assert.match(unknown.stderr, /unknown command 'compare'/);
-    assert.match(unknown.stderr, /comics start/);
+    const missing = await execute(["compare", "only-one"], harness.deps);
+    assert.notEqual(missing.exitCode, 0);
+    assert.match(missing.stderr, /usage: comics compare <ref-a> <ref-b>/);
+    assert.match(missing.stderr, /comics start <ref>/);
+    assert.equal(missing.stdout.includes("status: running"), false);
+    assert.equal(harness.calls.length, 0);
   } finally {
     fixture.cleanup();
   }
@@ -1332,11 +1346,485 @@ test("package bin runs from an unrelated directory via a disposable prefix", asy
     const bin = join(prefix, "bin", "comics");
     const help = await execFileAsync(bin, ["--help"], { cwd: unrelated, encoding: "utf8" });
     assert.match(help.stdout, /comics start/);
-    assert.equal(help.stdout.includes("compare"), false);
+    assert.match(help.stdout, /comics compare <ref-a> <ref-b>/);
     const after = existsSync(globalBin) ? statSync(globalBin).mtimeMs : null;
     assert.equal(after, before);
   } finally {
     removeTree(prefix);
     removeTree(unrelated);
+  }
+});
+
+function createPair(fixture) {
+  const leftSha = commitFile(fixture.primary, "left.txt", "left\n", "left");
+  git(fixture.primary, ["branch", "left-ref", leftSha]);
+  const rightSha = commitFile(fixture.primary, "right.txt", "right\n", "right");
+  git(fixture.primary, ["branch", "right-ref", rightSha]);
+  git(fixture.primary, ["checkout", "master"]);
+  return { leftSha, rightSha };
+}
+
+function worktreeAdds(harness) {
+  return harness.calls.filter((call) => call.file === "git" && call.args.includes("worktree") && call.args.includes("add"));
+}
+
+function sideBlock(stdout, side) {
+  const match = String(stdout).match(new RegExp(`(?:^|\\n)${side}:\\n([\\s\\S]*?)(?=\\n(?:left|right):\\n|$)`));
+  assert.ok(match, `${side} summary`);
+  return match[1];
+}
+
+function sideField(stdout, side, name) {
+  const match = sideBlock(stdout, side).match(new RegExp(`^${name}: (.+)$`, "m"));
+  assert.ok(match, `${side} ${name}`);
+  return match[1];
+}
+
+test("compare rejects missing, extra, and option arguments before any launch", async () => {
+  const fixture = createRepository();
+  try {
+    const harness = createHarness(fixture);
+    const progress = attachProgress(harness);
+    for (const argv of [
+      ["compare"],
+      ["compare", "only-one"],
+      ["compare", "left-ref", "right-ref", "extra"],
+      ["compare", "left-ref", "right-ref", "--fresh"],
+      ["compare", "--reuse", "left-ref", "right-ref"],
+      ["compare", "left-ref", "--open", "right-ref"],
+      ["compare", "--ephemeral"],
+    ]) {
+      const result = await execute(argv, harness.deps);
+      assert.notEqual(result.exitCode, 0, argv.join(" "));
+      assert.match(result.stderr, /usage: comics compare <ref-a> <ref-b>/);
+      assert.equal(result.stdout.includes("status: running"), false);
+    }
+    assert.equal(harness.calls.length, 0);
+    assert.equal(harness.processes.spawns.length, 0);
+    assert.equal(progress.events.length, 0);
+    assert.equal(existsSync(join(managedRoot(fixture), "registry.json")), false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("compare resolves both refs before mutation and does not launch a bad right ref", async () => {
+  const fixture = createRepository();
+  const { leftSha, rightSha } = createPair(fixture);
+  git(fixture.primary, ["branch", "overlap", leftSha]);
+  git(fixture.primary, ["tag", "overlap", rightSha]);
+  try {
+    const harness = createHarness(fixture);
+    const progress = attachProgress(harness);
+    const unknown = await execute(["compare", "left-ref", "missing-ref"], harness.deps);
+    assert.notEqual(unknown.exitCode, 0);
+    assert.match(unknown.stderr, /right: .*unknown ref 'missing-ref'/);
+    assert.equal(unknown.stdout.includes("status: running"), false);
+    assert.equal(mutating(harness, "createdb").length, 0);
+    assert.equal(mutating(harness, "pg_dump").length, 0);
+    assert.equal(worktreeAdds(harness).length, 0);
+    assert.equal(harness.calls.filter((call) => call.file === "docker" && call.args[1] === "up").length, 0);
+    assert.equal(harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length, 0);
+    assert.equal(harness.processes.spawns.length, 0);
+    assert.equal(harness.calls.some((call) => call.file === "git" && call.args.includes("fetch")), false);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", `sha${leftSha}`)), false);
+    assert.equal(existsSync(join(managedRoot(fixture), "registry.json")), false);
+    assert.equal(progress.events.length, 0);
+    const ambiguous = await execute(["compare", "left-ref", "overlap"], harness.deps);
+    assert.notEqual(ambiguous.exitCode, 0);
+    assert.match(ambiguous.stderr, /right: .*ambiguous ref 'overlap'/);
+    assert.equal(harness.processes.spawns.length, 0);
+    assert.equal(mutating(harness, "createdb").length, 0);
+    assert.equal(worktreeAdds(harness).length, 0);
+    assertNoSecrets(`${unknown.stdout}\n${unknown.stderr}\n${ambiguous.stdout}\n${ambiguous.stderr}`);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("compare refuses one resolved commit before creating either side", async () => {
+  const fixture = createRepository();
+  const { rightSha } = createPair(fixture);
+  try {
+    const harness = createHarness(fixture);
+    const progress = attachProgress(harness);
+    for (const argv of [
+      ["compare", "master", "right-ref"],
+      ["compare", rightSha, rightSha.slice(0, 12)],
+      ["compare", "HEAD", "master"],
+    ]) {
+      const result = await execute(argv, harness.deps);
+      assert.notEqual(result.exitCode, 0, argv.join(" "));
+      assert.match(result.stderr, /same commit/);
+      assert.match(result.stderr, new RegExp(rightSha));
+      assert.equal(result.stdout.includes("status: running"), false);
+      assert.equal(result.stdout.includes(`sha: ${rightSha}`), false);
+    }
+    assert.equal(mutating(harness, "createdb").length, 0);
+    assert.equal(mutating(harness, "pg_dump").length, 0);
+    assert.equal(mutating(harness, "pg_restore").length, 0);
+    assert.equal(worktreeAdds(harness).length, 0);
+    assert.equal(harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length, 0);
+    assert.equal(harness.calls.filter((call) => call.file === "docker" && call.args[1] === "up").length, 0);
+    assert.equal(harness.processes.spawns.length, 0);
+    assert.equal(existsSync(join(managedRoot(fixture), "registry.json")), false);
+    assert.equal(progress.events.length, 0);
+    assert.equal(harness.calls.some((call) => call.file === "git" && call.args.includes("fetch")), false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("compare starts two distinct managed runs and labels progress for each side", async () => {
+  const fixture = createRepository();
+  const { leftSha, rightSha } = createPair(fixture);
+  writeFileSync(join(fixture.primary, ".env.local"), `FILE_SECRET=${FILE_SECRET}\n`);
+  try {
+    const harness = createHarness(fixture);
+    const progress = attachProgress(harness);
+    const started = await execute(["compare", "left-ref", "master"], harness.deps);
+    assert.equal(started.exitCode, 0, started.stderr);
+    assert.match(started.stdout, /^left:\n/m);
+    assert.match(started.stdout, /^right:\n/m);
+    assert.equal(sideField(started.stdout, "left", "ref"), "left-ref");
+    assert.equal(sideField(started.stdout, "left", "sha"), leftSha);
+    assert.equal(sideField(started.stdout, "right", "ref"), "master");
+    assert.equal(sideField(started.stdout, "right", "sha"), rightSha);
+    const leftId = sideField(started.stdout, "left", "run");
+    const rightId = sideField(started.stdout, "right", "run");
+    assert.equal(leftId, `sha${leftSha}`);
+    assert.equal(rightId, `sha${rightSha}`);
+    assert.notEqual(leftId, rightId);
+    assert.notEqual(leftId, "main");
+    assert.notEqual(rightId, "main");
+    const leftDatabase = sideField(started.stdout, "left", "database");
+    const rightDatabase = sideField(started.stdout, "right", "database");
+    assert.equal(leftDatabase, databaseNameForRun(leftId));
+    assert.equal(rightDatabase, databaseNameForRun(rightId));
+    assert.notEqual(leftDatabase, rightDatabase);
+    assert.notEqual(leftDatabase, "comics");
+    assert.notEqual(rightDatabase, "comics");
+    assert.notEqual(leftDatabase, "comics_test");
+    assert.notEqual(rightDatabase, "comics_test");
+    const leftPort = sideField(started.stdout, "left", "port");
+    const rightPort = sideField(started.stdout, "right", "port");
+    assert.equal(leftPort, "4174");
+    assert.equal(rightPort, "4175");
+    assert.equal(sideField(started.stdout, "left", "url"), "http://127.0.0.1:4174/");
+    assert.equal(sideField(started.stdout, "right", "url"), "http://127.0.0.1:4175/");
+    assert.equal(sideField(started.stdout, "left", "status"), "running");
+    assert.equal(sideField(started.stdout, "right", "status"), "running");
+    assert.equal(sideField(started.stdout, "left", "provider"), "enabled (local configuration)");
+    assert.equal(sideField(started.stdout, "right", "provider"), "enabled (local configuration)");
+    const leftWorktree = sideField(started.stdout, "left", "worktree");
+    const rightWorktree = sideField(started.stdout, "right", "worktree");
+    assert.equal(leftWorktree, join(managedRoot(fixture), "worktrees", leftId));
+    assert.equal(rightWorktree, join(managedRoot(fixture), "worktrees", rightId));
+    assert.notEqual(leftWorktree, realPrimary(fixture));
+    assert.notEqual(rightWorktree, realPrimary(fixture));
+    assert.equal(git(leftWorktree, ["rev-parse", "HEAD"]).trim(), leftSha);
+    assert.equal(git(rightWorktree, ["rev-parse", "HEAD"]).trim(), rightSha);
+    assert.equal(harness.databases.has(leftDatabase), true);
+    assert.equal(harness.databases.has(rightDatabase), true);
+    assert.equal(harness.databases.has("comics"), false);
+    assert.equal(harness.databases.has("comics_test"), false);
+    const managedSpawns = harness.processes.spawns.filter((proc) => proc.options.env.STORYBOARD_PORT !== "4173");
+    assert.equal(managedSpawns.length, 2);
+    assert.deepEqual(managedSpawns.map((proc) => proc.options.env.STORYBOARD_PORT).sort(), ["4174", "4175"]);
+    for (const proc of managedSpawns) {
+      assert.equal(proc.options.env.STORYBOARD_HOST, "127.0.0.1");
+      assert.notEqual(new URL(proc.options.env.DATABASE_URL).pathname, "/comics");
+      assert.equal(proc.options.env.CONTEST_API_TOKEN, SECRET_TOKEN);
+    }
+    assert.equal(harness.processes.spawns.some((proc) => proc.port === 4173), false);
+    assert.doesNotMatch(started.stdout, /\bdiff\b|changed files|automatically compared/i);
+    assert.ok(progress.events.length > 0);
+    assert.ok(progress.events.every((line) => /^\[(left|right)\] /.test(line)));
+    assert.match(progress.events[0], /^\[left\] Checking local dependencies/);
+    const leftHealth = progress.events.findIndex((line) => line.startsWith("[left] Waiting for server health"));
+    const firstRight = progress.events.findIndex((line) => line.startsWith("[right]"));
+    assert.ok(leftHealth >= 0 && firstRight > leftHealth);
+    const rightResolve = progress.marks.find((mark) => mark.kind === "git" && mark.args.some((arg) => String(arg).includes("refs/heads/master^{commit}")));
+    const firstDatabase = progress.marks.find((mark) => mark.kind === "docker" && mark.args[1] === "up");
+    assert.ok(rightResolve);
+    assert.ok(firstDatabase);
+    assert.ok(progress.marks.indexOf(rightResolve) < progress.marks.indexOf(firstDatabase));
+    for (const side of ["left", "right"]) {
+      assertProgressBefore(progress.marks, (mark) => mark.kind === "docker" && mark.args[1] === "up" && progressText(mark.events).includes(`[${side}] Starting local PostgreSQL`), new RegExp(`\\[${side}\\] Checking local dependencies`));
+      assertProgressBefore(progress.marks, (mark) => mark.kind === "pg_dump" && mark.args.includes("--format=custom") && progressText(mark.events).includes(`[${side}] Creating database snapshot`), new RegExp(`\\[${side}\\] Creating database snapshot from comics`));
+      assertProgressBefore(progress.marks, (mark) => mark.kind === "git" && mark.args.includes("worktree") && mark.args.includes("add") && progressText(mark.events).includes(`[${side}] Creating detached worktree`), new RegExp(`\\[${side}\\] Creating detached worktree`));
+      assertProgressBefore(progress.marks, (mark) => mark.kind === "npm" && mark.args[0] === "ci" && progressText(mark.events).includes(`[${side}] Installing dependencies`), new RegExp(`\\[${side}\\] Installing dependencies in `));
+      assertProgressBefore(progress.marks, (mark) => mark.kind === "spawn" && progressText(mark.events).includes(`[${side}] Starting server`), new RegExp(`\\[${side}\\] Starting server at http:\\/\\/127\\.0\\.0\\.1:\\d+\\/`));
+      assertProgressBefore(progress.marks, (mark) => mark.kind === "health" && progressText(mark.events).includes(`[${side}] Waiting for server health`), new RegExp(`\\[${side}\\] Waiting for server health`));
+    }
+    assert.equal(JSON.parse(registryText(fixture)).runs[leftId].resolvedSha, leftSha);
+    assert.equal(JSON.parse(registryText(fixture)).runs[rightId].resolvedSha, rightSha);
+    assert.equal(JSON.parse(registryText(fixture)).runs.main, undefined);
+    const main = await execute(["start"], harness.deps);
+    assert.equal(main.exitCode, 0, main.stderr);
+    assert.match(main.stdout, /run: main/);
+    assert.match(main.stdout, /port: 4173/);
+    assert.match(main.stdout, /database: comics\n/);
+    assertNoSecrets(`${progressText(progress.events)}\n${started.stdout}\n${started.stderr}\n${main.stdout}\n${registryText(fixture)}\n${combinedLogs(fixture)}`);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("compare reuses a stopped side and a healthy side without copying them again", async () => {
+  const fixture = createRepository();
+  const { leftSha, rightSha } = createPair(fixture);
+  try {
+    const harness = createHarness(fixture);
+    const first = await execute(["compare", "left-ref", "right-ref"], harness.deps);
+    assert.equal(first.exitCode, 0, first.stderr);
+    const leftId = `sha${leftSha}`;
+    const rightId = `sha${rightSha}`;
+    await execute(["stop", leftId], harness.deps);
+    const createdbBefore = mutating(harness, "createdb").length;
+    const dumpsBefore = mutating(harness, "pg_dump").length;
+    const addsBefore = worktreeAdds(harness).length;
+    const npmBefore = harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length;
+    const spawnsBefore = harness.processes.spawns.length;
+    const rightPid = harness.processes.spawns.find((proc) => proc.alive && proc.port === 4175).pid;
+    const progress = attachProgress(harness);
+    const again = await execute(["compare", leftSha.slice(0, 12), rightSha], harness.deps);
+    assert.equal(again.exitCode, 0, again.stderr);
+    assert.equal(sideField(again.stdout, "left", "ref"), leftSha.slice(0, 12));
+    assert.equal(sideField(again.stdout, "left", "sha"), leftSha);
+    assert.equal(sideField(again.stdout, "left", "run"), leftId);
+    assert.equal(sideField(again.stdout, "right", "ref"), rightSha);
+    assert.equal(sideField(again.stdout, "right", "sha"), rightSha);
+    assert.equal(sideField(again.stdout, "right", "run"), rightId);
+    assert.equal(sideField(again.stdout, "left", "port"), "4174");
+    assert.equal(sideField(again.stdout, "right", "port"), "4175");
+    assert.equal(mutating(harness, "createdb").length, createdbBefore);
+    assert.equal(mutating(harness, "pg_dump").length, dumpsBefore);
+    assert.equal(worktreeAdds(harness).length, addsBefore);
+    assert.equal(harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length, npmBefore);
+    assert.equal(harness.processes.spawns.length, spawnsBefore + 1);
+    assert.equal(harness.processes.byPid.get(rightPid).alive, true);
+    assert.match(progressText(progress.events), /\[left\] Starting server at http:\/\/127\.0\.0\.1:4174\//);
+    assert.doesNotMatch(progressText(progress.events), /\[left\] Creating database snapshot/);
+    assert.doesNotMatch(progressText(progress.events), /\[left\] Creating detached worktree/);
+    assert.doesNotMatch(progressText(progress.events), /\[left\] Installing dependencies/);
+    assert.match(progressText(progress.events), new RegExp(`\\[right\\] Reusing healthy run ${rightId}`));
+    assert.doesNotMatch(progressText(progress.events), /\[right\] Creating database snapshot/);
+    assert.doesNotMatch(progressText(progress.events), /\[right\] Starting server/);
+    assert.equal(progress.marks.filter((mark) => mark.kind === "spawn").length, 1);
+    assert.equal(progress.events.every((line) => /^\[(left|right)\] /.test(line)), true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("an inconsistent right side prevents compare from launching the left side", async () => {
+  const fixture = createRepository();
+  const { leftSha, rightSha } = createPair(fixture);
+  try {
+    const harness = createHarness(fixture);
+    const started = await execute(["start", "right-ref"], harness.deps);
+    assert.equal(started.exitCode, 0, started.stderr);
+    const rightId = `sha${rightSha}`;
+    await execute(["stop", rightId], harness.deps);
+    writeFileSync(join(managedRoot(fixture), "worktrees", rightId, "dirty.txt"), "dirty\n");
+    const registryBefore = registryText(fixture);
+    const spawnsBefore = harness.processes.spawns.length;
+    const createdbBefore = mutating(harness, "createdb").length;
+    const progress = attachProgress(harness);
+    const failed = await execute(["compare", "left-ref", "right-ref"], harness.deps);
+    assert.notEqual(failed.exitCode, 0);
+    assert.match(failed.stderr, /right: .*inconsistent/);
+    assert.match(failed.stderr, /dirty/);
+    assert.equal(failed.stdout.includes("status: running"), false);
+    assert.equal(failed.stdout.includes("left run remains available"), false);
+    assert.equal(harness.processes.spawns.length, spawnsBefore);
+    assert.equal(mutating(harness, "createdb").length, createdbBefore);
+    assert.equal(worktreeAdds(harness).length, 1);
+    assert.equal(registryText(fixture), registryBefore);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", `sha${leftSha}`)), false);
+    assert.equal(progress.events.length, 0);
+    assert.equal(harness.calls.some((call) => call.file === "git" && call.args.includes("fetch")), false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("left compare failure does not attempt the right side", async () => {
+  const fixture = createRepository();
+  const { leftSha, rightSha } = createPair(fixture);
+  try {
+    const harness = createHarness(fixture);
+    harness.failNpm = true;
+    const progress = attachProgress(harness);
+    const failed = await execute(["compare", "left-ref", "right-ref"], harness.deps);
+    assert.notEqual(failed.exitCode, 0);
+    assert.match(failed.stderr, /left: /);
+    assert.match(failed.stderr, /dependency installation failed/);
+    assert.equal(failed.stderr.includes("right:"), false);
+    assert.equal(failed.stderr.includes("left run remains available"), false);
+    assert.equal(failed.stdout.includes("status: running"), false);
+    assert.equal(mutating(harness, "createdb").length, 1);
+    assert.equal(worktreeAdds(harness).length, 1);
+    assert.equal(worktreeAdds(harness)[0].args.includes(join(managedRoot(fixture), "worktrees", `sha${leftSha}`)), true);
+    assert.equal(worktreeAdds(harness)[0].args.includes(leftSha), true);
+    assert.equal(worktreeAdds(harness).some((call) => call.args.includes(rightSha)), false);
+    assert.equal(harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length, 1);
+    assert.equal(harness.processes.spawns.length, 0);
+    assert.equal(harness.databases.size, 0);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", `sha${leftSha}`)), false);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", `sha${rightSha}`)), false);
+    assert.equal(progress.events.some((line) => line.startsWith("[right]")), false);
+    assert.match(progressText(progress.events), /\[left\] Installing dependencies/);
+    assert.equal(existsSync(join(managedRoot(fixture), "registry.json")), false);
+    assertNoSecrets(`${progressText(progress.events)}\n${failed.stdout}\n${failed.stderr}`);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("right startup failure keeps the healthy left run and does not claim pair success", async () => {
+  const fixture = createRepository();
+  const { leftSha, rightSha } = createPair(fixture);
+  try {
+    const harness = createHarness(fixture);
+    const originalHttp = harness.deps.httpGet;
+    harness.deps.httpGet = async (url, options) => {
+      if (Number(new URL(url).port) !== 4174) throw new Error("right unhealthy");
+      return originalHttp(url, options);
+    };
+    const progress = attachProgress(harness);
+    const failed = await execute(["compare", "left-ref", "right-ref"], harness.deps);
+    const leftId = `sha${leftSha}`;
+    const rightId = `sha${rightSha}`;
+    assert.notEqual(failed.exitCode, 0);
+    assert.match(failed.stderr, new RegExp(`right: run ${rightId} did not become healthy`));
+    assert.match(failed.stderr, /left run remains available/);
+    assert.match(failed.stdout, /left run remains available/);
+    assert.match(failed.stdout, new RegExp(`run: ${leftId}`));
+    assert.match(failed.stdout, new RegExp(`sha: ${leftSha}`));
+    assert.match(failed.stdout, /url: http:\/\/127\.0\.0\.1:4174\//);
+    assert.match(failed.stdout, /status: running/);
+    assert.equal(failed.stdout.includes(`run: ${rightId}`), false);
+    assert.doesNotMatch(failed.stdout, /^right:/m);
+    assert.doesNotMatch(failed.stdout, /\bdiff\b|automatically compared/i);
+    const registry = JSON.parse(registryText(fixture));
+    assert.equal(registry.runs[leftId].resolvedSha, leftSha);
+    assert.equal(registry.runs[leftId].state, "running");
+    assert.equal(registry.runs[leftId].requestedRef, "left-ref");
+    assert.equal(registry.runs[rightId].resolvedSha, rightSha);
+    assert.notEqual(registry.runs[rightId].state, "running");
+    assert.equal(registry.runs.main, undefined);
+    assert.equal(harness.databases.has(databaseNameForRun(leftId)), true);
+    assert.equal(harness.databases.has(databaseNameForRun(rightId)), true);
+    assert.equal(harness.databases.has("comics"), false);
+    const leftPid = registry.runs[leftId].pid;
+    assert.equal(harness.processes.byPid.get(leftPid).alive, true);
+    assert.equal(harness.processes.signals.some((signal) => signal.pid === leftPid), false);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", leftId)), true);
+    assert.equal(git(join(managedRoot(fixture), "worktrees", leftId), ["rev-parse", "HEAD"]).trim(), leftSha);
+    assert.equal(git(join(managedRoot(fixture), "worktrees", rightId), ["rev-parse", "HEAD"]).trim(), rightSha);
+    assert.equal(mutating(harness, "dropdb").some((call) => call.args.includes(databaseNameForRun(leftId))), false);
+    assert.match(progressText(progress.events), /\[left\] Waiting for server health/);
+    assert.match(progressText(progress.events), /\[right\] Waiting for server health/);
+    assertNoSecrets(`${progressText(progress.events)}\n${failed.stdout}\n${failed.stderr}\n${registryText(fixture)}\n${combinedLogs(fixture)}`);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("right pre-spawn failure rolls back only the right side", async () => {
+  const fixture = createRepository();
+  const { leftSha, rightSha } = createPair(fixture);
+  try {
+    const harness = createHarness(fixture);
+    const originalExec = harness.deps.execFile;
+    let npmCi = 0;
+    harness.deps.execFile = async (file, args, options) => {
+      if (file === "npm" && args[0] === "ci") {
+        npmCi += 1;
+        if (npmCi >= 2) return { code: 1, stdout: "", stderr: "npm ci failed token=should-not-leak" };
+      }
+      return originalExec(file, args, options);
+    };
+    const failed = await execute(["compare", "left-ref", "right-ref"], harness.deps);
+    const leftId = `sha${leftSha}`;
+    const rightId = `sha${rightSha}`;
+    assert.notEqual(failed.exitCode, 0);
+    assert.match(failed.stderr, /right: .*dependency installation failed/);
+    assert.match(failed.stderr, /left run remains available/);
+    assert.match(failed.stdout, new RegExp(`run: ${leftId}`));
+    assert.match(failed.stdout, new RegExp(`sha: ${leftSha}`));
+    assert.equal(failed.stdout.includes(`run: ${rightId}`), false);
+    assert.doesNotMatch(failed.stdout, /^right:/m);
+    const registry = JSON.parse(registryText(fixture));
+    assert.equal(registry.runs[leftId].resolvedSha, leftSha);
+    assert.equal(registry.runs[leftId].state, "running");
+    assert.equal(registry.runs[rightId], undefined);
+    assert.equal(harness.databases.has(databaseNameForRun(leftId)), true);
+    assert.equal(harness.databases.has(databaseNameForRun(rightId)), false);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", leftId)), true);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", rightId)), false);
+    assert.equal(harness.processes.spawns.length, 1);
+    assert.equal(harness.processes.byPid.get(registry.runs[leftId].pid).alive, true);
+    assert.equal(harness.processes.signals.length, 0);
+    assert.equal(failed.stderr.includes("should-not-leak"), false);
+    assertNoSecrets(`${failed.stdout}\n${failed.stderr}\n${registryText(fixture)}`);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("list, db list, stop, and clean address compare runs individually", async () => {
+  const fixture = createRepository();
+  const { leftSha, rightSha } = createPair(fixture);
+  try {
+    const harness = createHarness(fixture);
+    const started = await execute(["compare", "left-ref", "right-ref"], harness.deps);
+    assert.equal(started.exitCode, 0, started.stderr);
+    const leftId = `sha${leftSha}`;
+    const rightId = `sha${rightSha}`;
+    const listed = await execute(["list"], harness.deps);
+    assert.equal(listed.exitCode, 0, listed.stderr);
+    assert.match(listed.stdout, new RegExp(`run: ${leftId}`));
+    assert.match(listed.stdout, new RegExp(`run: ${rightId}`));
+    assert.match(listed.stdout, /run: main/);
+    assert.match(listed.stdout, /port: 4173/);
+    const databases = await execute(["db", "list"], harness.deps);
+    assert.equal(databases.exitCode, 0, databases.stderr);
+    assert.match(databases.stdout, new RegExp(`database: ${databaseNameForRun(leftId)}`));
+    assert.match(databases.stdout, new RegExp(`database: ${databaseNameForRun(rightId)}`));
+    assert.match(databases.stdout, /database: comics/);
+    const rightPid = JSON.parse(registryText(fixture)).runs[rightId].pid;
+    const stopped = await execute(["stop", leftId], harness.deps);
+    assert.equal(stopped.exitCode, 0, stopped.stderr);
+    assert.match(stopped.stdout, new RegExp(`run ${leftId} is stopped`));
+    assert.equal(harness.processes.byPid.get(rightPid).alive, true);
+    const afterStop = await execute(["list"], harness.deps);
+    assert.match(afterStop.stdout, new RegExp(`run: ${leftId}[\\s\\S]*status: stopped`));
+    assert.match(afterStop.stdout, new RegExp(`run: ${rightId}[\\s\\S]*status: running`));
+    const blocked = await execute(["clean", rightId], harness.deps);
+    assert.notEqual(blocked.exitCode, 0);
+    assert.match(blocked.stderr, /stop it before clean/);
+    assert.equal(harness.databases.has(databaseNameForRun(rightId)), true);
+    const cleaned = await execute(["clean", leftId], harness.deps);
+    assert.equal(cleaned.exitCode, 0, cleaned.stderr);
+    assert.match(cleaned.stdout, new RegExp(`deleted run ${leftId}`));
+    assert.equal(harness.databases.has(databaseNameForRun(leftId)), false);
+    assert.equal(harness.databases.has(databaseNameForRun(rightId)), true);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", leftId)), false);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", rightId)), true);
+    const remaining = await execute(["list"], harness.deps);
+    assert.equal(remaining.stdout.includes(`run: ${leftId}`), false);
+    assert.match(remaining.stdout, new RegExp(`run: ${rightId}`));
+    await execute(["stop", rightId], harness.deps);
+    const cleanedRight = await execute(["clean", rightId], harness.deps);
+    assert.equal(cleanedRight.exitCode, 0, cleanedRight.stderr);
+    assert.equal(existsSync(join(managedRoot(fixture), "worktrees", rightId)), false);
+    assert.equal(harness.databases.has(databaseNameForRun(rightId)), false);
+    assert.equal(harness.databases.has("comics"), false);
+    assert.equal(harness.databases.has("comics_test"), false);
+  } finally {
+    fixture.cleanup();
   }
 });

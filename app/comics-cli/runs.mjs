@@ -814,3 +814,115 @@ export async function dbShellCommand(runIdInput, context, deps, secrets) {
     interactive: () => deps.interactivePsql(args, env),
   };
 }
+
+function withSideProgress(deps, side) {
+  return {
+    ...deps,
+    progress(line) {
+      if (typeof deps.progress !== "function") return;
+      const text = String(line);
+      deps.progress(text.startsWith(`[${side}] `) ? text : `[${side}] ${text}`);
+    },
+  };
+}
+
+function labelSideError(side, error) {
+  const message = error instanceof CliError ? error.message : "command failed";
+  if (message.startsWith(`${side}: `)) return error instanceof CliError ? error : new CliError(message);
+  return new CliError(`${side}: ${message}`, {
+    stdout: error instanceof CliError ? error.stdout : "",
+    exitCode: error instanceof CliError ? error.exitCode : 1,
+  });
+}
+
+function formatSide(side, summary) {
+  return `${side}:\n${summary.trimEnd()}\n`;
+}
+
+function replaceRequestedRef(summary, requested) {
+  const lines = summary.trimEnd().split("\n");
+  let replaced = false;
+  const next = lines.map((line) => {
+    if (!replaced && line.startsWith("ref: ")) {
+      replaced = true;
+      return `ref: ${requested}`;
+    }
+    return line;
+  });
+  if (!replaced) throw new CliError("start summary omitted the requested ref");
+  return `${next.join("\n")}\n`;
+}
+
+function rightFailure(error, leftSummary) {
+  const labelled = labelSideError("right", error);
+  const message = labelled.message.includes("left run remains available")
+    ? labelled.message
+    : `${labelled.message}; left run remains available`;
+  return new CliError(message, {
+    stdout: `left run remains available\n${formatSide("left", leftSummary)}`,
+  });
+}
+
+async function resolveSide(side, primary, ref, deps) {
+  try {
+    return await resolveRef(primary, ref, deps.execFile);
+  } catch (error) {
+    throw labelSideError(side, error);
+  }
+}
+
+async function assertSideReady(side, primary, root, resolved, registry, deps) {
+  try {
+    const runId = defaultRunId(resolved.sha);
+    const existing = registry.runs[runId];
+    if (!existing) return;
+    const problem = validateRecord(existing, root, primary);
+    if (problem) throw new CliError(`run ${runId} is inconsistent (${problem})`);
+    if (existing.resolvedSha !== resolved.sha) {
+      throw new CliError(`run ${runId} was previously reused at ${existing.resolvedSha}; retarget it with --reuse ${runId}, or use --fresh`);
+    }
+    const status = await inspectRun(existing, deps);
+    if (status === "unhealthy") throw new CliError(`run ${runId} is unhealthy at http://${MAIN_HOST}:${existing.port}/`);
+    if (status !== "running") await assertReusableWorktree(primary, root, existing, deps);
+  } catch (error) {
+    throw labelSideError(side, error);
+  }
+}
+
+async function runSide(side, ref, resolved, context, deps, secrets) {
+  let summary;
+  try {
+    summary = await startCommand(
+      { command: "start", mode: "default", ref, reuse: null },
+      context,
+      withSideProgress(deps, side),
+      secrets,
+    );
+  } catch (error) {
+    throw labelSideError(side, error);
+  }
+  const shaLine = summary.split("\n").find((line) => line.startsWith("sha: "));
+  if (shaLine !== `sha: ${resolved.sha}`) throw new CliError(`${side}: resolved SHA ${resolved.sha} was not reported`);
+  return replaceRequestedRef(summary, resolved.requested);
+}
+
+export async function compareCommand(parsed, context, deps, secrets) {
+  const primary = context.primary;
+  const root = managedRootFor(primary);
+  await assertNode(deps);
+  const leftResolved = await resolveSide("left", primary, parsed.left, deps);
+  const rightResolved = await resolveSide("right", primary, parsed.right, deps);
+  if (leftResolved.sha === rightResolved.sha) {
+    throw new CliError(`left and right resolve to the same commit ${leftResolved.sha}`);
+  }
+  const registry = readRegistry(root);
+  await assertSideReady("left", primary, root, leftResolved, registry, deps);
+  await assertSideReady("right", primary, root, rightResolved, registry, deps);
+  const leftSummary = await runSide("left", parsed.left, leftResolved, context, deps, secrets);
+  try {
+    const rightSummary = await runSide("right", parsed.right, rightResolved, context, deps, secrets);
+    return `${formatSide("left", leftSummary)}\n${formatSide("right", rightSummary)}`;
+  } catch (error) {
+    throw rightFailure(error, leftSummary);
+  }
+}

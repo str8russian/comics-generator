@@ -42,7 +42,9 @@ The process uses the environment it is given. It does not load `.env.local` by i
 
 ## Local `comics` command
 
-The `comics` bin starts one local Comics Generator process at a time. Startup progress is written to stderr as each stage begins; the final run summary stays on stdout. `comics start` serves the primary `master` checkout, including its uncommitted files, at `http://127.0.0.1:4173/` on database `comics`. `comics start <ref>` checks out that resolved commit in a detached worktree and serves it on the next free port from `4174` through `4273`, using a database copied from `comics`. Providers stay on the primary checkout's local configuration. The command loads that checkout's `.env.local` when it exists and overrides only the host, port, and database.
+The `comics` bin starts local Comics Generator processes. Startup progress is written to stderr as each stage begins; the final run summary stays on stdout. `comics start` serves the primary `master` checkout, including its uncommitted files, at `http://127.0.0.1:4173/` on database `comics`. `comics start <ref>` checks out that resolved commit in a detached worktree and serves it on the next free port from `4174` through `4273`, using a database copied from `comics`. Providers stay on the primary checkout's local configuration. The command loads that checkout's `.env.local` when it exists and overrides only the host, port, and database.
+
+`comics compare <ref-a> <ref-b>` resolves two local commits and starts each as its own managed run, with its own worktree, database, port, and URL. Progress lines name `[left]` and `[right]`. The command prints both addresses so they can be opened side by side. It does not diff the commits, compare rendered output, or open browser windows. Each side remains an ordinary run: `list`, `stop`, and `clean` operate on one run id at a time, and compare does not stop or clean either side when it returns. A repeated compare reuses a healthy side and restarts a stopped side on its existing worktree and database.
 
 Runtime state lives outside the checkout, in a hidden sibling of the primary worktree. For this repository that directory is `/Users/andrey/Documents/Projects/.comics-pipeline-runs/`. It holds the registry, logs, and managed worktrees. `comics stop` leaves those resources in place. `comics clean <run-id>` is the only command that deletes a managed worktree and its database, and it refuses `main`.
 
@@ -52,7 +54,7 @@ After this branch is integrated, install the command from the primary checkout:
 npm link
 ```
 
-Until then, run `bin/comics.mjs` from the feature worktree, or link into a disposable prefix. Do not leave a global `comics` command pointing at a disposable worktree. `comics compare` is not part of this command.
+Until then, run `bin/comics.mjs` from the feature worktree, or link into a disposable prefix. Do not leave a global `comics` command pointing at a disposable worktree.
 
 ## Tests
 
