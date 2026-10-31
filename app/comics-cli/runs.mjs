@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, appendFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import { databaseNameForRun, assertManagedDatabaseName, databaseUrl, pgEnv, readComposeDatabase } from "./database.mjs";
 import { runGit } from "./git.mjs";
 import { CliError } from "./errors.mjs";
@@ -188,6 +188,12 @@ async function headSha(execFile, cwd) {
 }
 
 async function launch(input, primary, deps) {
+  if (input.id !== MAIN_RUN_ID) {
+    const actual = await headSha(deps.execFile, input.worktree);
+    if (actual !== input.resolvedSha) {
+      throw new CliError(`refusing to launch run ${input.id} because worktree HEAD ${actual} does not match ${input.resolvedSha}`);
+    }
+  }
   const serverPath = join(input.worktree, SERVER_RELATIVE);
   if (!existsSync(serverPath)) throw new CliError(`server entry is missing at ${serverPath}`);
   const logDir = join(input.root, "logs");
@@ -352,24 +358,63 @@ async function createDatabaseCopy(root, runId, auth, deps, created) {
   }
 }
 
+async function commonDir(execFile, cwd) {
+  const text = (await runGit(execFile, cwd, ["rev-parse", "--git-common-dir"])).trim();
+  const absolute = isAbsolute(text) ? text : resolve(cwd, text);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    return absolute;
+  }
+}
+
+async function assertReusableWorktree(primary, root, run, deps) {
+  const expected = worktreePathFor(root, run.id);
+  if (resolve(run.worktree) !== resolve(expected) || !existsSync(expected)) {
+    throw new CliError(`run ${run.id} is inconsistent (worktree)`);
+  }
+  const [worktreeCommon, primaryCommon] = await Promise.all([
+    commonDir(deps.execFile, expected),
+    commonDir(deps.execFile, primary),
+  ]);
+  if (worktreeCommon !== primaryCommon) throw new CliError(`run ${run.id} is inconsistent (worktree repository)`);
+  const actual = await headSha(deps.execFile, expected);
+  if (actual !== run.resolvedSha) {
+    throw new CliError(`run ${run.id} is inconsistent (worktree HEAD ${actual} does not match ${run.resolvedSha})`);
+  }
+  if (await isDirty(deps.execFile, expected)) throw new CliError(`run ${run.id} is inconsistent (worktree is dirty)`);
+}
+
+async function removeManagedWorktree(primary, root, worktreePath, deps) {
+  const target = resolve(worktreePath);
+  assertInside(resolve(root, "worktrees"), target);
+  if (!existsSync(target)) return;
+  const removed = await deps.execFile("git", ["-C", primary, "worktree", "remove", "--force", target], { cwd: primary });
+  if (!removed || removed.code !== 0 || existsSync(target)) {
+    throw new CliError(`git worktree remove failed for ${target}`);
+  }
+}
+
 async function rollbackCreated(primary, root, created, deps) {
   if (created?.dump && existsSync(created.dump)) rmSync(created.dump, { force: true });
+  if (created?.worktree) {
+    try {
+      await removeManagedWorktree(primary, root, created.worktree, deps);
+    } catch (error) {
+      const databaseNote = created.database ? `; database ${created.database} remains` : "";
+      const reason = error instanceof CliError ? error.message : "git worktree remove failed";
+      throw new CliError(`rollback incomplete: ${reason}${databaseNote}`);
+    }
+  }
   if (created?.database) {
     assertManagedDatabaseName(created.database);
-    await deps.execFile("dropdb", [
+    const dropped = await deps.execFile("dropdb", [
       "--host=127.0.0.1",
       "--port=5432",
       `--username=${created.user}`,
       created.database,
     ], { cwd: primary, env: pgEnv(deps.env, created.auth) });
-  }
-  if (created?.worktree) {
-    assertInside(join(root, "worktrees"), created.worktree);
-    const removed = await deps.execFile("git", ["-C", primary, "worktree", "remove", "--force", created.worktree], { cwd: primary });
-    if (existsSync(created.worktree)) rmSync(created.worktree, { recursive: true, force: true });
-    if (removed && removed.code !== 0 && existsSync(created.worktree)) {
-      throw new CliError(`failed to remove new worktree ${created.worktree}`);
-    }
+    if (!dropped || dropped.code !== 0) throw new CliError(`rollback incomplete: database ${created.database} remains`);
   }
 }
 
@@ -453,13 +498,15 @@ export async function startCommand(parsed, context, deps, secrets) {
         const problem = validateRecord(existing, root, primary);
         if (problem) throw new CliError(`run ${runId} is inconsistent (${problem})`);
         const status = await inspectRun(existing, deps);
-        if (status !== "running") {
-          if (!existsSync(existing.worktree)) throw new CliError(`run ${runId} is inconsistent (worktree)`);
+        if (status !== "running" && status !== "unhealthy") {
+          if (existing.resolvedSha !== resolved.sha) {
+            throw new CliError(`run ${runId} was previously reused at ${existing.resolvedSha}; retarget it with --reuse ${runId}, or use --fresh`);
+          }
+          await assertReusableWorktree(primary, root, existing, deps);
           if (await needsInstall(primary, existing.worktree, existing.resolvedSha, resolved.sha, deps)) {
             await installDependencies(existing.worktree, deps, secrets, lines);
           }
           existing.requestedRef = resolved.requested;
-          existing.resolvedSha = resolved.sha;
         }
         return startRecorded(existing, primary, root, auth, deps, state, { lines });
       }
@@ -497,7 +544,15 @@ async function createManagedRun({ runId, resolved, primary, root, auth, deps, st
     if (!launched.healthy) throw new CliError(`run ${runId} did not become healthy`);
     return `${lines.length ? `${lines.join("\n")}\n` : ""}${formatDetails(launched.record, { status: "running" })}`;
   } catch (error) {
-    if (!state.data.runs[runId]) await rollbackCreated(primary, root, created, deps);
+    if (!state.data.runs[runId]) {
+      try {
+        await rollbackCreated(primary, root, created, deps);
+      } catch (rollbackError) {
+        const original = error instanceof CliError ? error.message : "creation failed";
+        const rollback = rollbackError instanceof CliError ? rollbackError.message : "rollback incomplete";
+        throw new CliError(`${original}; ${rollback}`);
+      }
+    }
     throw error;
   }
 }
@@ -512,10 +567,12 @@ async function reuseRun(parsed, resolved, primary, root, auth, deps, state, line
   const status = await inspectRun(run, deps);
   if (status === "running") throw new CliError(`run ${runId} is running; stop it before reuse`);
   if (status === "unhealthy") throw new CliError(`run ${runId} is unhealthy; stop it before reuse`);
-  if (await isDirty(deps.execFile, run.worktree)) throw new CliError(`run ${runId} worktree is dirty; refusing to reuse it`);
+  await assertReusableWorktree(primary, root, run, deps);
   const previousSha = run.resolvedSha;
   if (previousSha !== resolved.sha) {
     await runGit(deps.execFile, run.worktree, ["checkout", "--detach", resolved.sha]);
+    const checkedOut = await headSha(deps.execFile, run.worktree);
+    if (checkedOut !== resolved.sha) throw new CliError(`run ${runId} checkout did not reach ${resolved.sha}`);
   }
   try {
     if (await needsInstall(primary, run.worktree, previousSha, resolved.sha, deps)) {
@@ -524,6 +581,11 @@ async function reuseRun(parsed, resolved, primary, root, auth, deps, state, line
   } catch (error) {
     if (previousSha !== resolved.sha) {
       await runGit(deps.execFile, run.worktree, ["checkout", "--detach", previousSha]);
+      const restored = await headSha(deps.execFile, run.worktree);
+      if (restored !== previousSha) {
+        const reason = error instanceof CliError ? error.message : "dependency installation failed";
+        throw new CliError(`rollback incomplete: worktree ${run.worktree} is at ${restored}, not ${previousSha}; ${reason}`);
+      }
     }
     throw error;
   }
@@ -600,9 +662,6 @@ export async function cleanCommand(runIdInput, context, deps) {
     if (status === "running" || status === "unhealthy") {
       throw new CliError(`run ${runId} is ${status}; stop it before clean`);
     }
-    if (existsSync(run.worktree) && await isDirty(deps.execFile, run.worktree)) {
-      throw new CliError(`run ${runId} worktree is dirty; refusing to clean it`);
-    }
     assertManagedDatabaseName(run.databaseName);
     await assertTools(deps, ["git", "dropdb"], primary);
     const auth = loadAuth(primary, []);
@@ -610,6 +669,10 @@ export async function cleanCommand(runIdInput, context, deps) {
       `clean: removing worktree ${run.worktree}`,
       `clean: removing database ${run.databaseName}`,
     ];
+    if (existsSync(run.worktree)) {
+      await assertReusableWorktree(primary, root, run, deps);
+      await removeManagedWorktree(primary, root, run.worktree, deps);
+    }
     const dropped = await deps.execFile("dropdb", [
       "--host=127.0.0.1",
       "--port=5432",
@@ -617,15 +680,10 @@ export async function cleanCommand(runIdInput, context, deps) {
       run.databaseName,
     ], { cwd: primary, env: pgEnv(deps.env, auth) });
     if (!dropped || dropped.code !== 0) {
-      throw new CliError(`database ${run.databaseName} was not removed; worktree ${run.worktree} was kept`);
-    }
-    if (existsSync(run.worktree)) {
-      assertInside(join(root, "worktrees"), run.worktree);
-      const removed = await deps.execFile("git", ["-C", primary, "worktree", "remove", "--force", run.worktree], { cwd: primary });
-      if (existsSync(run.worktree)) rmSync(run.worktree, { recursive: true, force: true });
-      if (removed && removed.code !== 0 && existsSync(run.worktree)) {
-        throw new CliError(`database ${run.databaseName} was removed; worktree ${run.worktree} remains`);
-      }
+      const worktreeState = existsSync(run.worktree)
+        ? `worktree ${run.worktree} remains`
+        : `worktree ${run.worktree} was removed`;
+      throw new CliError(`database ${run.databaseName} remains; ${worktreeState}`);
     }
     const logPath = join(root, "logs", `${runId}.log`);
     if (existsSync(logPath)) rmSync(logPath, { force: true });

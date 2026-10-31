@@ -33,15 +33,18 @@ CLI state is stored in a hidden sibling of that checkout: `<parent>/.comics-pipe
 ## Lifecycle
 
 - Bare `comics start` launches `node app/storyboard-web/server.mjs` from the primary checkout's current files. It does not copy the database or create a worktree.
-- `comics start <ref>` resolves one unambiguous local commit-ish to a full SHA, creates a detached worktree at that SHA, and restores a `pg_dump` custom-format snapshot of `comics` into a new managed database. The same SHA later reuses that worktree and database.
+- `comics start <ref>` resolves one unambiguous local commit-ish to a full SHA, creates a detached worktree at that SHA, and restores a `pg_dump` custom-format snapshot of `comics` into a new managed database. The same SHA later reuses that worktree and database only while that run's stored SHA is still the resolved SHA.
+- An ordinary default start never implicitly reuses a database after its deterministic run was retargeted to another SHA. Returning that run to a different ref requires explicit `--reuse <run-id>`. `--fresh` creates a separate run instead. The command refuses before install, spawn, or registry mutation, and it does not print the requested SHA as running.
+- Every managed launch requires the worktree to exist at its validated path, belong to the same repository, be clean of tracked and non-ignored untracked changes, and have actual `HEAD` equal to the stored and printed SHA. Drift or dirtiness is an inconsistency and is not repaired automatically. Bare `main` still launches the primary checkout's current dirty files.
 - `--fresh` always creates a new run, worktree, snapshot, and port.
-- `--reuse <run-id>` restarts a stopped managed run on its existing database. It retargets the worktree only when that worktree has no tracked or non-ignored untracked changes. A SHA change prints a warning that forward migrations are not downgraded.
+- `--reuse <run-id>` restarts a stopped managed run on its existing database. Before checkout, actual `HEAD` must equal the stored SHA and the worktree must be clean. After checkout, actual `HEAD` must equal the new SHA before installation or launch. A SHA change prints a warning that forward migrations are not downgraded. A failed checkout rollback is reported as incomplete.
 - A healthy matching process makes `start` print the existing URL and exit without a second process.
 - A live process whose command line is not the registered server is foreign. The CLI never signals it.
 - A matching process that is alive but fails its HTTP check is unhealthy. `start` does not replace it and does not kill it.
 - `stop` sends `SIGTERM` only to the matching PID, waits for exit, and preserves the worktree, database, log, and registry record. It does not send `SIGKILL`.
-- `clean` requires a stopped, clean, consistent managed run. It prints the worktree and database, drops only that `comics_cli_` database, removes only that managed worktree, and then deletes the registry entry. It is not an implicit stop and it never drops `comics` or `comics_test`.
-- Failed creation removes only the worktree, database, and dump created by that invocation.
+- `clean` requires a stopped, clean, consistent managed run. It removes the managed worktree with `git worktree remove --force` before dropping that `comics_cli_` database, then deletes the log and registry entry. It is not an implicit stop and it never drops `comics` or `comics_test`.
+- Failed Git worktree removal never falls back to raw recursive deletion. The worktree, database, and registry entry stay, and the command fails. If Git removal succeeds and the database drop fails, the worktree is gone, the database and registry entry remain, and a later `clean <run-id>` retries the remaining database cleanup.
+- Failed creation rolls back only the worktree, database, and dump created by that invocation. If Git cannot remove the new worktree, rollback is reported as incomplete and the directory is not raw-deleted.
 - Registry writes use a temp file and rename. A malformed registry is refused rather than treated as empty.
 
 ## Provider and dependencies

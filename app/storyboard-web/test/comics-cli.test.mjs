@@ -150,6 +150,8 @@ function createHarness(fixture, { packageRoot = fixture.primary } = {}) {
   const dumps = [];
   let failRestore = false;
   let failNpm = false;
+  let failWorktreeRemove = false;
+  let failDropdb = false;
   let missingTool = null;
   const busyPorts = new Set();
   const shellCalls = [];
@@ -168,6 +170,9 @@ function createHarness(fixture, { packageRoot = fixture.primary } = {}) {
     if (options.cwd === fixture.unrelated) throw new Error("command used the caller cwd");
     if (file === "git" && args.some((arg) => arg === "fetch")) throw new Error("git fetch was invoked");
     if (file === "git") {
+      if (failWorktreeRemove && args.includes("worktree") && args.includes("remove")) {
+        return { code: 1, stdout: "", stderr: "git worktree remove failed" };
+      }
       try {
         const stdout = execFileSync("git", args, { cwd: options.cwd, encoding: "utf8" });
         return { code: 0, stdout, stderr: "" };
@@ -209,7 +214,8 @@ function createHarness(fixture, { packageRoot = fixture.primary } = {}) {
       return { code: 0, stdout: "", stderr: "" };
     }
     if (file === "dropdb") {
-      databases.delete(args.at(-1));
+      if (args[0] !== "--version" && failDropdb) return { code: 1, stdout: "", stderr: "dropdb failed" };
+      if (args[0] !== "--version") databases.delete(args.at(-1));
       return { code: 0, stdout: "", stderr: "" };
     }
     if (file === "psql") {
@@ -255,6 +261,8 @@ function createHarness(fixture, { packageRoot = fixture.primary } = {}) {
     env,
     set failRestore(value) { failRestore = value; },
     set failNpm(value) { failNpm = value; },
+    set failWorktreeRemove(value) { failWorktreeRemove = value; },
+    set failDropdb(value) { failDropdb = value; },
     set missingTool(value) { missingTool = value; },
     busyPorts,
   };
@@ -593,6 +601,175 @@ test("fresh creates a distinct run and reuse retargets only a clean stopped data
     const mainReuse = await execute(["start", second, "--reuse", "main"], harness.deps);
     assert.notEqual(mainReuse.exitCode, 0);
     assert.equal(harness.calls.some((call) => call.file === "git" && call.args.includes("fetch")), false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("ordinary start does not launch a reused run at a different SHA", async () => {
+  const fixture = createRepository();
+  const shaA = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  const shaB = commitFile(fixture.primary, "b.txt", "b\n", "b");
+  try {
+    const harness = createHarness(fixture);
+    const started = await execute(["start", shaA], harness.deps);
+    assert.equal(started.exitCode, 0, started.stderr);
+    const runId = `sha${shaA}`;
+    await execute(["stop", runId], harness.deps);
+    const reused = await execute(["start", shaB, "--reuse", runId], harness.deps);
+    assert.equal(reused.exitCode, 0, reused.stderr);
+    await execute(["stop", runId], harness.deps);
+    const worktree = join(managedRoot(fixture), "worktrees", runId);
+    const registryBefore = registryText(fixture);
+    const spawnsBefore = harness.processes.spawns.length;
+    const npmBefore = harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length;
+    const ordinary = await execute(["start", shaA], harness.deps);
+    assert.notEqual(ordinary.exitCode, 0);
+    assert.match(ordinary.stderr, /previously reused/);
+    assert.match(ordinary.stderr, /--reuse/);
+    assert.match(ordinary.stderr, /--fresh/);
+    assert.equal(ordinary.stdout.includes("status: running"), false);
+    assert.equal(ordinary.stdout.includes(`sha: ${shaA}`), false);
+    assert.equal(harness.processes.spawns.length, spawnsBefore);
+    assert.equal(harness.calls.filter((call) => call.file === "npm" && call.args[0] === "ci").length, npmBefore);
+    assert.equal(git(worktree, ["rev-parse", "HEAD"]).trim(), shaB);
+    assert.equal(JSON.parse(registryText(fixture)).runs[runId].resolvedSha, shaB);
+    assert.equal(registryText(fixture), registryBefore);
+    const back = await execute(["start", shaA, "--reuse", runId], harness.deps);
+    assert.equal(back.exitCode, 0, back.stderr);
+    assert.match(back.stdout, /does not downgrade migrations/);
+    assert.match(back.stdout, new RegExp(`sha: ${shaA}`));
+    assert.equal(git(worktree, ["rev-parse", "HEAD"]).trim(), shaA);
+    assert.equal(JSON.parse(registryText(fixture)).runs[runId].resolvedSha, shaA);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("ordinary restart refuses a drifted or dirty managed worktree before spawn", async () => {
+  const fixture = createRepository();
+  const shaA = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  const shaB = commitFile(fixture.primary, "drift.txt", "drift\n", "drift");
+  try {
+    const harness = createHarness(fixture);
+    assert.equal((await execute(["start", shaA], harness.deps)).exitCode, 0);
+    const runId = `sha${shaA}`;
+    const worktree = join(managedRoot(fixture), "worktrees", runId);
+    await execute(["stop", runId], harness.deps);
+    git(worktree, ["checkout", "--detach", shaB]);
+    const spawnsBefore = harness.processes.spawns.length;
+    const drifted = await execute(["start", shaA], harness.deps);
+    assert.notEqual(drifted.exitCode, 0);
+    assert.match(drifted.stderr, /inconsistent/);
+    assert.equal(drifted.stdout.includes("status: running"), false);
+    assert.equal(harness.processes.spawns.length, spawnsBefore);
+    assert.equal(git(worktree, ["rev-parse", "HEAD"]).trim(), shaB);
+    assert.equal(JSON.parse(registryText(fixture)).runs[runId].resolvedSha, shaA);
+    git(worktree, ["checkout", "--detach", shaA]);
+    writeFileSync(join(worktree, "dirty.txt"), "dirty\n");
+    const dirty = await execute(["start", shaA], harness.deps);
+    assert.notEqual(dirty.exitCode, 0);
+    assert.match(dirty.stderr, /inconsistent/);
+    assert.equal(harness.processes.spawns.length, spawnsBefore);
+    assert.equal(existsSync(join(worktree, "dirty.txt")), true);
+    assert.equal(git(worktree, ["rev-parse", "HEAD"]).trim(), shaA);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("failed git worktree removal does not delete the run and can be retried", async () => {
+  const fixture = createRepository();
+  const sha = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  const foreign = join(fixture.root, "foreign-worktree");
+  try {
+    const harness = createHarness(fixture);
+    assert.equal((await execute(["start", sha], harness.deps)).exitCode, 0);
+    const runId = `sha${sha}`;
+    const worktree = join(managedRoot(fixture), "worktrees", runId);
+    const database = databaseNameForRun(runId);
+    await execute(["stop", runId], harness.deps);
+    git(fixture.primary, ["worktree", "add", "--detach", foreign, sha]);
+    harness.failWorktreeRemove = true;
+    const failed = await execute(["clean", runId], harness.deps);
+    assert.notEqual(failed.exitCode, 0);
+    assert.match(failed.stderr, /git worktree remove failed/);
+    assert.match(failed.stderr, new RegExp(worktree.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.equal(existsSync(worktree), true);
+    assert.equal(mutating(harness, "dropdb").length, 0);
+    assert.equal(harness.databases.has(database), true);
+    assert.equal(JSON.parse(registryText(fixture)).runs[runId].databaseName, database);
+    assert.equal(existsSync(foreign), true);
+    assert.equal(harness.calls.some((call) => call.args.includes(foreign)), false);
+    harness.failWorktreeRemove = false;
+    const cleaned = await execute(["clean", runId], harness.deps);
+    assert.equal(cleaned.exitCode, 0, cleaned.stderr);
+    assert.equal(existsSync(worktree), false);
+    assert.equal(harness.databases.has(database), false);
+    assert.equal(JSON.parse(registryText(fixture)).runs[runId], undefined);
+    assert.equal(existsSync(foreign), true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("database drop failure after worktree removal stays retryable", async () => {
+  const fixture = createRepository();
+  const sha = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  const foreign = join(fixture.root, "foreign-worktree");
+  try {
+    const harness = createHarness(fixture);
+    assert.equal((await execute(["start", sha], harness.deps)).exitCode, 0);
+    const runId = `sha${sha}`;
+    const worktree = join(managedRoot(fixture), "worktrees", runId);
+    const database = databaseNameForRun(runId);
+    await execute(["stop", runId], harness.deps);
+    git(fixture.primary, ["worktree", "add", "--detach", foreign, sha]);
+    harness.failDropdb = true;
+    const failed = await execute(["clean", runId], harness.deps);
+    assert.notEqual(failed.exitCode, 0);
+    assert.match(failed.stderr, new RegExp(database));
+    assert.match(failed.stderr, /remains/);
+    assert.equal(existsSync(worktree), false);
+    assert.equal(harness.databases.has(database), true);
+    assert.equal(JSON.parse(registryText(fixture)).runs[runId].databaseName, database);
+    assert.equal(existsSync(foreign), true);
+    harness.failDropdb = false;
+    const cleaned = await execute(["clean", runId], harness.deps);
+    assert.equal(cleaned.exitCode, 0, cleaned.stderr);
+    assert.equal(harness.databases.has(database), false);
+    assert.equal(JSON.parse(registryText(fixture)).runs[runId], undefined);
+    assert.equal(existsSync(foreign), true);
+    assert.equal(existsSync(fixture.primary), true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("creation rollback does not raw-delete a worktree when git removal fails", async () => {
+  const fixture = createRepository();
+  const sha = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  try {
+    const harness = createHarness(fixture);
+    assert.equal((await execute(["start", sha], harness.deps)).exitCode, 0);
+    const existingId = `sha${sha}`;
+    const existingWorktree = join(managedRoot(fixture), "worktrees", existingId);
+    await execute(["stop", existingId], harness.deps);
+    harness.failNpm = true;
+    harness.failWorktreeRemove = true;
+    const failed = await execute(["start", sha, "--fresh"], harness.deps);
+    assert.notEqual(failed.exitCode, 0);
+    assert.match(failed.stderr, /rollback incomplete/);
+    const created = failed.stderr.match(/worktrees\/(f[0-9a-f]{16})/);
+    assert.ok(created);
+    const createdWorktree = join(managedRoot(fixture), "worktrees", created[1]);
+    assert.equal(existsSync(createdWorktree), true);
+    assert.equal(existsSync(existingWorktree), true);
+    assert.equal(harness.databases.has(databaseNameForRun(existingId)), true);
+    const registry = JSON.parse(registryText(fixture));
+    assert.ok(registry.runs[existingId]);
+    assert.equal(registry.runs[created[1]], undefined);
+    assert.equal(failed.stdout.includes("status: running"), false);
   } finally {
     fixture.cleanup();
   }
