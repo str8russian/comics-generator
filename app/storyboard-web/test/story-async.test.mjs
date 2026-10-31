@@ -418,6 +418,139 @@ describe("truthful Story long-running actions", { concurrency: false }, () => {
     }
   });
 
+  test("pending Story review can add one trimmed silent character and refuses a blank or duplicate without a write", async () => {
+    resetRecorder();
+    const draft = "Путин: Привет";
+    $("#draft").value = draft;
+    page.setResearchReviewState({
+      id: "reading-1",
+      text: draft,
+      sourceItems: [{ id: "utterance-1", kind: "utterance", sourceQuote: "Привет" }],
+      cast: {
+        characters: [{ name: "Путин", extractedName: "Путин", included: true }],
+        aliases: [],
+        speakers: [{ sourceItemId: "utterance-1", characterName: "Путин" }],
+      },
+      surfaceForms: [],
+      findings: [],
+    }, "reading");
+    const add = $("#add-character");
+    assert.equal(add?.textContent, "Добавить персонажа");
+    assert.equal(add.hidden, false);
+    assert.equal($("#add-character-form").hidden, true);
+    assert.equal($("#material-characters").querySelectorAll("input").length, 1);
+    const before = harness.requests.length;
+    add.dispatchEvent({ type: "click" });
+    assert.equal($("#add-character-form").hidden, false);
+    $("#add-character-cancel").dispatchEvent({ type: "click" });
+    assert.equal($("#add-character-form").hidden, true);
+    assert.equal(harness.requests.length, before);
+    assert.equal($("#material-characters").querySelectorAll("input").length, 1);
+
+    add.dispatchEvent({ type: "click" });
+    $("#add-character-name").value = "   ";
+    $("#add-character-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    await flush(4);
+    assert.equal(harness.requests.length, before);
+    assert.match($("#material-cast-status").textContent, /имя/i);
+    assert.equal($("#material-characters").textContent.includes("Наблюдатель"), false);
+
+    $("#add-character-name").value = "  Путин  ";
+    $("#add-character-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    await flush(4);
+    assert.equal(harness.requests.length, before);
+    assert.match($("#material-cast-status").textContent, /уже есть/i);
+
+    harness.respond = async (entry) => {
+      if (entry.method === "PUT" && entry.path.endsWith("/readings/reading-1/cast")) {
+        return jsonResponse(200, { ok: true });
+      }
+      return null;
+    };
+    $("#add-character-name").value = "  Наблюдатель  ";
+    $("#add-character-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    await flush(6);
+    const writes = harness.requests.filter((entry) => entry.method === "PUT" && entry.path.endsWith("/cast"));
+    assert.equal(writes.length, 1);
+    const names = writes[0].body.characters.map((character) => character.name);
+    assert.deepEqual(names, ["Путин", "Наблюдатель"]);
+    const added = writes[0].body.characters.find((character) => character.name === "Наблюдатель");
+    assert.equal(added.included, true);
+    assert.equal(added.extractedName, "Наблюдатель");
+    assert.equal(writes[0].body.speakers.some((speaker) => speaker.characterName === "Наблюдатель"), false);
+    assert.equal(writes[0].body.aliases.some((alias) => alias.characterName === "Наблюдатель"), false);
+    assert.equal(harness.requests.some((entry) => entry.path.endsWith("/storyboard-results")), false);
+    assert.equal(harness.requests.some((entry) => /\/generate$/.test(entry.path)), false);
+    const shown = [...$("#material-characters").querySelectorAll("input")].map((input) => input.value);
+    assert.deepEqual(shown, ["Путин", "Наблюдатель"]);
+    assert.equal($("#character-cards").textContent.includes("Наблюдатель"), false);
+    const starts = researchStarts("cast_edit").filter((event) => event.editTarget?.editKind === "character_add");
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0].submittedText, "Наблюдатель");
+    assert.equal(JSON.stringify(starts[0]).includes("sourceQuote"), false);
+    harness.respond = null;
+  });
+
+  test("a confirmed add refreshes Characters from the active visual cast and drops Video readiness", async () => {
+    resetRecorder();
+    const draft = "Путин: Привет";
+    $("#draft").value = draft;
+    page.setResearchReviewState({
+      id: "material-1",
+      text: draft,
+      sourceItems: [{ id: "utterance-1", kind: "utterance", sourceQuote: "Привет" }],
+      cast: {
+        characters: [{ name: "Путин", extractedName: "Путин", included: true }],
+        aliases: [],
+        speakers: [{ sourceItemId: "utterance-1", characterName: "Путин" }],
+      },
+      surfaceForms: [],
+      findings: [],
+    }, "material");
+    page.applyVisual(readyVisual({
+      characters: [
+        { name: "Путин", approvedAnchorId: "anchor-p", approvedAssetId: "anchor-asset-p", approvedAssetUrl: "/anchor-p.png", anchorProvenance: "uploaded_as_ready_anchor" },
+      ],
+      allAnchorsApproved: true,
+      complete: true,
+      approved: true,
+      readyForVideo: true,
+    }));
+    assert.equal($("#ready-for-video").hidden, false);
+    const nextVisual = readyVisual({
+      characters: [
+        { name: "Путин", approvedAnchorId: "anchor-p", approvedAssetId: "anchor-asset-p", approvedAssetUrl: "/anchor-p.png", anchorProvenance: "uploaded_as_ready_anchor" },
+        { name: "Наблюдатель", approvedAnchorId: null, approvedAssetUrl: null },
+      ],
+      allAnchorsApproved: false,
+      complete: true,
+      approved: false,
+      readyForVideo: false,
+    });
+    harness.respond = async (entry) => {
+      if (entry.method === "POST" && entry.path.endsWith("/material-states")) {
+        return jsonResponse(200, { materialStateId: "material-2", visualChanged: true });
+      }
+      if (entry.method === "GET" && entry.path.endsWith("/visual")) return jsonResponse(200, nextVisual);
+      return null;
+    };
+    $("#add-character").dispatchEvent({ type: "click" });
+    $("#add-character-name").value = "Наблюдатель";
+    $("#add-character-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    await flush(8);
+    const names = [...$("#character-cards").querySelectorAll("h3")].map((node) => node.textContent);
+    assert.deepEqual(names, ["Путин", "Наблюдатель"]);
+    const cards = [...$("#character-cards").querySelectorAll(".character-card")];
+    assert.equal(textOf(cards[0]).includes("Образ утверждён"), true);
+    assert.equal(textOf(cards[1]).includes("Нужен образ"), true);
+    assert.equal($("#ready-for-video").hidden, true);
+    assert.equal(harness.requests.some((entry) => entry.path.endsWith("/storyboard-results")), false);
+    assert.equal(harness.requests.some((entry) => /\/generate$/.test(entry.path)), false);
+    const frameIds = [...$("#storyboard").querySelectorAll(".story-card")].map((node) => node.dataset.structureFrameId);
+    assert.deepEqual(frameIds, nextVisual.frames.map((frame) => frame.structureFrameId || frame.id));
+    harness.respond = null;
+  });
+
   test("other stages still render their own next actions", () => {
     page.applyVisual(readyVisual());
     assert.equal($("#stage-header-story").querySelector(".stage-next").textContent, "Перейти к раскадровке");

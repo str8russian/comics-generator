@@ -548,6 +548,18 @@ button.is-pending:disabled {
   font: 18px/1 Arial, Helvetica, sans-serif;
 }
 
+#add-character-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin: 6px 0;
+}
+
+#add-character-form[hidden] {
+  display: none;
+}
+
 .retained-image-notice,
 .utterance-editor p {
   margin: 8px 0;

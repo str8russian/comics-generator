@@ -100,6 +100,14 @@ const renderDownload = document.querySelector("#render-download");
 const materialReview = document.querySelector("#material-review");
 const materialSources = document.querySelector("#material-sources");
 const materialCharacters = document.querySelector("#material-characters");
+const addCharacterButton = document.querySelector("#add-character");
+const addCharacterForm = document.querySelector("#add-character-form");
+const addCharacterName = document.querySelector("#add-character-name");
+const addCharacterSave = document.querySelector("#add-character-save");
+const addCharacterCancel = document.querySelector("#add-character-cancel");
+if (addCharacterButton) addCharacterButton.textContent = "Добавить персонажа";
+if (addCharacterSave) addCharacterSave.textContent = "Добавить";
+if (addCharacterCancel) addCharacterCancel.textContent = "Отмена";
 const materialAliases = document.querySelector("#material-aliases");
 const materialSpeakers = document.querySelector("#material-speakers");
 const materialFindings = document.querySelector("#material-findings");
@@ -136,6 +144,8 @@ let visual = null;
 let statusTimer = 0;
 let busy = false;
 let pendingCastEdit = null;
+let pendingAddition = null;
+let characterAddLocked = false;
 
 export function setResearchDetailState(frames, index = -1) {
   readyFrames = Array.isArray(frames) ? frames.slice() : [];
@@ -2455,7 +2465,7 @@ function storyboardReady() {
 
 function storyControlNodes() {
   const nodes = [];
-  for (const id of STORY_CONTROL_IDS) {
+  for (const id of [...STORY_CONTROL_IDS, "add-character", "add-character-name", "add-character-save", "add-character-cancel"]) {
     const node = document.querySelector(`#${id}`);
     if (node) nodes.push(node);
   }
@@ -2602,6 +2612,9 @@ function collectCast() {
       extractedName: toggle?.dataset.extractedName || input.value,
     });
   }
+  if (pendingAddition && !characters.some((character) => character.name === pendingAddition.name)) {
+    characters.push(pendingAddition);
+  }
   const aliases = [];
   for (const select of materialAliases.querySelectorAll("select")) {
     if (!select.value) continue;
@@ -2671,14 +2684,18 @@ async function saveCast() {
   } catch {
     payload = null;
   }
-  if (response.status === 409) {
+  const revertKind = payload?.kind === "speaking-character"
+    || payload?.kind === "cast-reconciliation"
+    || payload?.kind === "duplicate-name";
+  if (response.status === 409 && !revertKind) {
     refreshConfirmation();
+    renderReview();
     if (capture) await capture.terminal("failure", { outcomeKind: "stale-cast" });
     return { ok: false, stale: true };
   }
   if (!response.ok) {
     if (payload?.message) showCastStatus(payload.message);
-    if (payload?.kind === "speaking-character" || payload?.kind === "cast-reconciliation") renderReview();
+    renderReview();
     if (capture) await capture.terminal(payload?.status === "blocked" ? "blocked" : "failure", { outcomeKind: payload?.kind || "request-failed" });
     return { ok: false };
   }
@@ -2730,7 +2747,67 @@ function renderFindings() {
   }
 }
 
+function closeCharacterAdd() {
+  if (addCharacterForm) addCharacterForm.hidden = true;
+  if (addCharacterButton) addCharacterButton.hidden = false;
+  if (addCharacterName) addCharacterName.value = "";
+}
+
+function openCharacterAdd() {
+  if (storyLocked() || !review || characterAddLocked) return;
+  if (addCharacterForm) addCharacterForm.hidden = false;
+  if (addCharacterButton) addCharacterButton.hidden = true;
+  if (addCharacterName) {
+    addCharacterName.value = "";
+    addCharacterName.focus?.();
+  }
+  showCastStatus("");
+}
+
+function characterAddError(name) {
+  if (!name) return "Введите имя персонажа.";
+  const characters = review?.cast?.characters || [];
+  const taken = characters.some((character) => (
+    character.name === name || (character.extractedName || character.name) === name
+  ));
+  if (taken) return "Такое имя уже есть.";
+  return "";
+}
+
+function commitCharacterAdd() {
+  if (storyLocked() || !review || characterAddLocked) return;
+  const name = typeof addCharacterName?.value === "string" ? addCharacterName.value.trim() : "";
+  const message = characterAddError(name);
+  if (message) {
+    showCastStatus(message);
+    return;
+  }
+  showCastStatus("");
+  characterAddLocked = true;
+  pendingAddition = { name, included: true, extractedName: name };
+  pendingCastEdit = {
+    editKind: "character_add",
+    submittedText: name,
+    characterName: name,
+    previousCharacterName: null,
+  };
+  castChain = castChain.then(async () => {
+    try {
+      const saved = await saveCast();
+      if (!saved?.ok) renderReview();
+    } finally {
+      pendingAddition = null;
+      characterAddLocked = false;
+    }
+  }).catch(() => {
+    pendingAddition = null;
+    characterAddLocked = false;
+    renderReview();
+  });
+}
+
 function renderReview() {
+  closeCharacterAdd();
   materialReview.hidden = false;
   renderSources();
   materialCharacters.replaceChildren();
@@ -2882,6 +2959,17 @@ function restoreReview(project) {
 }
 
 draftField.addEventListener("input", () => refreshConfirmation());
+
+addCharacterButton?.addEventListener("click", () => openCharacterAdd());
+addCharacterForm?.addEventListener("submit", (event) => {
+  event.preventDefault?.();
+  commitCharacterAdd();
+});
+addCharacterCancel?.addEventListener("click", () => {
+  if (characterAddLocked) return;
+  closeCharacterAdd();
+  showCastStatus("");
+});
 
 confirmMaterial?.addEventListener("click", async () => {
   if (storyLocked()) return;

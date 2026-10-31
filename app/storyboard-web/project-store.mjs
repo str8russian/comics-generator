@@ -6,11 +6,12 @@ import { requireProjectId, touchProjectContent } from "./project-scope.mjs";
 import {
   applyExclusions,
   applyUtteranceToFrames,
+  planCastRevision,
   reconcileExclusion,
   replaceSpokenSpan,
   speakingExclusion,
 } from "./source-edit.mjs";
-import { carryCharacterAnchors, carryCheckedStoryboard } from "./visual-store.mjs";
+import { carryCharacterAnchors, carryCheckedStoryboard, carryLineageAnchors } from "./visual-store.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -54,6 +55,20 @@ function staleReading() {
   return { ok: false, httpStatus: 409, status: "failed", kind: "stale-reading" };
 }
 
+function castNormalizationError(normalized) {
+  if (!normalized?.error) return null;
+  if (normalized.error === "duplicate-name") {
+    return {
+      ok: false,
+      httpStatus: 409,
+      status: "blocked",
+      kind: "duplicate-name",
+      message: "Такое имя уже есть.",
+    };
+  }
+  return invalidRequest();
+}
+
 function textValue(value) {
   return typeof value === "string" && value.length > 0 && !value.includes("\u0000") && !hasUnpairedSurrogate(value);
 }
@@ -66,17 +81,18 @@ export function normalizeCast(cast) {
   const characters = [];
   const names = new Set();
   for (const character of cast.characters) {
-    if (!character || typeof character !== "object" || Array.isArray(character) || !textValue(character.name)) {
+    const name = typeof character?.name === "string" ? character.name.trim() : "";
+    if (!character || typeof character !== "object" || Array.isArray(character) || !textValue(name)) {
       return { error: "invalid-request" };
     }
-    if (names.has(character.name)) return { error: "invalid-request" };
+    if (names.has(name)) return { error: "duplicate-name" };
     if (character.included !== undefined && character.included !== true && character.included !== false) {
       return { error: "invalid-request" };
     }
-    const extractedName = textValue(character.extractedName) ? character.extractedName : character.name;
-    names.add(character.name);
+    const extractedName = textValue(character.extractedName) ? character.extractedName : name;
+    names.add(name);
     characters.push({
-      name: character.name,
+      name,
       included: character.included !== false,
       extractedName,
     });
@@ -680,7 +696,8 @@ function castFits(cast, text, utterances) {
 export async function replacePendingCast(pool, readingId, cast) {
   if (typeof readingId !== "string" || !UUID_PATTERN.test(readingId)) return notFound();
   const normalized = normalizeCast(cast);
-  if (normalized.error) return invalidRequest();
+  const normalizationError = castNormalizationError(normalized);
+  if (normalizationError) return normalizationError;
   return withClient(pool, async (client) => {
     await client.query("BEGIN");
     const locked = await lockDraft(client);
@@ -715,6 +732,15 @@ export async function replacePendingCast(pool, readingId, cast) {
     if (blockedSpeaker) {
       await rollback(client);
       return blockedSpeaker;
+    }
+    const previousCharacters = await client.query(
+      `SELECT name, included, extracted_name FROM pending_character WHERE reading_id = $1 ORDER BY ordinal, id`,
+      [readingId],
+    );
+    const plan = planCastRevision(previousCharacters.rows, normalized.characters);
+    if (!plan.ok) {
+      await rollback(client);
+      return plan;
     }
     await replaceCastRows(client, readingId, normalized);
     await syncExclusions(client, locked.project_id, normalized.characters);
@@ -918,7 +944,8 @@ async function insertMaterialCast(client, materialId, cast) {
 
 export async function reviseMaterialState(pool, cast) {
   const normalized = normalizeCast(cast);
-  if (normalized.error) return invalidRequest();
+  const normalizationError = castNormalizationError(normalized);
+  if (normalizationError) return normalizationError;
   return withClient(pool, async (client) => {
     await client.query("BEGIN");
     const locked = await lockDraft(client);
@@ -956,15 +983,12 @@ export async function reviseMaterialState(pool, cast) {
       `SELECT name, included, extracted_name FROM canonical_character WHERE material_state_id = $1`,
       [state.id],
     );
-    const previousIncluded = new Map(previousCharacters.rows.map((character) => [
-      character.extracted_name || character.name,
-      character.included !== false,
-    ]));
-    const inclusionChanged = normalized.characters.some((character) => {
-      const key = character.extractedName || character.name;
-      const before = previousIncluded.has(key) ? previousIncluded.get(key) : true;
-      return before !== (character.included !== false);
-    });
+    const plan = planCastRevision(previousCharacters.rows, normalized.characters);
+    if (!plan.ok) {
+      await rollback(client);
+      return plan;
+    }
+    const identityChanged = plan.added.length > 0 || plan.renamed.length > 0;
     const materialId = randomUUID();
     await client.query(
       `INSERT INTO material_state (id, source_revision_id, interpretation_id, parent_material_state_id)
@@ -973,31 +997,39 @@ export async function reviseMaterialState(pool, cast) {
     );
     await insertMaterialCast(client, materialId, normalized);
     await syncExclusions(client, locked.project_id, normalized.characters);
-    if (inclusionChanged) {
-      const carried = await carryInclusionChange(client, {
-        fromMaterialStateId: state.id,
-        toMaterialStateId: materialId,
-        characters: normalized.characters,
-      });
-      if (!carried.ok) {
-        await rollback(client);
-        return carried;
-      }
-      await client.query(
-        `UPDATE project SET active_material_state_id = $1, updated_at = clock_timestamp() WHERE id = $2`,
-        [materialId, locked.project_id],
-      );
-      await client.query("COMMIT");
-      return {
-        ok: true,
-        httpStatus: 200,
-        materialStateId: materialId,
-        sourceRevisionId: state.source_revision_id,
-        interpretationId: state.interpretation_id,
-        visualChanged: true,
-        invalidateRender: carried.invalidateRender === true,
-      };
+    const identification = {
+      characters: normalized.characters.map((character) => ({ name: character.name })),
+      aliases: normalized.aliases,
+    };
+    const carried = await carryCheckedStoryboard(client, {
+      fromMaterialStateId: state.id,
+      toMaterialStateId: materialId,
+      copyApproval: !identityChanged,
+      transformFrames(frames) {
+        let next = frames;
+        for (const character of normalized.characters) {
+          if (character.included !== false) continue;
+          const step = reconcileExclusion(next, character.name, identification);
+          if (!step.ok) return step;
+          next = step.frames;
+        }
+        return { ok: true, frames: next };
+      },
+    });
+    if (!carried.ok) {
+      await rollback(client);
+      return carried;
     }
+    await carryLineageAnchors(client, {
+      fromMaterialStateId: state.id,
+      toMaterialStateId: materialId,
+      links: plan.pairs
+        .filter((pair) => pair.next.included !== false)
+        .map((pair) => ({
+          extractedName: pair.previous.extractedName,
+          nextName: pair.next.name,
+        })),
+    });
     await client.query(
       `UPDATE project SET active_material_state_id = $1, updated_at = clock_timestamp() WHERE id = $2`,
       [materialId, locked.project_id],
@@ -1009,42 +1041,10 @@ export async function reviseMaterialState(pool, cast) {
       materialStateId: materialId,
       sourceRevisionId: state.source_revision_id,
       interpretationId: state.interpretation_id,
+      visualChanged: carried.carried === true || identityChanged || plan.inclusionChanged,
+      invalidateRender: identityChanged || carried.invalidateRender === true,
     };
   });
-}
-
-async function carryInclusionChange(client, { fromMaterialStateId, toMaterialStateId, characters }) {
-  const excluded = characters.filter((character) => character.included === false);
-  const includedNames = characters
-    .filter((character) => character.included !== false)
-    .map((character) => character.name);
-  const aliasRows = await client.query(`
-    SELECT alias.surface_text, canonical_character.name
-    FROM alias
-    JOIN canonical_character ON canonical_character.id = alias.character_id
-    WHERE alias.material_state_id = $1
-  `, [fromMaterialStateId]);
-  const identification = {
-    characters: characters.map((character) => ({ name: character.name })),
-    aliases: aliasRows.rows.map((row) => ({ surface: row.surface_text, characterName: row.name })),
-  };
-  const carried = await carryCheckedStoryboard(client, {
-    fromMaterialStateId,
-    toMaterialStateId,
-    copyApproval: true,
-    transformFrames(frames) {
-      let next = frames;
-      for (const character of excluded) {
-        const step = reconcileExclusion(next, character.name, identification);
-        if (!step.ok) return step;
-        next = step.frames;
-      }
-      return { ok: true, frames: next };
-    },
-  });
-  if (!carried.ok) return carried;
-  await carryCharacterAnchors(client, { fromMaterialStateId, toMaterialStateId, includedNames });
-  return carried;
 }
 
 function visualStageCast(cast) {

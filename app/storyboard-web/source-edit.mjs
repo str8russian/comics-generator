@@ -28,6 +28,62 @@ export function utteranceImpactMessage(count) {
   return `Нельзя исключить: персонаж говорит в ${count} ${noun}.`;
 }
 
+function lineageKey(character) {
+  const extracted = character?.extracted_name ?? character?.extractedName;
+  if (typeof extracted === "string" && extracted.length > 0) return extracted;
+  return typeof character?.name === "string" ? character.name : "";
+}
+
+function castReconciliation(message) {
+  return {
+    ok: false,
+    status: "blocked",
+    httpStatus: 409,
+    kind: "cast-reconciliation",
+    message,
+  };
+}
+
+export function planCastRevision(previousRows, characters) {
+  const previousByKey = new Map();
+  for (const row of previousRows || []) {
+    const extractedName = lineageKey(row);
+    if (!extractedName) continue;
+    if (previousByKey.has(extractedName)) {
+      return castReconciliation("Нельзя согласовать состав: прежние персонажи неразличимы.");
+    }
+    previousByKey.set(extractedName, {
+      name: row.name,
+      extractedName,
+      included: row.included !== false,
+    });
+  }
+  const seen = new Set();
+  const pairs = [];
+  const added = [];
+  for (const character of characters || []) {
+    const extractedName = lineageKey(character);
+    if (!extractedName || seen.has(extractedName)) {
+      return castReconciliation("Нельзя согласовать состав: одинаковая прежняя идентичность.");
+    }
+    seen.add(extractedName);
+    const previous = previousByKey.get(extractedName);
+    if (previous) pairs.push({ previous, next: character });
+    else added.push(character);
+  }
+  const removed = [...previousByKey.values()].filter((entry) => !seen.has(entry.extractedName));
+  if (removed.length > 0) {
+    return castReconciliation("Нельзя согласовать состав: персонаж исчез из списка.");
+  }
+  return {
+    ok: true,
+    pairs,
+    added,
+    renamed: pairs.filter((pair) => pair.previous.name !== pair.next.name),
+    inclusionChanged: pairs.some((pair) => pair.previous.included !== (pair.next.included !== false)),
+  };
+}
+
 export function speakingExclusion(cast) {
   const counts = new Map();
   for (const speaker of cast?.speakers || []) {

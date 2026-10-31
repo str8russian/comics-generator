@@ -300,14 +300,18 @@ test("confirmation is atomic and a mapping correction versions only the material
     assert.equal(revisionAfter.rowCount, 1);
     assert.equal(revisionAfter.rows[0].text, draft);
     const storedBoard = await pool.query("SELECT material_state_id, status FROM storyboard_result");
-    assert.equal(storedBoard.rowCount, 1);
-    assert.equal(storedBoard.rows[0].material_state_id, confirmed.materialStateId);
-    assert.equal(storedBoard.rows[0].status, "checked");
+    assert.equal(storedBoard.rowCount, 2);
+    assert.equal(storedBoard.rows.every((row) => row.status === "checked"), true);
+    const boardIds = new Set(storedBoard.rows.map((row) => row.material_state_id));
+    assert.equal(boardIds.has(confirmed.materialStateId), true);
+    assert.equal(boardIds.has(corrected.materialStateId), true);
     const project = await loadProject(pool);
     assert.equal(project.activeMaterialStateId, corrected.materialStateId);
-    assert.equal(project.storyboards.length, 1);
-    assert.equal(project.storyboards[0].materialStateId, confirmed.materialStateId);
-    assert.equal(project.storyboards[0].readyEligible, false);
+    assert.equal(project.storyboards.length, 2);
+    const activeBoard = project.storyboards.find((board) => board.materialStateId === corrected.materialStateId);
+    const previousBoard = project.storyboards.find((board) => board.materialStateId === confirmed.materialStateId);
+    assert.equal(activeBoard.readyEligible, true);
+    assert.equal(previousBoard.readyEligible, false);
     assert.equal(project.draft.text, draft);
   } finally {
     await resetProject(pool).catch(() => {});

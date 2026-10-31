@@ -462,6 +462,39 @@ test("cast_edit startSnapshot with non-product_control surface is rejected", asy
   assert.equal(after.events.length, before.events.length);
 });
 
+test("character_add is a valid cast_edit kind without a cast dump", async () => {
+  const research = store();
+  const correlationId = randomUUID();
+  const start = await research.appendEvent({
+    eventKind: "action_start",
+    semanticAction: "cast_edit",
+    correlationId,
+    surface: "product_control",
+    submittedText: "Наблюдатель",
+    commandTarget: null,
+    editTarget: castEditTarget({
+      editKind: "character_add",
+      castPhase: "pending_reading",
+      characterName: "Наблюдатель",
+      previousCharacterName: null,
+    }),
+    context: nullContext({ workflowPhase: "reading" }),
+  });
+  assert.equal(start.ok, true, start.kind);
+  assert.equal(start.event.editTarget.editKind, "character_add");
+  const dumped = JSON.stringify(start.event);
+  assert.equal(dumped.includes("sourceItems"), false);
+  assert.equal(dumped.includes('"characters"'), false);
+  const terminal = await research.appendEvent({
+    eventKind: "action_terminal",
+    correlationId,
+    outcome: "success",
+    outcomeFlags: {},
+  });
+  assert.equal(terminal.ok, true, terminal.kind);
+  assert.equal(terminal.event.semanticAction, "cast_edit");
+});
+
 test("valid cast_edit on product_control is accepted", async () => {
   const research = store();
   const correlationId = randomUUID();

@@ -5,6 +5,7 @@ import {
   applyExclusions,
   applyUtteranceToFrames,
   raisedDuration,
+  planCastRevision,
   reconcileExclusion,
   repartitionSegments,
   replaceSpokenSpan,
@@ -193,4 +194,35 @@ test("a speaking character cannot be excluded and a recheck keeps the extracted 
   }, ["Андрей Сергеич"]);
   assert.equal(fresh.characters.find((character) => character.name === "Андрей Сергеич").included, false);
   assert.equal(fresh.characters.find((character) => character.name === "Владимир").included, true);
+});
+
+test("cast revision lineage accepts an addition and refuses a collision or a disappearance", () => {
+  const previous = [
+    { name: "Путин", extracted_name: "Путин", included: true },
+    { name: "Песков", extracted_name: "Песков", included: true },
+  ];
+  const added = planCastRevision(previous, [
+    { name: "Путин", extractedName: "Путин", included: true },
+    { name: "Песков", extractedName: "Песков", included: true },
+    { name: "Наблюдатель", extractedName: "Наблюдатель", included: true },
+  ]);
+  assert.equal(added.ok, true);
+  assert.equal(added.added.length, 1);
+  assert.equal(added.renamed.length, 0);
+  const renamed = planCastRevision(previous, [
+    { name: "Владимир", extractedName: "Путин", included: true },
+    { name: "Песков", extractedName: "Песков", included: true },
+  ]);
+  assert.equal(renamed.ok, true);
+  assert.equal(renamed.renamed[0].previous.name, "Путин");
+  assert.equal(renamed.renamed[0].next.name, "Владимир");
+  const collided = planCastRevision(previous, [
+    { name: "Владимир", extractedName: "Путин", included: true },
+    { name: "Путин", extractedName: "Путин", included: true },
+  ]);
+  assert.equal(collided.kind, "cast-reconciliation");
+  const omitted = planCastRevision(previous, [
+    { name: "Путин", extractedName: "Путин", included: true },
+  ]);
+  assert.equal(omitted.kind, "cast-reconciliation");
 });

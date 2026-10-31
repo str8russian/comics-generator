@@ -2401,6 +2401,107 @@ export async function carryCharacterAnchors(client, { fromMaterialStateId, toMat
   }
 }
 
+export async function carryLineageAnchors(client, { fromMaterialStateId, toMaterialStateId, links }) {
+  const projectId = requireProjectId();
+  await client.query(`
+    INSERT INTO project_style_seed (material_state_id, style_asset_id, source_anchor_version_id)
+    SELECT $2, style_asset_id, source_anchor_version_id
+    FROM project_style_seed
+    WHERE material_state_id = $1
+    ON CONFLICT (material_state_id) DO NOTHING
+  `, [fromMaterialStateId, toMaterialStateId]);
+  for (const link of links || []) {
+    const extractedName = link?.extractedName;
+    const nextName = link?.nextName;
+    if (!extractedName || !nextName) continue;
+    const anchor = await client.query(`
+      WITH RECURSIVE chain AS (
+        SELECT id, parent_material_state_id, 0 AS depth
+        FROM material_state
+        WHERE id = $1
+        UNION ALL
+        SELECT material_state.id, material_state.parent_material_state_id, chain.depth + 1
+        FROM material_state
+        JOIN chain ON material_state.id = chain.parent_material_state_id
+      )
+      SELECT character_anchor_version.*
+      FROM chain
+      JOIN canonical_character
+        ON canonical_character.material_state_id = chain.id
+       AND COALESCE(NULLIF(canonical_character.extracted_name, ''), canonical_character.name) = $2
+      JOIN character_anchor_head
+        ON character_anchor_head.material_state_id = chain.id
+       AND character_anchor_head.character_name = canonical_character.name
+      JOIN character_anchor_version
+        ON character_anchor_version.id = character_anchor_head.anchor_version_id
+       AND character_anchor_version.status = 'approved'
+      JOIN visual_asset
+        ON visual_asset.id = character_anchor_version.output_asset_id
+       AND visual_asset.project_id = $3
+      ORDER BY chain.depth, character_anchor_version.id
+      LIMIT 1
+    `, [fromMaterialStateId, extractedName, projectId]);
+    if (anchor.rowCount === 1) {
+      const row = anchor.rows[0];
+      const anchorId = randomUUID();
+      await client.query(`
+        INSERT INTO character_anchor_version (
+          id, material_state_id, character_name, parent_anchor_version_id,
+          identity_asset_id, output_asset_id, instruction, status, error_kind,
+          provider_metadata, created_at, approved_at, style_asset_id, provenance
+        ) VALUES (
+          $1, $2, $3, NULL, $4, $5, $6, 'approved', $7, $8::jsonb, $9, $10, $11, $12
+        )
+      `, [
+        anchorId,
+        toMaterialStateId,
+        nextName,
+        row.identity_asset_id,
+        row.output_asset_id,
+        row.instruction || "",
+        row.error_kind,
+        row.provider_metadata == null ? null : JSON.stringify(row.provider_metadata),
+        row.created_at,
+        row.approved_at,
+        row.style_asset_id,
+        row.provenance,
+      ]);
+      await setAnchorHead(client, toMaterialStateId, nextName, anchorId);
+    }
+    const identity = await client.query(`
+      WITH RECURSIVE chain AS (
+        SELECT id, parent_material_state_id, 0 AS depth
+        FROM material_state
+        WHERE id = $1
+        UNION ALL
+        SELECT material_state.id, material_state.parent_material_state_id, chain.depth + 1
+        FROM material_state
+        JOIN chain ON material_state.id = chain.parent_material_state_id
+      )
+      SELECT character_identity.current_asset_id, character_identity.comment
+      FROM chain
+      JOIN canonical_character
+        ON canonical_character.material_state_id = chain.id
+       AND COALESCE(NULLIF(canonical_character.extracted_name, ''), canonical_character.name) = $2
+      JOIN character_identity
+        ON character_identity.material_state_id = chain.id
+       AND character_identity.character_name = canonical_character.name
+      JOIN visual_asset
+        ON visual_asset.id = character_identity.current_asset_id
+       AND visual_asset.project_id = $3
+      ORDER BY chain.depth
+      LIMIT 1
+    `, [fromMaterialStateId, extractedName, projectId]);
+    if (identity.rowCount === 1) {
+      await client.query(`
+        INSERT INTO character_identity (material_state_id, character_name, current_asset_id, comment)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (material_state_id, character_name) DO NOTHING
+      `, [toMaterialStateId, nextName, identity.rows[0].current_asset_id, identity.rows[0].comment]);
+    }
+  }
+}
+
 export async function readActiveMaterialStateId(pool) {
   try {
     return await withClient(pool, async (client) => {

@@ -52,7 +52,7 @@ const WORKFLOW_PHASES = new Set([
   "approved",
 ]);
 const COMMAND_KINDS = new Set(["storyboard", "panel", "frame", "character", "none"]);
-const EDIT_KINDS = new Set(["character_rename", "alias_assignment", "speaker_assignment", "character_inclusion"]);
+const EDIT_KINDS = new Set(["character_rename", "character_add", "alias_assignment", "speaker_assignment", "character_inclusion"]);
 const CAST_PHASES = new Set(["pending_reading", "material_state"]);
 
 const CONTEXT_KEYS = [

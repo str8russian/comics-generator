@@ -893,6 +893,39 @@ test("cast_edit covers all editKind × castPhase combinations with value-only ed
   await runSpeaker("material", "Дуров");
 });
 
+test("character_add records one cast_edit pair and does not dump the cast", async () => {
+  await ensurePage();
+  for (const mode of ["reading", "material"]) {
+    researchPosts.length = 0;
+    productPosts.length = 0;
+    page.setResearchReviewState(castReviewState(mode), mode);
+    const add = document.querySelector("#add-character");
+    assert.ok(add, "Добавить персонажа is missing");
+    assert.equal(add.textContent, "Добавить персонажа");
+    add.dispatchEvent({ type: "click" });
+    document.querySelector("#add-character-name").value = "  Наблюдатель  ";
+    document.querySelector("#add-character-form").dispatchEvent({ type: "submit", preventDefault() {} });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const pair = assertSingleCastPair("character_add", mode === "reading" ? "pending_reading" : "material_state");
+    assert.equal(pair.terminal.outcome, "success");
+    assert.equal(pair.start.submittedText, "Наблюдатель");
+    assertCastEditTargetShape(pair.start.editTarget, {
+      editKind: "character_add",
+      castPhase: mode === "reading" ? "pending_reading" : "material_state",
+      characterName: "Наблюдатель",
+      previousCharacterName: null,
+    });
+    const dumped = JSON.stringify(pair.start);
+    assert.equal(dumped.includes("sourceItems"), false);
+    assert.equal(dumped.includes('"characters"'), false);
+    assert.equal(dumped.includes("sourceQuote"), false);
+    const write = productPosts.find((entry) => entry.path.endsWith("/cast") || entry.path.endsWith("/material-states"));
+    assert.ok(write);
+    assert.equal(write.body.characters.filter((character) => character.name === "Наблюдатель").length, 1);
+    assert.equal(productPosts.some((entry) => entry.path.endsWith("/storyboard-results")), false);
+  }
+});
+
 test("removed structure instruction cannot submit a storyboard edit", async () => {
   await ensurePage();
   page.setResearchVisualState(readyVisual());
