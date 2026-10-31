@@ -2580,8 +2580,56 @@ function hideReview() {
   refreshConfirmation();
 }
 
+function rowName(row) {
+  const input = row.querySelector("input");
+  if (input) return input.value;
+  return row.dataset.characterName || "";
+}
+
 function characterNames() {
-  return [...materialCharacters.querySelectorAll("input")].map((input) => input.value);
+  return [...materialCharacters.querySelectorAll("li")].map((row) => rowName(row));
+}
+
+function extractedForCharacterName(name) {
+  if (!name) return "";
+  for (const row of materialCharacters.querySelectorAll("li")) {
+    if (rowName(row) !== name) continue;
+    return row.querySelector(".cast-include")?.dataset.extractedName || name;
+  }
+  return "";
+}
+
+function ownerLiveName(select) {
+  const extracted = select.dataset.ownerExtracted || "";
+  if (!extracted) return "";
+  for (const row of materialCharacters.querySelectorAll("li")) {
+    const key = row.querySelector(".cast-include")?.dataset.extractedName || "";
+    if (key !== extracted) continue;
+    return rowName(row);
+  }
+  return "";
+}
+
+function owningRow(node) {
+  let current = node;
+  while (current) {
+    if (current.tagName === "LI") return current;
+    current = current.parentNode;
+  }
+  return null;
+}
+
+function pendingRenameError(input) {
+  const name = input.value.trim();
+  if (!name) return "Введите имя персонажа.";
+  const row = owningRow(input);
+  for (const other of materialCharacters.querySelectorAll("li")) {
+    if (other === row) continue;
+    const otherName = rowName(other).trim();
+    const otherExtracted = other.querySelector(".cast-include")?.dataset.extractedName || "";
+    if (name === otherName || name === otherExtracted) return "Такое имя уже есть.";
+  }
+  return "";
 }
 
 function fillSelect(select, selected) {
@@ -2603,13 +2651,13 @@ function fillSelect(select, selected) {
 function collectCast() {
   const characters = [];
   for (const row of materialCharacters.querySelectorAll("li")) {
-    const input = row.querySelector("input");
     const toggle = row.querySelector(".cast-include");
-    if (!input?.value) return null;
+    const name = rowName(row).trim();
+    if (!name) return null;
     characters.push({
-      name: input.value,
+      name,
       included: toggle ? toggle.getAttribute("aria-pressed") === "true" : true,
-      extractedName: toggle?.dataset.extractedName || input.value,
+      extractedName: toggle?.dataset.extractedName || name,
     });
   }
   if (pendingAddition && !characters.some((character) => character.name === pendingAddition.name)) {
@@ -2629,8 +2677,8 @@ function collectCast() {
 }
 
 function syncSelects() {
-  for (const select of materialAliases.querySelectorAll("select")) fillSelect(select, select.value);
-  for (const select of materialSpeakers.querySelectorAll("select")) fillSelect(select, select.value);
+  for (const select of materialAliases.querySelectorAll("select")) fillSelect(select, ownerLiveName(select));
+  for (const select of materialSpeakers.querySelectorAll("select")) fillSelect(select, ownerLiveName(select));
 }
 
 function scheduleCastSave() {
@@ -2811,9 +2859,11 @@ function renderReview() {
   materialReview.hidden = false;
   renderSources();
   materialCharacters.replaceChildren();
+  const namesEditable = review.mode === "reading";
   for (const character of review.cast?.characters || []) {
     const row = document.createElement("li");
     row.className = "material-row";
+    row.dataset.characterName = character.name;
     const included = character.included !== false;
     const toggle = document.createElement("button");
     toggle.type = "button";
@@ -2822,28 +2872,41 @@ function renderReview() {
     toggle.setAttribute("aria-pressed", included ? "true" : "false");
     toggle.textContent = included ? "✓" : "○";
     toggle.setAttribute("aria-label", included ? `В кадре: ${character.name}` : `Не в кадре: ${character.name}`);
-    const input = document.createElement("input");
-    input.value = character.name;
-    input.dataset.previousName = character.name;
-    input.addEventListener("input", () => syncSelects());
-    input.addEventListener("blur", () => {
-      if (storyLocked()) return;
-      pendingCastEdit = {
-        editKind: "character_rename",
-        submittedText: input.value,
-        characterName: input.value,
-        previousCharacterName: input.dataset.previousName || null,
-      };
-      input.dataset.previousName = input.value;
-      const label = toggle.getAttribute("aria-pressed") === "true" ? `В кадре: ${input.value}` : `Не в кадре: ${input.value}`;
-      toggle.setAttribute("aria-label", label);
-      scheduleCastSave();
-    });
+    const nameNode = namesEditable ? document.createElement("input") : document.createElement("span");
+    if (namesEditable) {
+      nameNode.value = character.name;
+      nameNode.dataset.previousName = character.name;
+      nameNode.addEventListener("input", () => syncSelects());
+      nameNode.addEventListener("blur", () => {
+        if (storyLocked()) return;
+        nameNode.value = nameNode.value.trim();
+        const message = pendingRenameError(nameNode);
+        if (message) {
+          showCastStatus(message);
+          renderReview();
+          return;
+        }
+        syncSelects();
+        pendingCastEdit = {
+          editKind: "character_rename",
+          submittedText: nameNode.value,
+          characterName: nameNode.value,
+          previousCharacterName: nameNode.dataset.previousName || null,
+        };
+        const label = toggle.getAttribute("aria-pressed") === "true" ? `В кадре: ${nameNode.value}` : `Не в кадре: ${nameNode.value}`;
+        toggle.setAttribute("aria-label", label);
+        scheduleCastSave();
+      });
+    } else {
+      nameNode.className = "cast-name";
+      nameNode.textContent = character.name;
+    }
     toggle.addEventListener("click", () => {
       if (storyLocked()) return;
+      const name = rowName(row);
       const next = toggle.getAttribute("aria-pressed") !== "true";
       if (!next) {
-        const count = (review.cast?.speakers || []).filter((speaker) => speaker.characterName === input.value).length;
+        const count = (review.cast?.speakers || []).filter((speaker) => speaker.characterName === name).length;
         if (count > 0) {
           showCastStatus(utteranceImpactMessage(count));
           return;
@@ -2852,16 +2915,16 @@ function renderReview() {
       showCastStatus("");
       toggle.setAttribute("aria-pressed", next ? "true" : "false");
       toggle.textContent = next ? "✓" : "○";
-      toggle.setAttribute("aria-label", next ? `В кадре: ${input.value}` : `Не в кадре: ${input.value}`);
+      toggle.setAttribute("aria-label", next ? `В кадре: ${name}` : `Не в кадре: ${name}`);
       pendingCastEdit = {
         editKind: "character_inclusion",
         submittedText: next ? "included" : "excluded",
-        characterName: input.value,
-        previousCharacterName: input.value,
+        characterName: name,
+        previousCharacterName: name,
       };
       scheduleCastSave();
     });
-    row.append(toggle, input);
+    row.append(toggle, nameNode);
     materialCharacters.append(row);
   }
   const aliasSurfaces = [];
@@ -2885,9 +2948,12 @@ function renderReview() {
     const select = document.createElement("select");
     select.dataset.surface = surface;
     const current = (review.cast?.aliases || []).find((alias) => alias.surface === surface);
+    const aliasOwner = (review.cast?.characters || []).find((character) => character.name === current?.characterName);
+    select.dataset.ownerExtracted = aliasOwner ? (aliasOwner.extractedName || aliasOwner.name) : "";
     fillSelect(select, current?.characterName || "");
     select.addEventListener("change", () => {
       if (storyLocked()) return;
+      select.dataset.ownerExtracted = extractedForCharacterName(select.value);
       pendingCastEdit = {
         editKind: "alias_assignment",
         submittedText: select.value,
@@ -2914,9 +2980,12 @@ function renderReview() {
     const select = document.createElement("select");
     select.dataset.sourceId = item.id;
     const current = (review.cast?.speakers || []).find((speaker) => speaker.sourceItemId === item.id);
+    const speakerOwner = (review.cast?.characters || []).find((character) => character.name === current?.characterName);
+    select.dataset.ownerExtracted = speakerOwner ? (speakerOwner.extractedName || speakerOwner.name) : "";
     fillSelect(select, current?.characterName || "");
     select.addEventListener("change", () => {
       if (storyLocked()) return;
+      select.dataset.ownerExtracted = extractedForCharacterName(select.value);
       pendingCastEdit = {
         editKind: "speaker_assignment",
         submittedText: select.value,

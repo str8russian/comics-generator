@@ -69,11 +69,21 @@ export function planCastRevision(previousRows, characters) {
     seen.add(extractedName);
     const previous = previousByKey.get(extractedName);
     if (previous) pairs.push({ previous, next: character });
-    else added.push(character);
+    else if (character.name !== extractedName) {
+      return castReconciliation("Нельзя согласовать состав: новая личность не совпадает с именем.");
+    } else added.push(character);
   }
   const removed = [...previousByKey.values()].filter((entry) => !seen.has(entry.extractedName));
   if (removed.length > 0) {
     return castReconciliation("Нельзя согласовать состав: персонаж исчез из списка.");
+  }
+  const byPreviousName = new Map(pairs.map((pair) => [pair.previous.name, pair]));
+  for (const pair of pairs) {
+    if (pair.previous.name === pair.next.name) continue;
+    const other = byPreviousName.get(pair.next.name);
+    if (other && other !== pair && other.next.name === pair.previous.name) {
+      return castReconciliation("Нельзя согласовать состав: прежние личности переставлены.");
+    }
   }
   return {
     ok: true,

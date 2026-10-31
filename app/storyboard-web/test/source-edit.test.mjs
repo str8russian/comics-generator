@@ -216,6 +216,19 @@ test("cast revision lineage accepts an addition and refuses a collision or a dis
   assert.equal(renamed.ok, true);
   assert.equal(renamed.renamed[0].previous.name, "Путин");
   assert.equal(renamed.renamed[0].next.name, "Владимир");
+  const swapped = planCastRevision(previous, [
+    { name: "Путин", extractedName: "Песков", included: true },
+    { name: "Песков", extractedName: "Путин", included: true },
+  ]);
+  assert.equal(swapped.ok, false);
+  assert.equal(swapped.kind, "cast-reconciliation");
+  const foreign = planCastRevision(previous, [
+    { name: "Путин", extractedName: "Путин", included: true },
+    { name: "Песков", extractedName: "Песков", included: true },
+    { name: "Наблюдатель", extractedName: "Чужой", included: true },
+  ]);
+  assert.equal(foreign.ok, false);
+  assert.equal(foreign.kind, "cast-reconciliation");
   const collided = planCastRevision(previous, [
     { name: "Владимир", extractedName: "Путин", included: true },
     { name: "Путин", extractedName: "Путин", included: true },

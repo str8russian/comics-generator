@@ -11,7 +11,7 @@ import {
   replaceSpokenSpan,
   speakingExclusion,
 } from "./source-edit.mjs";
-import { carryCharacterAnchors, carryCheckedStoryboard, carryLineageAnchors } from "./visual-store.mjs";
+import { carryCharacterAnchors, carryCheckedStoryboard } from "./visual-store.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -988,7 +988,16 @@ export async function reviseMaterialState(pool, cast) {
       await rollback(client);
       return plan;
     }
-    const identityChanged = plan.added.length > 0 || plan.renamed.length > 0;
+    if (plan.renamed.length > 0) {
+      await rollback(client);
+      return {
+        ok: false,
+        status: "blocked",
+        httpStatus: 409,
+        kind: "cast-reconciliation",
+        message: "Нельзя переименовать подтверждённого персонажа.",
+      };
+    }
     const materialId = randomUUID();
     await client.query(
       `INSERT INTO material_state (id, source_revision_id, interpretation_id, parent_material_state_id)
@@ -997,39 +1006,53 @@ export async function reviseMaterialState(pool, cast) {
     );
     await insertMaterialCast(client, materialId, normalized);
     await syncExclusions(client, locked.project_id, normalized.characters);
-    const identification = {
-      characters: normalized.characters.map((character) => ({ name: character.name })),
-      aliases: normalized.aliases,
-    };
-    const carried = await carryCheckedStoryboard(client, {
-      fromMaterialStateId: state.id,
-      toMaterialStateId: materialId,
-      copyApproval: !identityChanged,
-      transformFrames(frames) {
-        let next = frames;
-        for (const character of normalized.characters) {
-          if (character.included !== false) continue;
-          const step = reconcileExclusion(next, character.name, identification);
-          if (!step.ok) return step;
-          next = step.frames;
-        }
-        return { ok: true, frames: next };
-      },
-    });
-    if (!carried.ok) {
-      await rollback(client);
-      return carried;
+    const carryLocally = plan.added.length > 0 || plan.inclusionChanged;
+    if (carryLocally) {
+      const identification = {
+        characters: normalized.characters.map((character) => ({ name: character.name })),
+        aliases: normalized.aliases,
+      };
+      const carried = await carryCheckedStoryboard(client, {
+        fromMaterialStateId: state.id,
+        toMaterialStateId: materialId,
+        copyApproval: plan.added.length === 0,
+        transformFrames(frames) {
+          let next = frames;
+          for (const character of normalized.characters) {
+            if (character.included !== false) continue;
+            const step = reconcileExclusion(next, character.name, identification);
+            if (!step.ok) return step;
+            next = step.frames;
+          }
+          return { ok: true, frames: next };
+        },
+      });
+      if (!carried.ok) {
+        await rollback(client);
+        return carried;
+      }
+      await carryCharacterAnchors(client, {
+        fromMaterialStateId: state.id,
+        toMaterialStateId: materialId,
+        includedNames: normalized.characters
+          .filter((character) => character.included !== false)
+          .map((character) => character.name),
+      });
+      await client.query(
+        `UPDATE project SET active_material_state_id = $1, updated_at = clock_timestamp() WHERE id = $2`,
+        [materialId, locked.project_id],
+      );
+      await client.query("COMMIT");
+      return {
+        ok: true,
+        httpStatus: 200,
+        materialStateId: materialId,
+        sourceRevisionId: state.source_revision_id,
+        interpretationId: state.interpretation_id,
+        visualChanged: true,
+        invalidateRender: plan.added.length > 0 || carried.invalidateRender === true,
+      };
     }
-    await carryLineageAnchors(client, {
-      fromMaterialStateId: state.id,
-      toMaterialStateId: materialId,
-      links: plan.pairs
-        .filter((pair) => pair.next.included !== false)
-        .map((pair) => ({
-          extractedName: pair.previous.extractedName,
-          nextName: pair.next.name,
-        })),
-    });
     await client.query(
       `UPDATE project SET active_material_state_id = $1, updated_at = clock_timestamp() WHERE id = $2`,
       [materialId, locked.project_id],
@@ -1041,8 +1064,6 @@ export async function reviseMaterialState(pool, cast) {
       materialStateId: materialId,
       sourceRevisionId: state.source_revision_id,
       interpretationId: state.interpretation_id,
-      visualChanged: carried.carried === true || identityChanged || plan.inclusionChanged,
-      invalidateRender: identityChanged || carried.invalidateRender === true,
     };
   });
 }

@@ -52,7 +52,7 @@ Exclusion is stored on the cast row as `included = false` together with the extr
 
 When a storyboard already exists, exclusion rebinds a checked storyboard locally. It removes an excluded-only listener panel or an excluded-only derived silent frame. It does not remove source-owned silent remarks. If a dialogue frame cannot keep its line and a retained panel, the change is blocked.
 
-Visual approval and the process-current render are dropped only when the active frames or the cast those frames use actually change. An added character or a canonical-name rename drops whole-board approval even when the frames stay.
+Visual approval and the process-current render are dropped only when the active frames or the cast those frames use actually change. An added character drops whole-board approval even when the frames stay.
 
 ## Manual missing character
 
@@ -62,11 +62,15 @@ A saved name is trimmed, non-empty, and unique among current canonical names and
 
 Before confirmation, the pending cast stores the character. Confirmation creates exactly one canonical character in the new Material State.
 
-After confirmation, addition, rename, and include/exclude insert a new Material State for the same Source Revision and Interpretation. Story review and Characters both read that active Material State. The browser does not keep a second cast.
+While Story review is still pending, each character name is an editable control. A rename is saved through that pending cast. Aliases and speaker assignments owned by the renamed character move to the corrected name; other characters' relationships stay. The stable extracted name stays with that character. A blank or duplicate current name is refused and nothing is written. Cancel, failure, and a stale response restore the last persisted pending cast, including its assignments.
 
-A manually added character keeps the extracted name it was given. Later renames keep that extracted name, and only that lineage may carry the same character's anchor and identity. A rename must not receive another character's anchor because the new name once belonged to someone else. A new included character has no anchor. If extracted names collide, or a character disappears from the submitted list, the edit is refused. The previous Material State, Storyboard head, anchors, approval, and render-current state stay as they were.
+After confirmation, canonical names are read-only text. **Добавить персонажа** and include/exclude stay available. A confirmed rename is rejected and writes nothing. Confirmed rename and moving an anchor or identity onto another canonical name are deferred.
 
-When a checked Storyboard already exists, the active Storyboard advances with the new Material State. Frame and panel ids, current assets, placement, and the anchors of unchanged characters stay. Image bytes are not copied. The edit does not call Stage and does not generate an anchor or a panel. Whole-board Visual approval and Video readiness are not carried across an addition or a canonical-name rename.
+After confirmation, addition and include/exclude insert a new Material State for the same Source Revision and Interpretation. Story review and Characters both read that active Material State. The browser does not keep a second cast.
+
+A manually added character keeps the extracted name it was given, equal to its own canonical name. Existing lineage keys are server-authoritative. A new character may not claim an existing or arbitrary foreign lineage key, and two existing characters may not exchange extracted names. A new included character has no anchor. If extracted names collide, or a character disappears from the submitted list, the edit is refused. The previous Material State, Storyboard head, anchors, approval, and render-current state stay as they were.
+
+When a checked Storyboard already exists, addition and include/exclude advance the active Storyboard with the new Material State. Frame and panel ids, current assets, placement, and the anchors of unchanged characters stay. Image bytes are not copied. The edit does not call Stage and does not generate an anchor or a panel. Whole-board Visual approval and Video readiness are not carried across an addition. Include/exclude keeps the local reconciliation already accepted for Feature 014: approval and the process-current render drop only when the active frames change, and re-inclusion restores a still-valid anchor. An alias-only or speaker-only edit versions the Material State and does not copy the approved Storyboard onto that new state.
 
 The same names, inclusion, aliases, and speaker assignments remain after reload and after leaving and reopening the project.
 
@@ -79,7 +83,7 @@ Use one isolated disposable project that already has a confirmed cast, a checked
 1. From Story, add **Наблюдатель**. It appears once in the Story list, and no speaker assignment is required.
 2. Characters, in the current five-stage shell, shows **Наблюдатель** once and requires a base anchor. Unchanged characters keep their own anchors.
 3. The Storyboard keeps its frame count, panel identities, images, and placement. No generation starts.
-4. Rename the added character to **Молчаливый наблюдатель**. Story and Characters show that name.
+4. Confirmed canonical names are read-only. Include/exclude remains available.
 5. Reload, leave to Projects, and return. The canonical name and inclusion match in both places.
 6. The board is not whole-board approved and is not ready for Video.
 7. The trace has one truthful add lifecycle and no provider or generation event.

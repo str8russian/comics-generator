@@ -441,7 +441,205 @@ test("a confirmed silent add keeps the checked storyboard and drops whole-board 
   });
 });
 
-test("rename keeps the same character anchor and never borrows another", {
+async function authoritySnapshot(pool) {
+  const [materials, boards, approvals, anchors, assets, exclusions, heads, identities, generations, panels] = await Promise.all([
+    pool.query(`SELECT id FROM material_state ORDER BY id`),
+    pool.query(`SELECT id, material_state_id FROM storyboard_result ORDER BY id`),
+    pool.query(`SELECT storyboard_version_id FROM visual_approval ORDER BY storyboard_version_id`),
+    pool.query(`SELECT material_state_id, character_name, anchor_version_id FROM character_anchor_head ORDER BY character_name, material_state_id`),
+    pool.query(`SELECT count(*)::int AS count FROM visual_asset WHERE project_id = $1`, [SEEDED_PROJECT_ID]),
+    pool.query(`SELECT extracted_name FROM character_exclusion WHERE project_id = $1 ORDER BY extracted_name`, [SEEDED_PROJECT_ID]),
+    pool.query(`SELECT active_material_state_id FROM project WHERE id = $1`, [SEEDED_PROJECT_ID]),
+    pool.query(`SELECT material_state_id, character_name FROM character_identity ORDER BY character_name, material_state_id`),
+    pool.query(`SELECT count(*)::int AS count FROM panel_generation`),
+    pool.query(`SELECT id FROM panel_visual_state ORDER BY id`),
+  ]);
+  return {
+    materials: materials.rows.map((row) => row.id),
+    boards: boards.rows,
+    approvals: approvals.rows.map((row) => row.storyboard_version_id),
+    anchors: anchors.rows,
+    assets: assets.rows[0].count,
+    exclusions: exclusions.rows.map((row) => row.extracted_name),
+    head: heads.rows[0].active_material_state_id,
+    identities: identities.rows,
+    generations: generations.rows[0].count,
+    panels: panels.rows.map((row) => row.id),
+  };
+}
+
+test("a pending rename keeps lineage and relationships through confirmation", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  await withDatabase(async (pool) => {
+    const { readingId } = await confirmBase(pool);
+    const renamed = withRenames(cast(), { Путин: "Владимир" });
+    const saved = await replacePendingCast(pool, readingId, renamed);
+    assert.equal(saved.ok, true, saved.kind);
+    const pending = await pool.query(
+      `SELECT name, extracted_name FROM pending_character WHERE reading_id = $1 AND extracted_name = 'Путин'`,
+      [readingId],
+    );
+    assert.equal(pending.rows[0].name, "Владимир");
+    const pendingAlias = await pool.query(`
+      SELECT pending_alias.surface_text, pending_character.name
+      FROM pending_alias
+      JOIN pending_character ON pending_character.id = pending_alias.character_id
+      WHERE pending_alias.reading_id = $1
+      ORDER BY pending_alias.surface_text
+    `, [readingId]);
+    const aliasBySurface = new Map(pendingAlias.rows.map((row) => [row.surface_text, row.name]));
+    assert.equal(aliasBySurface.get("Путин"), "Владимир");
+    assert.equal(aliasBySurface.get("Дмитрий Сергеевич"), "Песков");
+    assert.equal(aliasBySurface.get("Песков"), "Песков");
+    const pendingSpeaker = await pool.query(`
+      SELECT pending_character.name
+      FROM pending_speaker
+      JOIN pending_character ON pending_character.id = pending_speaker.character_id
+      WHERE pending_speaker.reading_id = $1 AND pending_speaker.source_item_model_id = 'u1'
+    `, [readingId]);
+    assert.equal(pendingSpeaker.rows[0].name, "Владимир");
+    const confirmed = await confirmReading(pool, { readingId });
+    assert.equal(confirmed.ok, true, confirmed.kind);
+    const project = await loadProject(pool);
+    const character = project.material.cast.characters.find((entry) => entry.extractedName === "Путин");
+    assert.equal(character.name, "Владимир");
+    assert.equal(project.material.cast.speakers.find((speaker) => speaker.sourceItemId === "u1").characterName, "Владимир");
+    assert.equal(project.material.cast.aliases.find((alias) => alias.surface === "Путин").characterName, "Владимир");
+    assert.equal(project.material.cast.aliases.find((alias) => alias.surface === "Дмитрий Сергеевич").characterName, "Песков");
+    assert.equal(project.material.cast.aliases.find((alias) => alias.surface === "Песков").characterName, "Песков");
+  });
+});
+
+test("confirmed rename, swapped lineage, and a foreign lineage write nothing", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  await withDatabase(async (pool) => {
+    const { readingId } = await confirmBase(pool);
+    assert.equal((await replacePendingCast(pool, readingId, cast())).ok, true);
+    const confirmed = await confirmReading(pool, { readingId });
+    const putinAsset = await insertAsset(pool, pngA, "base-anchor");
+    const peskovAsset = await insertAsset(pool, pngB, "base-anchor");
+    const panelAsset = await insertAsset(pool, pngPanel, "uploaded-image");
+    const board = await installBoard(pool, confirmed.materialStateId, { putinAsset, peskovAsset, panelAsset });
+    await pool.query(
+      `INSERT INTO visual_approval (id, storyboard_version_id, snapshot) VALUES ($1, $2, '[]'::jsonb)`,
+      [randomUUID(), board.versionId],
+    );
+    const unchanged = await authoritySnapshot(pool);
+
+    const renamed = await reviseMaterialState(pool, withRenames(cast(), { Путин: "Владимир" }));
+    assert.equal(renamed.ok, false);
+    assert.equal(renamed.status, "blocked");
+    assert.equal(renamed.kind, "cast-reconciliation");
+    assert.deepEqual(await authoritySnapshot(pool), unchanged);
+
+    const swapped = await reviseMaterialState(pool, {
+      characters: [
+        { name: "Путин", extractedName: "Песков", included: true },
+        { name: "Песков", extractedName: "Путин", included: true },
+      ],
+      aliases: cast().aliases,
+      speakers: cast().speakers,
+    });
+    assert.equal(swapped.ok, false);
+    assert.equal(swapped.status, "blocked");
+    assert.equal(swapped.kind, "cast-reconciliation");
+    assert.deepEqual(await authoritySnapshot(pool), unchanged);
+
+    const foreign = await reviseMaterialState(pool, cast([
+      { name: "Наблюдатель", extractedName: "Чужой", included: true },
+    ]));
+    assert.equal(foreign.ok, false);
+    assert.equal(foreign.status, "blocked");
+    assert.equal(foreign.kind, "cast-reconciliation");
+    assert.deepEqual(await authoritySnapshot(pool), unchanged);
+    const project = await loadProject(pool);
+    assert.equal(project.activeMaterialStateId, confirmed.materialStateId);
+    assert.equal(project.material.cast.characters.map((character) => character.name).join(","), "Путин,Песков");
+    assert.equal(project.storyboards.find((item) => item.materialStateId === confirmed.materialStateId).readyEligible, true);
+  });
+});
+
+test("alias-only and speaker-only edits do not copy approval onto a current board", {
+  skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
+}, async () => {
+  await withDatabase(async (pool) => {
+    async function prepare() {
+      await resetProject(pool);
+      const { readingId } = await confirmBase(pool);
+      assert.equal((await replacePendingCast(pool, readingId, cast())).ok, true);
+      const confirmed = await confirmReading(pool, { readingId });
+      const putinAsset = await insertAsset(pool, pngA, "base-anchor");
+      const peskovAsset = await insertAsset(pool, pngB, "base-anchor");
+      const panelAsset = await insertAsset(pool, pngPanel, "uploaded-image");
+      const board = await installBoard(pool, confirmed.materialStateId, { putinAsset, peskovAsset, panelAsset });
+      await pool.query(
+        `INSERT INTO visual_approval (id, storyboard_version_id, snapshot) VALUES ($1, $2, '[]'::jsonb)`,
+        [randomUUID(), board.versionId],
+      );
+      const before = await authoritySnapshot(pool);
+      return { confirmed, board, before };
+    }
+
+    async function assertBaseline(edited, before, confirmed) {
+      assert.equal(edited.ok, true, edited.kind);
+      assert.equal(Object.hasOwn(edited, "visualChanged"), false);
+      assert.equal(Object.hasOwn(edited, "invalidateRender"), false);
+      assert.notEqual(edited.materialStateId, confirmed.materialStateId);
+      const after = await authoritySnapshot(pool);
+      assert.deepEqual(after.boards, before.boards);
+      assert.deepEqual(after.approvals, before.approvals);
+      assert.deepEqual(after.anchors, before.anchors);
+      assert.deepEqual(after.panels, before.panels);
+      assert.equal(after.assets, before.assets);
+      assert.equal(after.generations, before.generations);
+      assert.deepEqual(after.exclusions, before.exclusions);
+      assert.equal(after.head, edited.materialStateId);
+      assert.equal(after.materials.length, before.materials.length + 1);
+      const boards = await pool.query(`SELECT material_state_id FROM storyboard_result`);
+      assert.deepEqual(boards.rows.map((row) => row.material_state_id), [confirmed.materialStateId]);
+      const project = await loadProject(pool);
+      assert.equal(project.storyboards.find((item) => item.materialStateId === confirmed.materialStateId).readyEligible, false);
+      assert.equal(project.storyboards.some((item) => item.materialStateId === edited.materialStateId), false);
+      const visual = await createVisualStore(pool).load();
+      assert.equal(visual.status, "unavailable");
+      assert.equal(visual.readyForVideo, undefined);
+      assert.equal(visual.approved, undefined);
+    }
+
+    const aliasCase = await prepare();
+    const aliased = {
+      ...cast(),
+      aliases: [
+        { surface: "Путин", characterName: "Путин" },
+        { surface: "Дмитрий Сергеевич", characterName: "Путин" },
+        { surface: "Песков", characterName: "Песков" },
+      ],
+    };
+    const aliasEdit = await reviseMaterialState(pool, aliased);
+    await assertBaseline(aliasEdit, aliasCase.before, aliasCase.confirmed);
+    const aliasProject = await loadProject(pool);
+    assert.equal(aliasProject.material.cast.aliases.find((alias) => alias.surface === "Дмитрий Сергеевич").characterName, "Путин");
+    assert.equal(aliasProject.material.cast.speakers.find((speaker) => speaker.sourceItemId === "u1").characterName, "Путин");
+
+    const speakerCase = await prepare();
+    const spoken = {
+      ...cast(),
+      speakers: [
+        { sourceItemId: "u1", characterName: "Путин" },
+        { sourceItemId: "u2", characterName: "Песков" },
+      ],
+    };
+    const speakerEdit = await reviseMaterialState(pool, spoken);
+    await assertBaseline(speakerEdit, speakerCase.before, speakerCase.confirmed);
+    const speakerProject = await loadProject(pool);
+    assert.equal(speakerProject.material.cast.speakers.find((speaker) => speaker.sourceItemId === "u2").characterName, "Песков");
+    assert.equal(speakerProject.material.cast.aliases.find((alias) => alias.surface === "Дмитрий Сергеевич").characterName, "Песков");
+  });
+});
+
+test("include, exclude, and re-inclusion keep unchanged anchors", {
   skip: databaseUrl ? false : "STORYBOARD_TEST_DATABASE_URL is unset",
 }, async () => {
   await withDatabase(async (pool) => {
@@ -452,43 +650,26 @@ test("rename keeps the same character anchor and never borrows another", {
     const peskovAsset = await insertAsset(pool, pngB, "base-anchor");
     const panelAsset = await insertAsset(pool, pngPanel, "uploaded-image");
     await installBoard(pool, confirmed.materialStateId, { putinAsset, peskovAsset, panelAsset });
-    const store = createVisualStore(pool);
-    const base = cast([{ name: "Наблюдатель", extractedName: "Наблюдатель", included: true }]);
-    const added = await reviseMaterialState(pool, base);
-    assert.equal(added.ok, true, added.kind);
-    const renamedPutin = withRenames(base, { Путин: "Владимир" });
-    const renamed = await reviseMaterialState(pool, renamedPutin);
-    assert.equal(renamed.ok, true, renamed.kind);
-    assert.equal(renamed.invalidateRender, true);
-    const visual = await store.load();
-    const vladimir = visual.characters.find((character) => character.name === "Владимир");
-    const peskov = visual.characters.find((character) => character.name === "Песков");
-    const observer = visual.characters.find((character) => character.name === "Наблюдатель");
-    assert.equal(vladimir.approvedAssetId, putinAsset);
-    assert.equal(peskov.approvedAssetId, peskovAsset);
-    assert.equal(observer.approvedAnchorId, null);
-    assert.equal(visual.characters.filter((character) => character.approvedAssetId === putinAsset).length, 1);
+    const excluded = {
+      ...cast(),
+      characters: [
+        { name: "Путин", extractedName: "Путин", included: true },
+        { name: "Песков", extractedName: "Песков", included: false },
+      ],
+    };
+    const exclusion = await reviseMaterialState(pool, excluded);
+    assert.equal(exclusion.ok, true, exclusion.kind);
+    assert.equal(exclusion.visualChanged, true);
+    const hidden = await createVisualStore(pool).load();
+    assert.equal(hidden.characters.some((character) => character.name === "Песков"), false);
+    assert.equal(hidden.characters.find((character) => character.name === "Путин").approvedAssetId, putinAsset);
+    const restored = await reviseMaterialState(pool, cast());
+    assert.equal(restored.ok, true, restored.kind);
+    const visual = await createVisualStore(pool).load();
+    assert.equal(visual.characters.find((character) => character.name === "Путин").approvedAssetId, putinAsset);
+    assert.equal(visual.characters.find((character) => character.name === "Песков").approvedAssetId, peskovAsset);
     const project = await loadProject(pool);
-    assert.equal(project.material.cast.characters.find((character) => character.extractedName === "Путин").name, "Владимир");
-    assert.equal(project.material.cast.speakers.find((speaker) => speaker.sourceItemId === "u1").characterName, "Владимир");
-    assert.equal(project.material.cast.aliases.find((alias) => alias.surface === "Путин").characterName, "Владимир");
-    assert.equal(project.material.cast.aliases.find((alias) => alias.surface === "Дмитрий Сергеевич").characterName, "Песков");
-
-    const renamedPeskov = withRenames(renamedPutin, { Песков: "Секретарь" });
-    const moved = await reviseMaterialState(pool, renamedPeskov);
-    assert.equal(moved.ok, true, moved.kind);
-    const claimed = withRenames(renamedPeskov, { Наблюдатель: "Песков" });
-    const claim = await reviseMaterialState(pool, claimed);
-    assert.equal(claim.ok, true, claim.kind);
-    const afterClaim = await store.load();
-    assert.equal(afterClaim.characters.find((character) => character.name === "Секретарь").approvedAssetId, peskovAsset);
-    assert.equal(afterClaim.characters.find((character) => character.name === "Владимир").approvedAssetId, putinAsset);
-    assert.equal(afterClaim.characters.find((character) => character.name === "Песков").approvedAnchorId, null);
-    assert.equal(afterClaim.approved, false);
-    assert.equal(afterClaim.readyForVideo, false);
-    const returned = await loadProject(pool);
-    assert.equal(returned.material.cast.characters.find((character) => character.extractedName === "Наблюдатель").name, "Песков");
-    assert.equal(returned.material.cast.characters.find((character) => character.extractedName === "Наблюдатель").included, true);
+    assert.equal(project.material.cast.characters.find((character) => character.name === "Песков").included, true);
   });
 });
 

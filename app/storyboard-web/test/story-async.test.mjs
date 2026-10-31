@@ -551,6 +551,184 @@ describe("truthful Story long-running actions", { concurrency: false }, () => {
     harness.respond = null;
   });
 
+  function relationshipReview(mode) {
+    return {
+      id: mode === "reading" ? "reading-1" : "material-1",
+      text: "Путин: Дмитрий Сергеевич, это Песков.",
+      sourceItems: [
+        { id: "utterance-1", kind: "utterance", sourceQuote: "Дмитрий Сергеевич, это Песков." },
+        { id: "utterance-2", kind: "utterance", sourceQuote: "Кто это сказал?" },
+      ],
+      cast: {
+        characters: [
+          { name: "Путин", extractedName: "Путин", included: true },
+          { name: "Песков", extractedName: "Песков", included: true },
+        ],
+        aliases: [
+          { surface: "Путин", characterName: "Путин" },
+          { surface: "Владимир", characterName: "Песков" },
+          { surface: "Дмитрий Сергеевич", characterName: "Песков" },
+        ],
+        speakers: [
+          { sourceItemId: "utterance-1", characterName: "Путин" },
+          { sourceItemId: "utterance-2", characterName: "Песков" },
+        ],
+      },
+      surfaceForms: [
+        { quote: "Путин" },
+        { quote: "Владимир" },
+        { quote: "Дмитрий Сергеевич" },
+      ],
+      findings: [],
+    };
+  }
+
+  function aliasValue(surface) {
+    const select = [...$("#material-aliases").querySelectorAll("select")].find((node) => node.dataset.surface === surface);
+    return select ? select.value : null;
+  }
+
+  function speakerValue(sourceId) {
+    const select = [...$("#material-speakers").querySelectorAll("select")].find((node) => node.dataset.sourceId === sourceId);
+    return select ? select.value : null;
+  }
+
+  function castWrites() {
+    return harness.requests.filter((entry) => (
+      (entry.method === "PUT" && entry.path.endsWith("/cast"))
+      || (entry.method === "POST" && entry.path.endsWith("/material-states"))
+    ));
+  }
+
+  test("a blank or duplicate pending rename writes nothing and a stale response restores assignments", async () => {
+    resetRecorder();
+    page.setResearchReviewState(relationshipReview("reading"), "reading");
+    const input = [...$("#material-characters").querySelectorAll("input")].find((node) => node.value === "Путин");
+    assert.ok(input);
+    const before = harness.requests.length;
+    input.value = "   ";
+    input.dispatchEvent({ type: "blur" });
+    await flush(4);
+    assert.equal(harness.requests.length, before);
+    assert.deepEqual([...$("#material-characters").querySelectorAll("input")].map((node) => node.value), ["Путин", "Песков"]);
+    assert.equal(speakerValue("utterance-1"), "Путин");
+    assert.equal(aliasValue("Путин"), "Путин");
+
+    const duplicate = [...$("#material-characters").querySelectorAll("input")].find((node) => node.value === "Песков");
+    duplicate.value = "Путин";
+    duplicate.dispatchEvent({ type: "blur" });
+    await flush(4);
+    assert.equal(harness.requests.length, before);
+    assert.deepEqual([...$("#material-characters").querySelectorAll("input")].map((node) => node.value), ["Путин", "Песков"]);
+    assert.equal(speakerValue("utterance-2"), "Песков");
+
+    harness.respond = async (entry) => {
+      if (entry.method === "PUT" && entry.path.endsWith("/readings/reading-1/cast")) {
+        return jsonResponse(409, { kind: "stale-reading", status: "failed" });
+      }
+      return null;
+    };
+    const renaming = [...$("#material-characters").querySelectorAll("input")].find((node) => node.value === "Путин");
+    renaming.value = "Влади";
+    renaming.dispatchEvent({ type: "input" });
+    renaming.value = "Владимир";
+    renaming.dispatchEvent({ type: "input" });
+    renaming.dispatchEvent({ type: "blur" });
+    await flush(6);
+    assert.deepEqual([...$("#material-characters").querySelectorAll("input")].map((node) => node.value), ["Путин", "Песков"]);
+    assert.equal(speakerValue("utterance-1"), "Путин");
+    assert.equal(aliasValue("Путин"), "Путин");
+    assert.equal(aliasValue("Владимир"), "Песков");
+    assert.equal(aliasValue("Дмитрий Сергеевич"), "Песков");
+    assert.equal(speakerValue("utterance-2"), "Песков");
+    harness.respond = null;
+  });
+
+  test("pending rename through input, input, and blur retargets owned aliases and speakers", async () => {
+    resetRecorder();
+    page.setResearchReviewState(relationshipReview("reading"), "reading");
+    harness.respond = async (entry) => {
+      if (entry.method === "PUT" && entry.path.endsWith("/readings/reading-1/cast")) {
+        return jsonResponse(200, { ok: true });
+      }
+      return null;
+    };
+    const nameInput = [...$("#material-characters").querySelectorAll("input")].find((node) => node.value === "Путин");
+    nameInput.value = "Влади";
+    nameInput.dispatchEvent({ type: "input" });
+    nameInput.value = "Владимир";
+    nameInput.dispatchEvent({ type: "input" });
+    assert.equal(aliasValue("Путин"), "Владимир");
+    assert.equal(aliasValue("Владимир"), "Песков");
+    assert.equal(aliasValue("Дмитрий Сергеевич"), "Песков");
+    assert.equal(speakerValue("utterance-1"), "Владимир");
+    assert.equal(speakerValue("utterance-2"), "Песков");
+    nameInput.dispatchEvent({ type: "blur" });
+    await flush(6);
+    const writes = castWrites();
+    assert.equal(writes.length, 1);
+    const body = writes[0].body;
+    const renamed = body.characters.find((character) => character.extractedName === "Путин");
+    assert.equal(renamed.name, "Владимир");
+    assert.equal(renamed.extractedName, "Путин");
+    assert.equal(body.aliases.find((alias) => alias.surface === "Путин").characterName, "Владимир");
+    assert.equal(body.aliases.find((alias) => alias.surface === "Владимир").characterName, "Песков");
+    assert.equal(body.aliases.find((alias) => alias.surface === "Дмитрий Сергеевич").characterName, "Песков");
+    assert.equal(body.speakers.find((speaker) => speaker.sourceItemId === "utterance-1").characterName, "Владимир");
+    assert.equal(body.speakers.find((speaker) => speaker.sourceItemId === "utterance-2").characterName, "Песков");
+    assert.equal(harness.requests.some((entry) => entry.path.endsWith("/storyboard-results")), false);
+    assert.equal(harness.requests.some((entry) => /\/generate$/.test(entry.path)), false);
+    assert.equal(harness.requests.some((entry) => entry.path.includes("/anchors")), false);
+    const starts = researchStarts("cast_edit").filter((event) => event.editTarget?.editKind === "character_rename");
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0].submittedText, "Владимир");
+    assert.equal(starts[0].editTarget.previousCharacterName, "Путин");
+    assert.equal(JSON.stringify(starts[0]).includes("sourceQuote"), false);
+    assert.equal(Object.hasOwn(starts[0], "cast"), false);
+    const terminals = harness.researchPosts.filter((event) => (
+      event.eventKind === "action_terminal" && event.correlationId === starts[0].correlationId
+    ));
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0].outcome, "success");
+    harness.respond = null;
+  });
+
+  test("confirmed Story review shows canonical names as text and still adds and excludes", async () => {
+    resetRecorder();
+    page.setResearchReviewState({
+      ...relationshipReview("material"),
+      cast: {
+        ...relationshipReview("material").cast,
+        speakers: [{ sourceItemId: "utterance-1", characterName: "Путин" }],
+      },
+    }, "material");
+    assert.equal($("#material-characters").querySelector("input"), null);
+    assert.equal($("#material-characters").querySelector("textarea"), null);
+    assert.deepEqual(
+      [...$("#material-characters").querySelectorAll(".cast-name")].map((node) => node.textContent),
+      ["Путин", "Песков"],
+    );
+    assert.equal($("#add-character").hidden, false);
+    assert.equal($("#add-character").textContent, "Добавить персонажа");
+    const peskov = [...$("#material-characters").querySelectorAll(".cast-include")].find((node) => node.dataset.extractedName === "Песков");
+    assert.equal(peskov.disabled, false);
+    assert.equal(peskov.tagName, "BUTTON");
+    harness.respond = async (entry) => {
+      if (entry.method === "POST" && entry.path.endsWith("/material-states")) {
+        return jsonResponse(200, { materialStateId: "material-2", visualChanged: false });
+      }
+      return null;
+    };
+    peskov.dispatchEvent({ type: "click" });
+    await flush(6);
+    const writes = castWrites();
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].body.characters.find((character) => character.extractedName === "Песков").included, false);
+    assert.equal(writes[0].body.characters.find((character) => character.extractedName === "Путин").name, "Путин");
+    assert.equal($("#material-characters").querySelector("input"), null);
+    harness.respond = null;
+  });
+
   test("other stages still render their own next actions", () => {
     page.applyVisual(readyVisual());
     assert.equal($("#stage-header-story").querySelector(".stage-next").textContent, "Перейти к раскадровке");

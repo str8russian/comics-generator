@@ -800,20 +800,27 @@ test("anchor_generate and anchor_approve capture the accepted session without im
   assert.equal(visual.start.commandTarget.kind, "storyboard");
 });
 
-test("cast_edit covers all editKind × castPhase combinations with value-only editTarget", async () => {
+test("cast_edit covers pending rename and the remaining cast phases with value-only editTarget", async () => {
   await ensurePage();
 
   async function runRename(mode, nextName) {
     researchPosts.length = 0;
     productPosts.length = 0;
     page.setResearchReviewState(castReviewState(mode), mode);
+    if (mode !== "reading") {
+      const list = document.querySelector("#material-characters");
+      assert.equal(list.querySelector("input"), null);
+      assert.equal(list.querySelector(".cast-name").textContent, "Путин");
+      assert.equal(productPosts.some((entry) => entry.path.endsWith("/material-states")), false);
+      return;
+    }
     const nameInput = document.querySelector("#material-characters").querySelector("input");
     nameInput.value = nextName;
     nameInput.dispatchEvent({ type: "input" });
     assert.equal(researchPosts.length, 0);
     nameInput.dispatchEvent({ type: "blur" });
     await new Promise((resolve) => setTimeout(resolve, 10));
-    const pair = assertSingleCastPair("character_rename", mode === "reading" ? "pending_reading" : "material_state");
+    const pair = assertSingleCastPair("character_rename", "pending_reading");
     assert.equal(pair.start.surface, "product_control");
     assert.equal(pair.start.commandTarget, null);
     assert.equal(pair.start.submittedText, nextName);
