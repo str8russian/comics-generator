@@ -566,53 +566,38 @@ async function reuseRun(parsed, resolved, primary, root, auth, deps, state, line
   if (status === "unhealthy") throw new CliError(`run ${runId} is unhealthy; stop it before reuse`);
   await assertReusableWorktree(primary, root, run, deps);
   const previousSha = run.resolvedSha;
-  const previousRef = run.requestedRef;
   if (previousSha !== resolved.sha) {
     await runGit(deps.execFile, run.worktree, ["checkout", "--detach", resolved.sha]);
     const checkedOut = await headSha(deps.execFile, run.worktree);
     if (checkedOut !== resolved.sha) throw new CliError(`run ${runId} checkout did not reach ${resolved.sha}`);
   }
+  const candidate = {
+    ...run,
+    requestedRef: resolved.requested,
+    resolvedSha: resolved.sha,
+  };
   try {
     if (await needsInstall(primary, run.worktree, previousSha, resolved.sha, deps)) {
       await installDependencies(run.worktree, deps, secrets, lines);
     }
+    await assertReusableWorktree(primary, root, candidate, deps);
   } catch (error) {
     if (previousSha !== resolved.sha) {
       await runGit(deps.execFile, run.worktree, ["checkout", "--detach", previousSha]);
       const restored = await headSha(deps.execFile, run.worktree);
       if (restored !== previousSha) {
-        const reason = error instanceof CliError ? error.message : "dependency installation failed";
+        const reason = error instanceof CliError ? error.message : "pre-spawn step failed";
         throw new CliError(`rollback incomplete: worktree ${run.worktree} is at ${restored}, not ${previousSha}; ${reason}`);
       }
     }
     throw error;
   }
-  run.requestedRef = resolved.requested;
-  run.resolvedSha = resolved.sha;
   const extra = [];
   if (previousSha !== resolved.sha) {
     extra.push(`previous-sha: ${previousSha}`);
     extra.push(REUSE_SCHEMA_WARNING);
   }
-  try {
-    return await startRecorded(run, primary, root, auth, deps, state, { lines, extra });
-  } catch (error) {
-    if (previousSha === resolved.sha) throw error;
-    let restoredSha = null;
-    try {
-      await runGit(deps.execFile, run.worktree, ["checkout", "--detach", previousSha]);
-      restoredSha = await headSha(deps.execFile, run.worktree);
-    } catch {
-      restoredSha = null;
-    }
-    run.requestedRef = previousRef;
-    run.resolvedSha = previousSha;
-    if (restoredSha !== previousSha) {
-      const reason = error instanceof CliError ? error.message : "managed launch failed";
-      throw new CliError(`rollback incomplete: worktree ${run.worktree} is at ${restoredSha ?? "unknown"}, not ${previousSha}; ${reason}`);
-    }
-    throw error;
-  }
+  return startRecorded(candidate, primary, root, auth, deps, state, { lines, extra });
 }
 
 export async function stopCommand(runIdInput, context, deps) {

@@ -684,6 +684,42 @@ test("managed launch refuses a worktree dirtied by dependency installation", asy
   }
 });
 
+test("a failed reused launch stays on the target SHA after spawn", async () => {
+  const fixture = createRepository();
+  const shaA = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  const shaB = commitFile(fixture.primary, "b-fail.txt", "b\n", "b");
+  const foreign = join(fixture.root, "foreign-worktree");
+  try {
+    git(fixture.primary, ["worktree", "add", "--detach", foreign, shaA]);
+    const harness = createHarness(fixture);
+    assert.equal((await execute(["start", shaA], harness.deps)).exitCode, 0);
+    const runId = `sha${shaA}`;
+    const worktree = join(managedRoot(fixture), "worktrees", runId);
+    await execute(["stop", runId], harness.deps);
+    harness.processes.exitOnSpawn = true;
+    const failed = await execute(["start", shaB, "--reuse", runId], harness.deps);
+    assert.notEqual(failed.exitCode, 0);
+    assert.equal(`${failed.stdout}\n${failed.stderr}`.includes("status: running"), false);
+    assert.ok(harness.processes.spawns.length >= 2);
+    assert.equal(harness.processes.spawns.at(-1).options.cwd, worktree);
+    assert.equal(git(worktree, ["rev-parse", "HEAD"]).trim(), shaB);
+    const record = JSON.parse(registryText(fixture)).runs[runId];
+    assert.equal(record.resolvedSha, shaB);
+    assert.equal(record.requestedRef, shaB);
+    assert.equal(record.state, "stopped");
+    assert.equal(record.pid, null);
+    const checkoutTargets = harness.calls
+      .filter((call) => call.file === "git" && call.args.includes("checkout"))
+      .map((call) => call.args.at(-1));
+    assert.deepEqual(checkoutTargets, [shaB]);
+    assert.equal(git(fixture.primary, ["rev-parse", "HEAD"]).trim(), shaB);
+    assert.equal(git(foreign, ["rev-parse", "HEAD"]).trim(), shaA);
+    assert.equal(existsSync(foreign), true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("ordinary restart refuses a drifted or dirty managed worktree before spawn", async () => {
   const fixture = createRepository();
   const shaA = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
