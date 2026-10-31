@@ -22,12 +22,19 @@ import {
 } from "./constants.mjs";
 import { choosePort } from "./ports.mjs";
 import { readRegistry, withRegistry } from "./registry.mjs";
+import { redact, secretsFromEnv } from "./redact.mjs";
 import { resolveRef } from "./refs.mjs";
 
 const START_TOOLS = ["git", "npm", "docker", "psql", "pg_dump", "pg_restore", "createdb", "dropdb"];
 
 function timeoutsOf(deps) {
   return { ...DEFAULT_TIMEOUTS, ...deps.timeouts };
+}
+
+function report(deps, message, secrets = []) {
+  if (typeof deps.progress !== "function") return;
+  const text = redact(String(message), [...secretsFromEnv(deps.env ?? {}), ...secrets]);
+  deps.progress(text);
 }
 
 function parseUserRunId(id) {
@@ -78,6 +85,7 @@ async function assertTools(deps, names, cwd) {
 }
 
 async function ensureDatabaseReady(primary, auth, deps, secrets) {
+  report(deps, "Starting local PostgreSQL...", secrets);
   const up = await deps.execFile("docker", ["compose", "up", "-d", "db"], { cwd: primary, env: deps.env });
   if (!up || up.code !== 0) throw new CliError("docker compose up -d db failed");
   const deadline = Date.now() + timeoutsOf(deps).dbReadyMs;
@@ -191,6 +199,7 @@ async function launch(input, primary, deps) {
   if (input.id !== MAIN_RUN_ID) {
     await assertReusableWorktree(primary, input.root, input, deps);
   }
+  report(deps, `Starting server at http://${MAIN_HOST}:${input.port}/...`);
   const serverPath = join(input.worktree, SERVER_RELATIVE);
   if (!existsSync(serverPath)) throw new CliError(`server entry is missing at ${serverPath}`);
   const logDir = join(input.root, "logs");
@@ -209,6 +218,7 @@ async function launch(input, primary, deps) {
     env: serverEnvironment(deps.env, input),
     logPath,
   });
+  report(deps, "Waiting for server health...");
   let exited = null;
   child.onExit((info) => { exited = info; });
   const deadline = Date.now() + timeoutsOf(deps).startupMs;
@@ -268,7 +278,7 @@ async function installDependencies(worktree, deps, secrets, lines) {
   if (!existsSync(join(worktree, "package-lock.json"))) {
     throw new CliError(`package-lock.json is required for dependency installation in ${worktree}`);
   }
-  lines.push(`installing dependencies in ${worktree}`);
+  report(deps, `Installing dependencies in ${worktree}...`, secrets);
   const result = await deps.execFile("npm", ["ci"], { cwd: worktree, env: deps.env });
   if (!result || result.code !== 0) {
     throw new CliError(`dependency installation failed in ${worktree}`);
@@ -319,6 +329,7 @@ async function createDatabaseCopy(root, runId, auth, deps, created) {
   assertInside(snapshots, dump);
   created.dump = dump;
   try {
+    report(deps, "Creating database snapshot from comics...");
     const dumped = await deps.execFile("pg_dump", [
       "--host=127.0.0.1",
       "--port=5432",
@@ -330,6 +341,7 @@ async function createDatabaseCopy(root, runId, auth, deps, created) {
       `--file=${dump}`,
     ], { cwd: root, env: pgEnv(deps.env, auth) });
     if (!dumped || dumped.code !== 0 || !existsSync(dump)) throw new CliError("pg_dump of database comics failed");
+    report(deps, `Creating managed database ${database}...`);
     const createdb = await deps.execFile("createdb", [
       "--host=127.0.0.1",
       "--port=5432",
@@ -418,6 +430,7 @@ async function rollbackCreated(primary, root, created, deps) {
 async function addWorktree(primary, worktree, sha, deps) {
   mkdirSync(join(worktree, ".."), { recursive: true });
   if (existsSync(worktree)) throw new CliError(`managed worktree already exists at ${worktree}`);
+  report(deps, `Creating detached worktree ${worktree}...`);
   await runGit(deps.execFile, primary, ["worktree", "add", "--detach", worktree, sha]);
 }
 
@@ -430,11 +443,15 @@ function rememberFailure(lines, error) {
 
 async function startRecorded(run, primary, root, auth, deps, state, { dirty = null, lines = [], extra = [] } = {}) {
   const status = await inspectRun(run, deps);
-  if (status === "running") return `${prefix(lines)}${formatDetails(run, { dirty, status, lines: extra })}`;
+  if (status === "running") {
+    report(deps, `Reusing healthy run ${run.id} at http://${MAIN_HOST}:${run.port}/...`);
+    return `${prefix(lines)}${formatDetails(run, { dirty, status, lines: extra })}`;
+  }
   if (status === "unhealthy") throw new CliError(`run ${run.id} is unhealthy at http://${MAIN_HOST}:${run.port}/`);
   if (run.id === MAIN_RUN_ID) {
     if (await deps.portOpen(MAIN_PORT)) throw new CliError("port 4173 is in use by another process; refusing to start run main");
   }
+  report(deps, "Checking local dependencies...");
   await assertTools(deps, START_TOOLS, primary);
   await ensureDatabaseReady(primary, auth, deps, []);
   const port = run.id === MAIN_RUN_ID ? MAIN_PORT : await allocatePort(state.data.runs, run.id, run.port, deps);
@@ -469,6 +486,7 @@ export async function startCommand(parsed, context, deps, secrets) {
           return startRecorded(existing, primary, root, auth, deps, state, { dirty });
         }
         if (await deps.portOpen(MAIN_PORT)) throw new CliError("port 4173 is in use by another process; refusing to start run main");
+        report(deps, "Checking local dependencies...", secrets);
         await assertTools(deps, START_TOOLS, primary);
         await ensureDatabaseReady(primary, auth, deps, secrets);
         const launched = await launch({
@@ -515,6 +533,7 @@ export async function startCommand(parsed, context, deps, secrets) {
 }
 
 async function createManagedRun({ runId, resolved, primary, root, auth, deps, state, lines, secrets }) {
+  report(deps, "Checking local dependencies...", secrets);
   await assertTools(deps, START_TOOLS, primary);
   await ensureDatabaseReady(primary, auth, deps, secrets);
   const created = { dump: null, database: null, worktree: null, user: auth.user, auth };
@@ -567,6 +586,7 @@ async function reuseRun(parsed, resolved, primary, root, auth, deps, state, line
   await assertReusableWorktree(primary, root, run, deps);
   const previousSha = run.resolvedSha;
   if (previousSha !== resolved.sha) {
+    report(deps, `Checking out ${resolved.sha}...`, secrets);
     await runGit(deps.execFile, run.worktree, ["checkout", "--detach", resolved.sha]);
     const checkedOut = await headSha(deps.execFile, run.worktree);
     if (checkedOut !== resolved.sha) throw new CliError(`run ${runId} checkout did not reach ${resolved.sha}`);

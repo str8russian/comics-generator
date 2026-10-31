@@ -22,6 +22,10 @@ export function createRealDependencies({ packageRoot, env = process.env } = {}) 
     randomBytes,
     now: () => new Date().toISOString(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    progress(line) {
+      const text = String(line ?? "");
+      process.stderr.write(text.endsWith("\n") ? text : `${text}\n`);
+    },
     async execFile(file, args, options = {}) {
       try {
         const { stdout, stderr } = await execFileAsync(file, args, {

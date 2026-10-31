@@ -46,6 +46,7 @@ CLI state is stored in a hidden sibling of that checkout: `<parent>/.comics-pipe
 - Failed Git worktree removal never falls back to raw recursive deletion. The worktree, database, and registry entry stay, and the command fails. If Git removal succeeds and the database drop fails, the worktree is gone, the database and registry entry remain, and a later `clean <run-id>` retries the remaining database cleanup.
 - Failed creation rolls back only the worktree, database, and dump created by that invocation. If Git cannot remove the new worktree, rollback is reported as incomplete and the directory is not raw-deleted.
 - Registry writes use a temp file and rename. A malformed registry is refused rather than treated as empty.
+- `comics start` writes a short progress line to stderr immediately before each stage it actually runs. The final run summary stays on stdout. Help and the other commands do not emit start progress. Progress does not include credentials, database URLs, or provider output.
 
 ## Provider and dependencies
 

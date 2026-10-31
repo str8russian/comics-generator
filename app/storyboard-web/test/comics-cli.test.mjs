@@ -1166,6 +1166,153 @@ test("port selection stays inside the managed range", async () => {
   assert.equal(none, null);
 });
 
+function attachProgress(harness) {
+  const events = [];
+  const marks = [];
+  let sawBeforeResolve = false;
+  harness.deps.progress = (line) => {
+    events.push(String(line));
+    sawBeforeResolve = true;
+  };
+  const execFile = harness.deps.execFile;
+  harness.deps.execFile = async (file, args, options) => {
+    marks.push({ kind: file, args: [...args], events: [...events] });
+    return execFile(file, args, options);
+  };
+  const spawnDetached = harness.deps.spawnDetached;
+  harness.deps.spawnDetached = (file, args, options) => {
+    marks.push({ kind: "spawn", args: [...args], events: [...events] });
+    return spawnDetached(file, args, options);
+  };
+  const httpGet = harness.deps.httpGet;
+  harness.deps.httpGet = async (url, options) => {
+    marks.push({ kind: "health", url, events: [...events] });
+    return httpGet(url, options);
+  };
+  return {
+    events,
+    marks,
+    sawBeforeResolve: () => sawBeforeResolve,
+    reset() {
+      events.length = 0;
+      marks.length = 0;
+      sawBeforeResolve = false;
+    },
+  };
+}
+
+function progressText(events) {
+  return events.join("\n");
+}
+
+function assertProgressBefore(marks, predicate, pattern) {
+  const mark = marks.find(predicate);
+  assert.ok(mark, "expected action was not called");
+  assert.match(progressText(mark.events), pattern);
+}
+
+test("live progress for a new managed start is emitted before each blocking stage", async () => {
+  const fixture = createRepository();
+  const sha = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  try {
+    const harness = createHarness(fixture);
+    const progress = attachProgress(harness);
+    const started = await execute(["start", sha], harness.deps);
+    assert.equal(started.exitCode, 0, started.stderr);
+    assert.equal(progress.sawBeforeResolve(), true);
+    assertProgressBefore(progress.marks, (mark) => mark.kind === "docker" && mark.args[1] === "up", /Checking local dependencies/);
+    assertProgressBefore(progress.marks, (mark) => mark.kind === "docker" && mark.args[1] === "up", /Starting local PostgreSQL/);
+    assertProgressBefore(progress.marks, (mark) => mark.kind === "pg_dump" && mark.args.includes("--format=custom"), /Creating database snapshot from comics/);
+    assertProgressBefore(progress.marks, (mark) => mark.kind === "createdb" && mark.args[0] !== "--version", /Creating managed database comics_cli_/);
+    assertProgressBefore(progress.marks, (mark) => mark.kind === "pg_restore" && mark.args[0] !== "--version", /Creating managed database comics_cli_/);
+    assertProgressBefore(progress.marks, (mark) => mark.kind === "git" && mark.args.includes("worktree") && mark.args.includes("add"), /Creating detached worktree/);
+    assertProgressBefore(progress.marks, (mark) => mark.kind === "npm" && mark.args[0] === "ci", /Installing dependencies in /);
+    assertProgressBefore(progress.marks, (mark) => mark.kind === "spawn", /Starting server at http:\/\/127\.0\.0\.1:\d+\//);
+    assertProgressBefore(progress.marks, (mark) => mark.kind === "health", /Waiting for server health/);
+    assert.match(started.stdout, /status: running/);
+    assert.match(started.stdout, new RegExp(`sha: ${sha}`));
+    assert.equal(started.stdout.includes("Creating database snapshot"), false);
+    assertNoSecrets(`${progressText(progress.events)}\n${started.stdout}\n${started.stderr}`);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("live progress for main, restart, and healthy reuse omits work that does not run", async () => {
+  const fixture = createRepository();
+  const sha = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  try {
+    const harness = createHarness(fixture);
+    const progress = attachProgress(harness);
+    const main = await execute(["start"], harness.deps);
+    assert.equal(main.exitCode, 0, main.stderr);
+    const mainText = progressText(progress.events);
+    assert.match(mainText, /Checking local dependencies/);
+    assert.match(mainText, /Starting local PostgreSQL/);
+    assert.match(mainText, /Starting server at http:\/\/127\.0\.0\.1:4173\//);
+    assert.match(mainText, /Waiting for server health/);
+    assert.doesNotMatch(mainText, /Creating database snapshot/);
+    assert.doesNotMatch(mainText, /Creating managed database/);
+    assert.doesNotMatch(mainText, /Creating detached worktree/);
+    assert.doesNotMatch(mainText, /Installing dependencies/);
+    assert.match(main.stdout, /run: main/);
+    progress.reset();
+    const again = await execute(["start"], harness.deps);
+    assert.equal(again.exitCode, 0, again.stderr);
+    assert.match(progressText(progress.events), /Reusing healthy run main/);
+    assert.equal(progress.marks.some((mark) => mark.kind === "docker" && mark.args[1] === "up"), false);
+    assert.equal(progress.marks.some((mark) => mark.kind === "spawn"), false);
+    assert.match(again.stdout, /status: running/);
+    assert.match(again.stdout, /url: http:\/\/127\.0\.0\.1:4173\//);
+    await execute(["stop", "main"], harness.deps);
+    progress.reset();
+    const managed = await execute(["start", sha], harness.deps);
+    assert.equal(managed.exitCode, 0, managed.stderr);
+    const runId = `sha${sha}`;
+    await execute(["stop", runId], harness.deps);
+    progress.reset();
+    const restarted = await execute(["start", sha], harness.deps);
+    assert.equal(restarted.exitCode, 0, restarted.stderr);
+    const restartText = progressText(progress.events);
+    assert.match(restartText, /Starting server at http:\/\/127\.0\.0\.1:\d+\//);
+    assert.doesNotMatch(restartText, /Creating database snapshot/);
+    assert.doesNotMatch(restartText, /Creating managed database/);
+    assert.doesNotMatch(restartText, /Creating detached worktree/);
+    assert.doesNotMatch(restartText, /Installing dependencies/);
+    assert.equal(progress.marks.some((mark) => mark.kind === "npm" && mark.args[0] === "ci"), false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test("live progress keeps earlier stages when a later stage fails and help stays quiet", async () => {
+  const fixture = createRepository();
+  const sha = git(fixture.primary, ["rev-parse", "HEAD"]).trim();
+  try {
+    const harness = createHarness(fixture);
+    const progress = attachProgress(harness);
+    const help = await execute(["help"], harness.deps);
+    assert.equal(help.exitCode, 0);
+    assert.equal(progress.events.length, 0);
+    assert.match(help.stdout, /comics start <ref>/);
+    harness.failRestore = true;
+    const failed = await execute(["start", sha], harness.deps);
+    assert.notEqual(failed.exitCode, 0);
+    assert.match(failed.stderr, /pg_restore|failed/);
+    const text = progressText(progress.events);
+    assert.match(text, /Creating database snapshot from comics/);
+    assert.match(text, /Creating managed database comics_cli_/);
+    assert.doesNotMatch(text, /Starting server at /);
+    assert.doesNotMatch(text, /Waiting for server health/);
+    assert.doesNotMatch(text, /Reusing healthy run/);
+    assert.equal(failed.stdout.includes("status: running"), false);
+    assert.equal(harness.processes.spawns.length, 0);
+    assertNoSecrets(`${text}\n${failed.stdout}\n${failed.stderr}`);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("package bin runs from an unrelated directory via a disposable prefix", async () => {
   const prefix = mkdtempSync(join(tmpdir(), "comics-cli-prefix-"));
   const unrelated = mkdtempSync(join(tmpdir(), "comics-cli-cwd-"));
